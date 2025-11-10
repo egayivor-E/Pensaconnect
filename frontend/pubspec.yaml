@@ -1,0 +1,130 @@
+name: pensaconnect
+description: "Ladies & Gents Wing App - Youth Ministry Platform"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.8.1 <4.0.0'
+
+dependencies:
+
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  go_router: ^16.1.0
+  http: ^1.2.1
+  flutter_dotenv: ^6.0.0
+  youtube_player_iframe: ^5.2.2
+  universal_html: ^2.2.0
+  flutter_svg: ^2.0.10
+  google_fonts: ^6.1.0
+  animations: ^2.1.0
+  provider: ^6.1.1
+  youtube_player_flutter: ^9.1.2  # CONFIRMED WORKING VERSION
+  socket_io_client: ^3.1.0
+  flutter_animate: ^4.2.0
+  intl: ^0.20.2
+  shared_preferences: ^2.2.2
+  flutter_localizations:
+    sdk: flutter
+  table_calendar: ^3.2.0
+  cached_network_image: ^3.3.0
+  shimmer: ^3.0.0
+  badges: ^3.0.2
+  flutter_secure_storage: ^9.2.4
+  connectivity_plus: ^6.1.5
+  flutter_native_splash: ^2.3.5
+  flutter_facebook_auth: ^7.1.2
+  google_sign_in: ^7.1.1
+  firebase_core: ^4.2.0
+  firebase_auth: ^6.1.1
+  firebase_messaging: ^16.0.0
+  firebase_storage: ^13.0.0
+  firebase_analytics: ^12.0.0
+  cloud_firestore: ^6.0.3
+  flutter_vector_icons: ^2.0.0
+  font_awesome_flutter: ^10.10.0
+  timeago: ^3.7.1
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.9.0
+  app_links: 
+  flutter_riverpod: ^2.5.1
+  freeze: ^1.0.0
+  share_plus: ^10.0.0
+  screenshot: ^3.0.0
+  file_picker: ^8.0.0
+  url_launcher: ^6.3.0
+  dio: ^5.9.0
+  image_picker: ^0.8.7+3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  build_runner: ^2.4.8
+  freezed: ^2.5.2
+  json_serializable: ^6.7.1
+  mockito:
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/.env
+    - assets/images/user.png
+    - assets/images/drawer_bg.png
+    - assets/images/profile.jpg
+    - assets/images/sample.jpg
+    - assets/images/logo.jpeg
+    - assets/images/prayer_icon.png
+    - assets/images/worship_icon.jpeg
+    - assets/icons/home.svg
+    - assets/icons/discover.svg
+    - assets/icons/favorites.svg
+    - assets/icons/profile.svg
+    - assets/icons/events.svg
+    - assets/icons/bible.svg
+    - assets/icons/worship.svg
+    - assets/icons/live.svg
+    - assets/icons/forum.svg
+    - assets/icons/prayer.svg
+    - assets/icons/testimony.svg
+    - assets/icons/chat.svg
+    - assets/icons/settings.svg
+    - assets/icons/help.svg
+    - assets/icons/notification.svg
+    - assets/icons/menu.svg
+    - assets/icons/back.svg
+    - assets/icons/search.svg
+    - assets/icons/send.svg
+    - assets/icons/share.svg
+    - assets/icons/like.svg
+    - assets/icons/comment.svg
+    - assets/icons/calendar.svg
+    - assets/icons/members.svg
+    - assets/icons/music.svg
+    - assets/icons/group.svg
+    - assets/icons/badge.svg
+    - assets\icons\hands_pray.svg
+    #- assets/animations/
+  
+  fonts:
+    - family: OpenSans
+      fonts:
+        - asset: assets/fonts/OpenSans-Regular.ttf
+        - asset: assets/fonts/OpenSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/OpenSans-SemiBold.ttf
+          weight: 600
+    - family: Poppins
+      fonts:
+        - asset: assets/fonts/Poppins-Regular.ttf
+        - asset: assets/fonts/Poppins-Bold.ttf
+          weight: 700
+
+    - family: Noto
+      fonts:
+        - asset: assets/fonts/NotoSans-Regular.ttf      
+
+  generate: true
