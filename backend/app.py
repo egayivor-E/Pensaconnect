@@ -20,10 +20,19 @@ app = create_app(config[env])
 # ✅ Serve uploaded files (publicly accessible)
 @app.route("/uploads/<path:filename>")
 def serve_uploads(filename):
+    """Serve uploaded files (avatars, audio, video, images)"""
+    # Try both paths to be safe
     project_root = Path(app.root_path).parent
-    upload_folder = os.path.join(project_root, "uploads")
+    upload_folder_v1 = os.path.join(project_root, "uploads")
+    upload_folder_v2 = os.path.join(current_app.root_path, "uploads")
     
-    # Get the file response first
+    # Try first path, fall back to second
+    if os.path.exists(upload_folder_v1):
+        upload_folder = upload_folder_v1
+    else:
+        upload_folder = upload_folder_v2
+    
+    # Get the file response
     response = send_from_directory(upload_folder, filename)
     
     # 🚨 CRITICAL FIX: Manually add the CORS header to the response
@@ -31,13 +40,6 @@ def serve_uploads(filename):
     response.headers.add("Access-Control-Allow-Origin", "*")
     
     return response
-
-
-@app.route('/uploads/<path:filename>')
-def serve_uploaded_file(filename):
-    """Serve uploaded files (avatars, audio, video, images)"""
-    uploads_dir = os.path.join(current_app.root_path, 'uploads')
-    return send_from_directory(uploads_dir, filename)
 
 # Gunicorn / uWSGI entrypoint
 if __name__ == "__main__":
