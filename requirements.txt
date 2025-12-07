@@ -3,6 +3,9 @@ Flask==3.1.2
 Werkzeug==3.1.3
 wtforms==3.1.2
 
+# Production Server
+gunicorn==20.1.0  # ← ADD THIS LINE!
+
 # Database
 Flask-SQLAlchemy==3.0.5
 Flask-Migrate==4.0.5
@@ -23,8 +26,6 @@ Flask-Compress==1.14
 python-dotenv==1.0.0
 python-slugify==8.0.1
 
-
-
 # Task Queue
 celery==5.3.4
 
@@ -32,16 +33,8 @@ celery==5.3.4
 Flask-Mail==0.9.1
 Flask-Login==0.6.3
 
-
 # Redis & Caching
 Flask-Caching==2.1.0
 redis==5.0.1
 
 requests==2.32.5
-
-
-
-
-
-
-
