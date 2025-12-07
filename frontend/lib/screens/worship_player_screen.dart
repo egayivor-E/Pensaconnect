@@ -1,15 +1,19 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:youtube_player_flutter/youtube_player_flutter.dart';
+import '../models/worship_song.dart';
+import '../widgets/universal_youtube_player.dart';
 
 class WorshipPlayerScreen extends StatefulWidget {
-  final List<Map<String, dynamic>> songs;
+  final List<WorshipSong> songs;
   final int initialIndex;
+  final bool isOffline;
+  final String? offlineFilePath;
 
   const WorshipPlayerScreen({
     super.key,
     required this.songs,
     required this.initialIndex,
+    this.isOffline = false,
+    this.offlineFilePath,
   });
 
   @override
@@ -17,152 +21,366 @@ class WorshipPlayerScreen extends StatefulWidget {
 }
 
 class _WorshipPlayerScreenState extends State<WorshipPlayerScreen> {
-  late YoutubePlayerController _controller;
   late int _currentIndex;
-  bool _isPlaying = false;
+  bool _showLyrics = false;
   bool _showControls = true;
-  late ScrollController _scrollController;
-  double _lastOffset = 0;
 
-  Map<String, dynamic> get _currentSong => widget.songs[_currentIndex];
+  WorshipSong get currentSong => widget.songs[_currentIndex];
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
-    _scrollController = ScrollController()..addListener(_scrollListener);
+  }
 
-    if (!kIsWeb) {
-      _initController(_currentSong['videoId']);
+  void _playNext() {
+    if (_currentIndex < widget.songs.length - 1) {
+      setState(() => _currentIndex++);
+    } else {
+      setState(() => _currentIndex = 0);
     }
   }
 
-  void _scrollListener() {
-    final offset = _scrollController.offset;
-    if (offset > _lastOffset && _showControls) {
-      setState(() => _showControls = false); // scrolling down
-    } else if (offset < _lastOffset && !_showControls) {
-      setState(() => _showControls = true); // scrolling up
+  void _playPrev() {
+    if (_currentIndex > 0) {
+      setState(() => _currentIndex--);
+    } else {
+      setState(() => _currentIndex = widget.songs.length - 1);
     }
-    _lastOffset = offset;
   }
 
-  void _initController(String videoId) {
-    final id = YoutubePlayer.convertUrlToId(videoId) ?? videoId;
-    _controller =
-        YoutubePlayerController(
-          initialVideoId: id,
-          flags: const YoutubePlayerFlags(autoPlay: true, mute: false),
-        )..addListener(() {
-          if (mounted) {
-            setState(() {
-              _isPlaying = _controller.value.isPlaying;
-            });
-          }
-        });
+  void _toggleLyrics() {
+    setState(() => _showLyrics = !_showLyrics);
   }
 
-  void _playSongAt(int index) {
-    if (index >= 0 && index < widget.songs.length) {
-      _currentIndex = index;
-      if (!kIsWeb) {
-        _controller.load(_currentSong['videoId']);
-        _controller.play();
-      }
-      setState(() => _isPlaying = true);
-    }
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+    final isLandscape = mediaQuery.orientation == Orientation.landscape;
 
     return Scaffold(
-      appBar: AppBar(title: Text(_currentSong['title'])),
-      body: SingleChildScrollView(
-        controller: _scrollController,
-        child: Column(
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: kIsWeb
-                  ? Container(
-                      color: Colors.black12,
-                      child: const Center(
-                        child: Text(
-                          'YouTube Player not available on Web',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    )
-                  : YoutubePlayer(
-                      controller: _controller,
-                      showVideoProgressIndicator: true,
-                      progressIndicatorColor: theme.colorScheme.primary,
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
+      appBar: isLandscape
+          ? null
+          : AppBar(
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _currentSong['title'],
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                    currentSong.title,
+                    style: const TextStyle(fontSize: 16),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                   Text(
-                    _currentSong['artist'],
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurface.withOpacity(0.6),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.skip_previous),
-                        iconSize: 36,
-                        onPressed: () => _playSongAt(_currentIndex - 1),
-                      ),
-                      IconButton(
-                        icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                        iconSize: 48,
-                        onPressed: () {
-                          if (!kIsWeb) {
-                            _isPlaying
-                                ? _controller.pause()
-                                : _controller.play();
-                          }
-                          setState(() => _isPlaying = !_isPlaying);
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.skip_next),
-                        iconSize: 36,
-                        onPressed: () => _playSongAt(_currentIndex + 1),
-                      ),
-                    ],
+                    currentSong.artist,
+                    style: const TextStyle(fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ],
               ),
+              actions: [
+                IconButton(
+                  icon: Icon(
+                    _showLyrics ? Icons.lyrics : Icons.lyrics_outlined,
+                  ),
+                  onPressed: _toggleLyrics,
+                  tooltip: 'Toggle Lyrics',
+                ),
+                if (currentSong.isAvailableOffline)
+                  const Icon(Icons.download_done, color: Colors.green),
+              ],
             ),
-          ],
-        ),
+      body: SafeArea(
+        child: isLandscape
+            ? _buildLandscapeLayout(theme, mediaQuery)
+            : _buildPortraitLayout(theme, mediaQuery),
       ),
     );
   }
 
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    if (!kIsWeb) {
-      _controller.dispose();
-    }
-    super.dispose();
+  // ✅ PORTRAIT LAYOUT - Optimized for mobile phones
+  Widget _buildPortraitLayout(ThemeData theme, MediaQueryData mediaQuery) {
+    return Column(
+      children: [
+        // Media Player - Flexible height based on content
+        Flexible(
+          flex: 3,
+          fit: FlexFit.tight,
+          child: UniversalYoutubePlayer(
+            song: currentSong,
+            autoPlay: true,
+            aspectRatio: currentSong.isAudio ? 1 : 16 / 9,
+          ),
+        ),
+
+        // Song Info & Controls - Fixed but flexible
+        Container(
+          constraints: BoxConstraints(
+            minHeight: 80,
+            maxHeight: mediaQuery.size.height * 0.25, // Max 25% of screen
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Song Title
+              Text(
+                currentSong.title,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+
+              // Artist Name
+              Text(
+                currentSong.artist,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.6),
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 12),
+
+              // Navigation Controls
+              if (_showControls)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.skip_previous, size: 32),
+                      onPressed: _playPrev,
+                      tooltip: 'Previous Song',
+                    ),
+                    const SizedBox(width: 24),
+                    IconButton(
+                      icon: const Icon(Icons.skip_next, size: 32),
+                      onPressed: _playNext,
+                      tooltip: 'Next Song',
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+
+        // Lyrics or Playlist Info - Takes remaining space
+        if (_showLyrics)
+          Expanded(flex: 2, child: _buildLyricsPanel(theme))
+        else
+          // Playlist progress when lyrics are hidden
+          Container(
+            height: 60,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${_currentIndex + 1} of ${widget.songs.length}',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                Text(
+                  'Swipe down to close',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ✅ LANDSCAPE LAYOUT - Optimized for tablets and landscape mode
+  Widget _buildLandscapeLayout(ThemeData theme, MediaQueryData mediaQuery) {
+    return Row(
+      children: [
+        // Media Player - Takes 60% of width
+        Expanded(
+          flex: 6,
+          child: UniversalYoutubePlayer(
+            song: currentSong,
+            autoPlay: true,
+            aspectRatio: currentSong.isAudio ? 1 : 16 / 9,
+          ),
+        ),
+
+        // Side Panel - Takes 40% of width
+        Expanded(
+          flex: 4,
+          child: Container(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceVariant.withOpacity(0.1),
+              border: Border(left: BorderSide(color: theme.dividerColor)),
+            ),
+            child: Column(
+              children: [
+                // Song Info Header
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: theme.dividerColor),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        currentSong.title,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        currentSong.artist,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Controls
+                if (_showControls)
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.skip_previous, size: 32),
+                          onPressed: _playPrev,
+                          tooltip: 'Previous Song',
+                        ),
+                        const SizedBox(width: 16),
+                        IconButton(
+                          icon: const Icon(Icons.skip_next, size: 32),
+                          onPressed: _playNext,
+                          tooltip: 'Next Song',
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Lyrics or Playlist Info
+                Expanded(
+                  child: _showLyrics
+                      ? _buildLyricsPanel(theme)
+                      : Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                '${_currentIndex + 1} of ${widget.songs.length}',
+                                style: theme.textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Tap lyrics icon to view song lyrics',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.5),
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+
+                // Bottom Info Bar
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border(top: BorderSide(color: theme.dividerColor)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _showLyrics ? Icons.lyrics : Icons.lyrics_outlined,
+                        ),
+                        onPressed: _toggleLyrics,
+                        tooltip: 'Toggle Lyrics',
+                      ),
+                      if (currentSong.isAvailableOffline)
+                        const Icon(Icons.download_done, color: Colors.green),
+                      Text(
+                        'Swipe to close',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ✅ REUSABLE LYRICS PANEL
+  Widget _buildLyricsPanel(ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: currentSong.lyrics != null && currentSong.lyrics!.isNotEmpty
+          ? SingleChildScrollView(
+              child: Text(
+                currentSong.lyrics!,
+                style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+                textAlign: TextAlign.center,
+              ),
+            )
+          : Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.music_note,
+                    size: 48,
+                    color: theme.colorScheme.onSurface.withOpacity(0.3),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No lyrics available',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Enjoy the music!',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
   }
 }

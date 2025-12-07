@@ -1,10 +1,12 @@
+import 'package:pensaconnect/services/api_service.dart';
+
 class User {
   final int id;
   final String username;
   final String email;
   final String? profilePicture;
   final List<String> roles;
-  final DateTime? createdAt; // 👈 new field
+  final DateTime? createdAt;
 
   User({
     required this.id,
@@ -14,6 +16,19 @@ class User {
     required this.roles,
     this.createdAt,
   });
+
+  // ✅ Better approach - accept baseUrl as parameter
+  String getProfilePictureUrl(String baseUrl) {
+    if (profilePicture == null || profilePicture!.isEmpty) {
+      return '$baseUrl/uploads/default-avatar.png'; // ← Use parameter, not ApiService.baseUrl
+    }
+
+    final normalizedPath = profilePicture!.startsWith('/')
+        ? profilePicture!.substring(1)
+        : profilePicture!;
+
+    return '$baseUrl/$normalizedPath'; // ← Use parameter, not ApiService.baseUrl
+  }
 
   /// ✅ Factory constructor handles both int and string for `id`
   factory User.fromJson(Map<String, dynamic> json) {

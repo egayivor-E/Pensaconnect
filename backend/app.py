@@ -7,7 +7,7 @@ except ImportError as e:
 
 import os
 from pathlib import Path
-from flask import send_from_directory
+from flask import current_app, send_from_directory
 from backend import create_app
 from backend.config import config
 # 🚨 CRITICAL IMPORT: Import cross_origin to solve statusCode: 0 error
@@ -31,6 +31,13 @@ def serve_uploads(filename):
     response.headers.add("Access-Control-Allow-Origin", "*")
     
     return response
+
+
+@app.route('/uploads/<path:filename>')
+def serve_uploaded_file(filename):
+    """Serve uploaded files (avatars, audio, video, images)"""
+    uploads_dir = os.path.join(current_app.root_path, 'uploads')
+    return send_from_directory(uploads_dir, filename)
 
 # Gunicorn / uWSGI entrypoint
 if __name__ == "__main__":

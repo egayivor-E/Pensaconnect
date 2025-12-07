@@ -113,7 +113,7 @@ def list_plans():
     query = StudyPlan.query.filter_by(is_active=True)
 
     if user_id:
-        # Authenticated: show all public plans + user’s own private plans
+        # Authenticated: show all public plans + user's own private plans
         query = query.filter(
             or_(StudyPlan.is_public == True, StudyPlan.author_id == user_id)
         )
@@ -141,7 +141,7 @@ def create_plan():
     if not data or "title" not in data:
         return error_response("Missing required field: title", 400)
     
-      # FIX: Ensure level is uppercase to match enum
+    # FIX: Ensure level is uppercase to match enum
     level = data.get("level", "BEGINNER")
     if level:
         level = level.upper()  # Convert to uppercase
@@ -150,7 +150,6 @@ def create_plan():
     allowed_levels = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'ALL_LEVELS']
     if level not in allowed_levels:
         level = 'BEGINNER'  # Default to BEGINNER if invalid
-
 
     # FIX: Check if user has admin role using 'roles' instead of 'role'
     is_public = data.get("is_public", False)
@@ -226,25 +225,107 @@ def delete_plan(plan_id):
 
 
 # ======================================================
+# ---------------- Progress Endpoints ------------------
+# ======================================================
+
+# ======================================================
+# ---------------- Devotion Progress -------------------
+# ======================================================
+@bible_bp.route("/progress/devotion/<int:devotion_id>", methods=["GET"])
+@jwt_required()
+def get_devotion_progress(devotion_id):
+    """Get user's progress for a specific devotion"""
+    user_id = get_jwt_identity()
+    
+    # Check if devotion exists
+    devotion = Devotion.query.get(devotion_id)
+    if not devotion:
+        return error_response("Devotion not found", 404)
+    
+    # In a real implementation, you might have a DevotionProgress model
+    # For now, return a default structure
+    return success_response({
+        "devotion_id": devotion_id,
+        "user_id": user_id,
+        "completed": False,
+        "last_read": None,
+        "notes": "",
+        "progress": 0
+    })
+
+
+@bible_bp.route("/progress/devotion/<int:devotion_id>", methods=["POST"])
+@jwt_required()
+def update_devotion_progress(devotion_id):
+    """Update user's progress for a devotion"""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    # Check if devotion exists
+    devotion = Devotion.query.get(devotion_id)
+    if not devotion:
+        return error_response("Devotion not found", 404)
+    
+    # In a real implementation, you'd save this to a DevotionProgress model
+    response_data = {
+        "devotion_id": devotion_id,
+        "user_id": user_id,
+        "completed": data.get("completed", False),
+        "last_read": datetime.utcnow().isoformat(),
+        "notes": data.get("notes", ""),
+        "progress": data.get("progress", 100 if data.get("completed") else 50)
+    }
+    
+    return success_response(response_data, "Devotion progress updated")
+
+
+# ======================================================
 # ---------------- Study Plan Progress -----------------
 # ======================================================
-@bible_bp.route("/plans/<int:plan_id>/progress", methods=["GET"])
+@bible_bp.route("/progress/study_plan/<int:plan_id>", methods=["GET"])
 @jwt_required()
-def get_progress(plan_id):
+def get_study_plan_progress(plan_id):
+    """Get user's progress for a specific study plan"""
     user_id = get_jwt_identity()
+    
+    # Check if plan exists
+    plan = StudyPlan.query.get(plan_id)
+    if not plan:
+        return error_response("Study plan not found", 404)
+    
     progress = StudyPlanProgress.query.filter_by(
         user_id=user_id, plan_id=plan_id
     ).first()
-    return success_response(progress.to_dict(include_user=True) if progress else {})
+    
+    if progress:
+        return success_response(progress.to_dict(include_user=True))
+    else:
+        # Return default progress if none exists
+        return success_response({
+            "plan_id": plan_id,
+            "user_id": user_id,
+            "current_day": 1,
+            "completed": False,
+            "started_at": None,
+            "last_updated": None,
+            "progress_percentage": 0
+        })
 
 
-@bible_bp.route("/plans/<int:plan_id>/progress", methods=["POST"])
+@bible_bp.route("/progress/study_plan/<int:plan_id>", methods=["POST"])
 @jwt_required()
-def update_progress(plan_id):
+def update_study_plan_progress(plan_id):
+    """Update user's progress for a study plan"""
     user_id = get_jwt_identity()
     data = request.get_json()
+    
     if not data or "current_day" not in data:
         return error_response("Missing required field: current_day", 400)
+
+    # Check if plan exists
+    plan = StudyPlan.query.get(plan_id)
+    if not plan:
+        return error_response("Study plan not found", 404)
 
     progress = StudyPlanProgress.query.filter_by(
         user_id=user_id, plan_id=plan_id
@@ -253,12 +334,15 @@ def update_progress(plan_id):
     if progress:
         progress.current_day = data["current_day"]
         progress.completed = data.get("completed", progress.completed)
+        progress.last_updated = datetime.utcnow()
     else:
         progress = StudyPlanProgress(
             user_id=user_id,
             plan_id=plan_id,
             current_day=data["current_day"],
             completed=data.get("completed", False),
+            started_at=datetime.utcnow(),
+            last_updated=datetime.utcnow()
         )
         db.session.add(progress)
 
@@ -267,10 +351,24 @@ def update_progress(plan_id):
 
 
 # ======================================================
+# ---------------- Legacy Progress Routes (for compatibility) --
+# ======================================================
+@bible_bp.route("/plans/<int:plan_id>/progress", methods=["GET"])
+@jwt_required()
+def get_plan_progress_legacy(plan_id):
+    """Legacy endpoint for study plan progress"""
+    return get_study_plan_progress(plan_id)
+
+
+@bible_bp.route("/plans/<int:plan_id>/progress", methods=["POST"])
+@jwt_required()
+def update_plan_progress_legacy(plan_id):
+    """Legacy endpoint for updating study plan progress"""
+    return update_study_plan_progress(plan_id)
+
+
+# ======================================================
 # ---------------- Archives ----------------------------
-# ======================================================
-# ======================================================
-# ---------------- Study Plan Archive ------------------
 # ======================================================
 @bible_bp.route("/plans/<int:plan_id>/archive", methods=["POST"])
 @jwt_required()
@@ -330,7 +428,6 @@ def archive_devotion(devotion_id):
     db.session.commit()
     
     return success_response(archive.to_dict(include_author=True), "Devotion archived", 201)
-
 
 
 @bible_bp.route("/archives", methods=["GET"])

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/repositories/user_repository.dart';
 import 'package:pensaconnect/utils/forum_event_bus.dart';
 import 'package:pensaconnect/utils/role_utils.dart';
 import 'package:provider/provider.dart';
@@ -444,7 +445,11 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
               children: [
                 CircleAvatar(
                   backgroundImage: post.authorAvatar != null
-                      ? NetworkImage(post.authorAvatar!)
+                      ? NetworkImage(
+                          UserRepository.getProfilePictureUrl(
+                            post.authorAvatar,
+                          ), // ← FIXED!
+                        )
                       : null,
                   child: post.authorAvatar == null
                       ? Text(
@@ -688,7 +693,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
       child: ListTile(
         leading: CircleAvatar(
           backgroundImage: comment.authorAvatar != null
-              ? NetworkImage(comment.authorAvatar!)
+              ? NetworkImage(
+                  UserRepository.getProfilePictureUrl(comment.authorAvatar),
+                )
               : null,
           child: comment.authorAvatar == null
               ? Text(

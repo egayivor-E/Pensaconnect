@@ -86,4 +86,17 @@ class UserRepository {
       return null;
     }
   }
+
+  static String getProfilePictureUrl(String? relativePath) {
+    if (relativePath == null || relativePath.isEmpty) {
+      return '${ApiService.baseUrl}/uploads/default-avatar.png';
+    }
+
+    final baseUrl = ApiService.baseUrl;
+    final normalizedPath = relativePath.startsWith('/')
+        ? relativePath.substring(1)
+        : relativePath;
+
+    return '$baseUrl/$normalizedPath';
+  }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/repositories/user_repository.dart';
 import 'package:provider/provider.dart';
 import 'package:animations/animations.dart';
 import '../providers/threads_provider.dart';
@@ -13,6 +14,7 @@ class ThreadsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final threadsProvider = context.watch<ThreadsProvider>();
+    // ignore: unused_local_variable
     final authProvider = context.read<AuthProvider>();
 
     return Scaffold(
@@ -153,7 +155,11 @@ class ThreadsScreen extends StatelessWidget {
                                           backgroundImage:
                                               t['author_avatar'] != null &&
                                                   t['author_avatar'].isNotEmpty
-                                              ? NetworkImage(t['author_avatar'])
+                                              ? NetworkImage(
+                                                  UserRepository.getProfilePictureUrl(
+                                                    t['author_avatar'],
+                                                  ), // ← REUSE!
+                                                )
                                               : null,
                                           child: t['author_avatar'] == null
                                               ? const Icon(

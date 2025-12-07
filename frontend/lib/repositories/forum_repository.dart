@@ -35,7 +35,9 @@ class ForumRepository {
   }
 
   Future<void> toggleReaction(int threadId, String type) async {
-    final uri = Uri.parse("$apiBaseUrl/api/v1/forums/threads/$threadId/react");
+    final uri = Uri.parse(
+      "${Config.apiBaseUrl}/forums/threads/$threadId/react",
+    );
     final headers = await ApiService.authHeaders();
 
     final response = await http.post(
@@ -78,7 +80,7 @@ class ForumRepository {
     required String content,
     List<PlatformFile>? attachments,
   }) async {
-    final uri = Uri.parse("$apiBaseUrl/api/v1/forums/posts");
+    final uri = Uri.parse("${Config.apiBaseUrl}/forums/posts");
     final request = http.MultipartRequest("POST", uri);
 
     request.headers.addAll(await ApiService.authHeaders());
@@ -164,7 +166,7 @@ class ForumRepository {
     required String content,
     List<PlatformFile>? attachments,
   }) async {
-    final uri = Uri.parse("$apiBaseUrl/api/v1/forums/posts/$postId/comments");
+    final uri = Uri.parse("${Config.apiBaseUrl}/forums/posts/$postId/comments");
     final request = http.MultipartRequest("POST", uri);
     request.headers.addAll(await ApiService.authHeaders());
 

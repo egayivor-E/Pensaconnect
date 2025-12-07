@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:pensaconnect/repositories/user_repository.dart';
 import 'package:provider/provider.dart';
 import '../models/prayer_request.dart';
 import '../repositories/prayer_repository.dart';
@@ -404,7 +405,11 @@ class _PrayerCardState extends State<_PrayerCard> {
               children: [
                 CircleAvatar(
                   backgroundImage: widget.request.userProfilePic != null
-                      ? NetworkImage(widget.request.userProfilePic!)
+                      ? NetworkImage(
+                          UserRepository.getProfilePictureUrl(
+                            widget.request.userProfilePic,
+                          ), // ← FIXED!
+                        )
                       : null,
                   child: widget.request.userProfilePic == null
                       ? const Icon(Icons.person)

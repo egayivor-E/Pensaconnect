@@ -13,7 +13,8 @@ from backend.models import (
     Notification, NotificationType, Donation, DonationNotification,
     Testimony, TestimonyComment, TestimonyLike,
     GroupChat, GroupMember, GroupMessage,
-    ForumCategory, ForumThread, ForumPost, ForumComment, ForumAttachment, ForumLike
+    ForumCategory, ForumThread, ForumPost, ForumComment, ForumAttachment, ForumLike,
+    WorshipSong
 )
 
 from wtforms.fields.core import UnboundField
@@ -163,6 +164,34 @@ class GroupMemberAdmin(SafeModelView):
 class GroupMessageAdmin(SafeModelView):
     column_list = ["id", "group_chat_id", "sender_id", "content", "created_at"]
 
+
+class WorshipSongAdmin(SafeModelView):
+    column_list = ["id", "title", "artist", "media_type", "category", "duration", "download_count", "created_at"]
+    column_searchable_list = ['title', 'artist']
+    column_filters = ['media_type', 'category', 'created_at']
+    column_sortable_list = ['created_at', 'download_count', 'duration']
+    
+    form_columns = [
+        'title', 'artist', 'media_type', 'category', 
+        'video_id', 'video_url', 'audio_url', 'thumbnail_url',
+        'lyrics', 'duration', 'file_size', 'allow_download'
+    ]
+    
+    form_args = {
+        'title': {'validators': [validators.DataRequired()]},
+        'artist': {'validators': [validators.DataRequired()]},
+        'duration': {'validators': [validators.NumberRange(min=0)]},
+        'file_size': {'validators': [validators.NumberRange(min=0)]},
+    }
+    
+    def on_model_change(self, form, model, is_created):
+        # Auto-set thumbnail for YouTube videos
+        if model.media_type == 'youtube' and model.video_id and not model.thumbnail_url:
+            model.thumbnail_url = f'https://img.youtube.com/vi/{model.video_id}/hqdefault.jpg'
+        return super().on_model_change(form, model, is_created)
+
+
+
 # ---------------------------------------------------
 # Build Admin Panel
 # ---------------------------------------------------
@@ -218,3 +247,6 @@ admin.add_view(SafeModelView(ForumPost, db.session, category="🗣️ Forum"))
 admin.add_view(SafeModelView(ForumComment, db.session, category="🗣️ Forum"))
 admin.add_view(SafeModelView(ForumAttachment, db.session, category="🗣️ Forum"))
 admin.add_view(SafeModelView(ForumLike, db.session, category="🗣️ Forum"))
+
+# --- Worship & Music --- (ADD THIS NEW CATEGORY)
+admin.add_view(WorshipSongAdmin(WorshipSong, db.session, category="🎵 Worship & Music"))

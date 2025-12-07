@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../repositories/group_chat_repository.dart';
 import '../models/group_message_model.dart';
+import '../services/socketio_service.dart';
 
 class GroupChatDetailScreen extends StatefulWidget {
   final int groupId;
@@ -42,14 +45,41 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   Future<void> _initialize() async {
     _groupRepo = context.read<GroupChatRepository>();
 
+    // ✅ Initialize Socket.IO service FIRST
+    try {
+      await SocketIoService().initialize();
+      debugPrint('✅ SocketIoService initialized');
+    } catch (e) {
+      debugPrint('❌ SocketIoService init error: $e');
+    }
+
     // Load initial messages
     await _loadInitialMessages();
 
     // Start real-time listening
     _setupRealtimeListener();
 
+    // ✅ Join WebSocket room with delay
+    await Future.delayed(const Duration(milliseconds: 500));
+    _joinSocketRoom();
+
     // Setup typing detection
     _setupTypingDetection();
+  }
+
+  void _joinSocketRoom() {
+    try {
+      debugPrint('🚀 Joining WebSocket room for group ${widget.groupId}');
+
+      // Call watchMessages which will trigger connection
+      _groupRepo.watchMessages(widget.groupId);
+
+      // Manually emit join_group if needed
+      final socketService = SocketIoService();
+      socketService.debugConnectionStatus(widget.groupId);
+    } catch (e) {
+      debugPrint('⚠️ Error joining socket room: $e');
+    }
   }
 
   Future<void> _loadInitialMessages() async {
@@ -168,80 +198,295 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   }
 
   Widget _buildMessageBubble(GroupMessage message) {
-    final isMe = message.sender?['id'] == 1; // Replace with actual user ID
+    final currentUserId = context.read<AuthProvider>().currentUser?.id;
+    final isMe = message.sender?['id'] == currentUserId;
+
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
+    // Get profile picture URL
+    final profilePictureUrl = _getProfilePictureUrl(message.sender);
+    final fullName = message.sender?['full_name'] ?? 'Unknown User';
+
+    // Calculate if message is short for better sizing
+    final messageLength = message.content.length;
+    final isShortMessage = messageLength < 25;
+    final isVeryShort = messageLength < 10;
+
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         mainAxisAlignment: isMe
             ? MainAxisAlignment.end
             : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isMe) ...[
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: colorScheme.primary.withOpacity(0.2),
-              child: Text(
-                _getInitials(message.sender?['full_name'] ?? 'U'),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
-                ),
-              ),
-            ),
+            _buildModernProfileAvatar(profilePictureUrl, fullName),
             const SizedBox(width: 8),
           ],
           Flexible(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isMe ? colorScheme.primary : colorScheme.surfaceVariant,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 2,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!isMe)
-                    Text(
-                      message.sender?['full_name'] ?? 'Unknown User',
+            child: Column(
+              crossAxisAlignment: isMe
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                if (!isMe)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12, bottom: 4),
+                    child: Text(
+                      fullName,
                       style: theme.textTheme.bodySmall?.copyWith(
                         fontWeight: FontWeight.w600,
-                        color: colorScheme.onSurface.withOpacity(0.7),
+                        color: colorScheme.onSurface.withOpacity(0.6),
+                        letterSpacing: -0.2,
                       ),
                     ),
-                  Text(
-                    message.content,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: isMe
-                          ? colorScheme.onPrimary
-                          : colorScheme.onSurface,
-                    ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _formatTime(message.createdAt),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: isMe
-                          ? colorScheme.onPrimary.withOpacity(0.7)
-                          : colorScheme.onSurface.withOpacity(0.5),
-                    ),
+                Container(
+                  constraints: BoxConstraints(
+                    maxWidth: isVeryShort
+                        ? double
+                              .infinity // Unlimited width (will shrink to content)
+                        : MediaQuery.of(context).size.width * 0.75,
                   ),
-                ],
-              ),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isShortMessage ? 14 : 16,
+                    vertical: isShortMessage ? 10 : 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isMe
+                        ? colorScheme.primary
+                        : colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(18),
+                      topRight: const Radius.circular(18),
+                      bottomLeft: isMe
+                          ? const Radius.circular(18)
+                          : const Radius.circular(4),
+                      bottomRight: isMe
+                          ? const Radius.circular(4)
+                          : const Radius.circular(18),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isMe ? 0.1 : 0.05),
+                        blurRadius: 6,
+                        offset: const Offset(0, 1),
+                        spreadRadius: 0.5,
+                      ),
+                    ],
+                    gradient: isMe
+                        ? LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              colorScheme.primary,
+                              colorScheme.primary.withOpacity(0.95),
+                            ],
+                          )
+                        : null,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        message.content,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: isMe ? Colors.white : colorScheme.onSurface,
+                          height: 1.4,
+                          letterSpacing: -0.1,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _formatModernTime(message.createdAt),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: isMe
+                                  ? Colors.white.withOpacity(0.8)
+                                  : colorScheme.onSurface.withOpacity(0.4),
+                              fontWeight: FontWeight.w400,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          if (isMe) ...[
+                            const SizedBox(width: 6),
+                            _buildMessageStatus(message),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
+          if (isMe) ...[
+            const SizedBox(width: 8),
+            _buildModernProfileAvatar(profilePictureUrl, fullName),
+          ],
         ],
       ),
     );
+  }
+
+  Widget _buildModernProfileAvatar(String? profilePictureUrl, String fullName) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: colorScheme.surfaceContainerHighest.withOpacity(0.3),
+          width: 1.5,
+        ),
+      ),
+      child: ClipOval(
+        child: profilePictureUrl != null && profilePictureUrl.isNotEmpty
+            ? Image.network(
+                profilePictureUrl,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return _buildFallbackAvatar(colorScheme, fullName);
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  return _buildFallbackAvatar(colorScheme, fullName);
+                },
+              )
+            : _buildFallbackAvatar(colorScheme, fullName),
+      ),
+    );
+  }
+
+  Widget _buildFallbackAvatar(ColorScheme colorScheme, String fullName) {
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.primary.withOpacity(0.1),
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          _getInitials(fullName),
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: colorScheme.primary,
+            letterSpacing: -0.2,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageStatus(GroupMessage message) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    if (message.readBy.length > 1) {
+      // Message read by multiple people
+      return Icon(
+        Icons.done_all_rounded,
+        size: 14,
+        color: Colors.white.withOpacity(0.9),
+      );
+    } else if (message.readBy.isNotEmpty) {
+      // Message delivered and read
+      return Icon(
+        Icons.done_all_rounded,
+        size: 14,
+        color: colorScheme.secondary.withOpacity(0.9),
+      );
+    } else {
+      // Message sent (not read yet)
+      return Icon(
+        Icons.done_rounded,
+        size: 14,
+        color: Colors.white.withOpacity(0.7),
+      );
+    }
+  }
+
+  String _formatModernTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+
+    if (messageDate == today) {
+      return DateFormat('h:mm a').format(dateTime).toLowerCase();
+    } else if (messageDate == yesterday) {
+      return 'Yesterday';
+    } else if (now.difference(dateTime).inDays < 7) {
+      return DateFormat('EEE').format(dateTime);
+    } else {
+      return DateFormat('MMM d').format(dateTime);
+    }
+  }
+
+  // Don't forget to import this at the top of your file:
+  // import 'package:intl/intl.dart';
+
+  String? _getProfilePictureUrl(Map<String, dynamic>? sender) {
+    if (sender == null) return null;
+
+    // Check multiple possible field names
+    final profilePicture =
+        sender['profile_picture'] ??
+        sender['profilePicture'] ??
+        sender['avatar'] ??
+        sender['profile_image'] ??
+        sender['senderProfilePicture'];
+
+    if (profilePicture == null || profilePicture.toString().isEmpty) {
+      return null;
+    }
+
+    final String profilePictureStr = profilePicture.toString();
+
+    // Check if it's already a full URL
+    if (profilePictureStr.startsWith('http://') ||
+        profilePictureStr.startsWith('https://')) {
+      return profilePictureStr;
+    }
+
+    // If it's a relative path, prepend your base URL
+    final baseUrl =
+        'http://127.0.0.1:5000'; // Replace with your actual server URL
+
+    // Remove leading slash if present to avoid double slashes
+    final cleanPath = profilePictureStr.startsWith('/')
+        ? profilePictureStr.substring(1)
+        : profilePictureStr;
+
+    return '$baseUrl/$cleanPath';
+  }
+
+  String _getInitials(String name) {
+    if (name.isEmpty) return 'U';
+    final parts = name.split(' ');
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
+
+  String _formatTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+
+    if (messageDate == today) {
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    }
   }
 
   Widget _buildConnectionStatus() {
@@ -287,7 +532,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
         children: [
           CircleAvatar(
             radius: 16,
-            backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+            backgroundColor: Theme.of(
+              context,
+            ).colorScheme.surfaceContainerHighest,
             child: Text(
               '?',
               style: Theme.of(
@@ -299,7 +546,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceVariant,
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(16),
             ),
             child: Row(
@@ -356,7 +603,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                   borderSide: BorderSide.none,
                 ),
                 filled: true,
-                fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                fillColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 12,
@@ -402,27 +651,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     );
   }
 
-  String _getInitials(String name) {
-    if (name.isEmpty) return 'U';
-    final parts = name.split(' ');
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    }
-    return name[0].toUpperCase();
-  }
-
-  String _formatTime(DateTime dateTime) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
-
-    if (messageDate == today) {
-      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
-    } else {
-      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
-    }
-  }
-
   @override
   void dispose() {
     _messageSubscription?.cancel();
@@ -436,7 +664,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

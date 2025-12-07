@@ -1,6 +1,7 @@
 // lib/screens/profile_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/config/config.dart';
 import '../models/user.dart';
 import '../repositories/user_repository.dart';
 import '../services/auth_service.dart';
@@ -159,7 +160,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       backgroundColor: theme.colorScheme.primary.withOpacity(0.08),
       backgroundImage:
           (user.profilePicture != null && user.profilePicture!.isNotEmpty)
-          ? NetworkImage(user.profilePicture!)
+          ? NetworkImage(user.getProfilePictureUrl(Config.baseUrl)) // ← FIXED!
           : null,
       child: (user.profilePicture == null || user.profilePicture!.isEmpty)
           ? Icon(

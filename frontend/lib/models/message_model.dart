@@ -5,6 +5,7 @@ class Message {
   final String senderName; // Human-readable name
   final String content; // Message content
   final DateTime timestamp;
+  final String messageType; // ✅ Already defined but missing in constructor
 
   Message({
     this.id,
@@ -13,6 +14,7 @@ class Message {
     required this.senderName,
     required this.content,
     required this.timestamp,
+    required this.messageType, // ✅ Add this to constructor
   });
 
   /// Factory: create a `Message` instance from API JSON
@@ -32,6 +34,7 @@ class Message {
       timestamp:
           DateTime.tryParse(json['timestamp']?.toString() ?? "") ??
           DateTime.now(),
+      messageType: json['message_type']?.toString() ?? 'text', // ✅ Add this
     );
   }
 
@@ -44,6 +47,7 @@ class Message {
       'sender_name': senderName,
       'content': content,
       'timestamp': timestamp.toIso8601String(),
+      'message_type': messageType, // ✅ Add this
     };
   }
 }

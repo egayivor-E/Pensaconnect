@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
+
 class GroupMessage {
   final int id;
   final String uuid;
@@ -15,6 +17,9 @@ class GroupMessage {
   final DateTime updatedAt;
   final bool isActive;
   final Map<String, dynamic>? metaData;
+  final bool isTemporary;
+  final String status;
+  final bool? isLocal;
 
   // Sender details
   final Map<String, dynamic>? sender;
@@ -38,26 +43,105 @@ class GroupMessage {
     this.metaData,
     this.sender,
     this.repliedTo,
+    this.isTemporary = false,
+    this.status = 'sent',
+    this.isLocal = false,
   });
 
+  // Add this additional factory constructor to your GroupMessage class
+  factory GroupMessage.fromSocketIO(Map<String, dynamic> json) {
+    debugPrint('🔌 Creating GroupMessage from Socket.IO data: $json');
+
+    return GroupMessage(
+      id: _parseInt(json['id']),
+      uuid: '', // Socket.IO might not send UUID
+      groupChatId: _parseInt(json['groupId']),
+      senderId: _parseInt(json['sender']?['id']),
+      content: _parseString(json['content']),
+      messageType: _parseString(json['messageType']) ?? 'text',
+      attachments: [], // Socket.IO might not send attachments
+      repliedToId: null,
+      readBy: _parseList(json['readBy']),
+      createdAt: _parseDateTime(json['createdAt']),
+      updatedAt: _parseDateTime(json['createdAt']), // Use same as createdAt
+      isActive: true,
+      sender: _parseMap(json['sender']),
+    );
+  }
+
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
+    debugPrint('🔍 Parsing GroupMessage from JSON (all formats)');
+
+    // Parse sender ID - handle multiple possible field names
+    final senderId = _parseSenderId(json);
+
+    // Parse sender object - handle both formats
+    final sender = _parseSender(json, senderId);
+
     return GroupMessage(
       id: _parseInt(json['id']),
       uuid: _parseString(json['uuid']),
-      groupChatId: _parseInt(json['group_chat_id']),
-      senderId: _parseInt(json['sender_id']),
+      groupChatId: _parseInt(json['group_chat_id'] ?? json['groupId']),
+      senderId: senderId,
       content: _parseString(json['content']),
-      messageType: _parseString(json['message_type']) ?? 'text',
+      messageType:
+          _parseString(json['message_type'] ?? json['messageType']) ?? 'text',
       attachments: _parseList(json['attachments']),
-      repliedToId: _parseNullableInt(json['replied_to_id']),
-      readBy: _parseList(json['read_by']),
-      createdAt: _parseDateTime(json['created_at']),
-      updatedAt: _parseDateTime(json['updated_at']),
-      isActive: _parseBool(json['is_active']),
-      metaData: _parseMap(json['meta_data']),
-      sender: _parseMap(json['sender']),
-      repliedTo: _parseMap(json['replied_to']),
+      repliedToId: _parseNullableInt(
+        json['replied_to_id'] ?? json['repliedToId'],
+      ),
+      readBy: _parseList(json['read_by'] ?? json['readBy']),
+      createdAt: _parseDateTime(json['created_at'] ?? json['createdAt']),
+      updatedAt: _parseDateTime(
+        json['updated_at'] ?? json['updatedAt'] ?? json['createdAt'],
+      ),
+      isActive: _parseBool(json['is_active'] ?? json['isActive']),
+      metaData: _parseMap(json['meta_data'] ?? json['metaData']),
+      sender: sender,
+      repliedTo: _parseMap(json['replied_to'] ?? json['repliedTo']),
     );
+  }
+
+  static int _parseSenderId(Map<String, dynamic> json) {
+    // Try multiple possible field names in order of priority
+    if (json['sender_id'] != null) return _parseInt(json['sender_id']);
+    if (json['senderId'] != null) return _parseInt(json['senderId']);
+    if (json['sender'] != null && json['sender'] is Map) {
+      return _parseInt(json['sender']['id']);
+    }
+    return 0;
+  }
+
+  static Map<String, dynamic>? _parseSender(
+    Map<String, dynamic> json,
+    int senderId,
+  ) {
+    // Case 1: sender is already a complete object (API format)
+    if (json['sender'] is Map && json['sender'] != null) {
+      final senderMap = Map<String, dynamic>.from(json['sender'] as Map);
+      // Ensure it has required fields
+      if (senderMap.containsKey('id')) {
+        return senderMap;
+      }
+    }
+
+    // Case 2: sender details are in root fields (WebSocket format)
+    if (senderId > 0) {
+      return {
+        'id': senderId,
+        'full_name': _parseString(
+          json['senderName'] ?? json['sender_name'] ?? json['senderFullName'],
+        ),
+        'username': _parseString(
+          json['senderUsername'] ?? json['sender_username'],
+        ),
+        'profile_picture': _parseString(
+          json['senderProfilePicture'] ?? json['sender_profile_picture'],
+        ),
+      };
+    }
+
+    return null;
   }
 
   // Helper methods for safe parsing

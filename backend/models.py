@@ -254,6 +254,11 @@ class User(BaseModel,  UserMixin):
         return f"{self.first_name} {self.last_name}"
     
     
+    def update_last_login(self):
+        self.last_login = datetime.utcnow()
+        db.session.commit()
+
+    
     
     
      # --- Status helpers ---
@@ -1481,3 +1486,92 @@ class GroupMessage(BaseModel):
                 "content": self.replied_to.content
             } if self.replied_to else None
         }
+        
+        
+
+
+from flask import current_app
+import os
+
+class WorshipSong(db.Model):
+    __tablename__ = 'worship_songs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    artist = db.Column(db.String(200), nullable=False)
+    video_id = db.Column(db.String(100))  # For YouTube videos
+    video_url = db.Column(db.String(500))  # For uploaded videos
+    audio_url = db.Column(db.String(500))  # For audio files
+    thumbnail_url = db.Column(db.String(500))
+    category = db.Column(db.Integer, default=0)  # 0=English, 1=African
+    media_type = db.Column(db.String(20), default='youtube')  # youtube, video, audio
+    lyrics = db.Column(db.Text)
+    duration = db.Column(db.Integer)  # in seconds
+    file_size = db.Column(db.Integer)  # in bytes (for downloads)
+    allow_download = db.Column(db.Boolean, default=True)
+    download_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'artist': self.artist,
+            'videoId': self.video_id,
+            'videoUrl': self._get_full_url(self.video_url),
+            'audioUrl': self._get_full_url(self.audio_url),
+            'thumbnailUrl': self._get_full_thumbnail_url(),
+            'category': self.category,
+            'mediaType': self.media_type,
+            'lyrics': self.lyrics,
+            'duration': self.duration,
+            'fileSize': self.file_size,
+            'allowDownload': self.allow_download,
+            'downloadCount': self.download_count,
+            'createdAt': self.created_at.isoformat() if self.created_at else datetime.utcnow().isoformat(),
+        }
+    
+    def _get_full_url(self, url):
+        """Convert relative URL to absolute URL"""
+        if not url:
+            return None
+        
+        # If already a full URL or YouTube URL, return as-is
+        if url.startswith('http://') or url.startswith('https://'):
+            return url
+        
+        # Get base URL from Flask config or use default
+        base_url = current_app.config.get('BASE_URL', 'http://localhost:5000')
+        
+        # Ensure URL starts with /
+        if not url.startswith('/'):
+            url = f'/{url}'
+        
+        return f'{base_url}{url}'
+    
+    def _get_full_thumbnail_url(self):
+        """Get full URL for thumbnail, with special handling for YouTube"""
+        if not self.thumbnail_url:
+            # Return default with full URL
+            default_thumb = 'assets/images/worship_icon.jpeg'
+            base_url = current_app.config.get('BASE_URL', 'http://localhost:5000')
+            if not default_thumb.startswith('/'):
+                default_thumb = f'/{default_thumb}'
+            return f'{base_url}{default_thumb}'
+        
+        # YouTube thumbnail
+        if self.video_id and 'youtube.com' in self.thumbnail_url:
+            return self.thumbnail_url
+        
+        # Already full URL
+        if self.thumbnail_url.startswith('http://') or self.thumbnail_url.startswith('https://'):
+            return self.thumbnail_url
+        
+        # Relative URL - convert to absolute
+        base_url = current_app.config.get('BASE_URL', 'http://localhost:5000')
+        if not self.thumbnail_url.startswith('/'):
+            thumb_url = f'/{self.thumbnail_url}'
+        else:
+            thumb_url = self.thumbnail_url
+        
+        return f'{base_url}{thumb_url}'

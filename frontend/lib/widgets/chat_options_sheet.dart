@@ -17,7 +17,7 @@ class ChatOptionsSheet extends StatelessWidget {
             subtitle: const Text("Join and chat with your group"),
             onTap: () {
               Navigator.pop(context);
-              context.go("/group-chats/detail/Youth Fellowship");
+              context.go("/group-chats");
             },
           ),
           ListTile(

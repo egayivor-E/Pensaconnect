@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart'
     show FontAwesome;
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/config.dart';
@@ -24,7 +25,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String? _userName;
+  User? _currentUser; // ✅ Store full user object instead of just name
   List<Activity> _activities = [];
   bool _loading = true;
 
@@ -50,7 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (!mounted) return;
       setState(() {
-        _userName = user?.username ?? "Friend";
+        _currentUser = user; // ✅ Store full user object
         _activities = activities;
         _loading = false;
       });
@@ -58,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint("❌ Error in _loadData: $e");
       if (!mounted) return;
       setState(() {
-        _userName = "Friend";
+        _currentUser = null;
         _activities = [];
         _loading = false;
       });
@@ -83,6 +84,43 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Widget _buildProfileAvatar() {
+    if (_currentUser == null) {
+      return CircleAvatar(
+        radius: 20,
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        child: Icon(
+          Icons.person,
+          color: Theme.of(context).colorScheme.onPrimaryContainer,
+          size: 20,
+        ),
+      );
+    }
+
+    return CircleAvatar(
+      radius: 20,
+      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+      backgroundImage: _currentUser!.profilePicture != null
+          ? NetworkImage(
+              _currentUser!.getProfilePictureUrl(
+                Config
+                    .baseUrl, // ← Use Config.baseUrl instead of ApiService.baseUrl
+              ),
+            )
+          : null,
+      onBackgroundImageError: (exception, stackTrace) {
+        debugPrint('Profile image load error: $exception');
+      },
+      child: _currentUser!.profilePicture == null
+          ? Icon(
+              Icons.person,
+              color: Theme.of(context).colorScheme.onPrimaryContainer,
+              size: 20,
+            )
+          : null,
+    );
   }
 
   Widget _buildSearchField(ThemeData theme) {
@@ -185,10 +223,19 @@ class _HomeScreenState extends State<HomeScreen> {
               child: _buildSearchField(theme),
             ),
           ),
-          IconButton(icon: const Icon(Icons.notifications), onPressed: () {}),
           IconButton(
-            icon: const Icon(Icons.person),
-            onPressed: () => GoRouter.of(context).go('/profile'),
+            icon: const Icon(Icons.notifications),
+            onPressed: () {},
+            tooltip: 'Notifications',
+          ),
+
+          // ✅ PROFILE AVATAR - Now uses actual user data
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: GestureDetector(
+              onTap: () => GoRouter.of(context).go('/profile'),
+              child: _buildProfileAvatar(),
+            ),
           ),
         ],
       );
@@ -213,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                "Welcome back, $_userName!",
+                                "Welcome back, ${_currentUser?.username ?? "Friend"}!", // ✅ Use actual user data
                                 style: theme.textTheme.headlineMedium?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -252,7 +299,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 description: feature['description'] as String,
                                 onPressed: () => GoRouter.of(
                                   context,
-                                ).go(feature['route'] as String),
+                                ).push(feature['route'] as String),
                               );
                             } catch (e) {
                               debugPrint('Error rendering FeatureCard: $e');

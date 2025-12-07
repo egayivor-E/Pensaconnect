@@ -1,7 +1,10 @@
 // lib/screens/edit_profile_screen.dart
+// ignore_for_file: unnecessary_null_comparison, unused_element
+
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Needed for Uint8List
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart'
     as http; // used to build MultipartFile passed to ApiService
@@ -26,8 +29,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _usernameCtrl;
   late TextEditingController _emailCtrl;
 
-  File? _pickedImageFile; // native platforms
-  XFile? _pickedXFile; // for web we keep XFile
+  // 🗑️ REMOVED: File? _pickedImageFile;
+  // 🗑️ REMOVED: XFile? _pickedXFile;
+
+  // ✅ NEW: Store picked image data in bytes for preview (Web/Native)
+  Uint8List? _pickedImageBytes;
+  // ✅ NEW: Keep XFile only for the actual upload logic (provides path/name)
+  XFile? _pickedXFileForUpload;
+
   bool _saving = false;
 
   @override
@@ -45,26 +54,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   // 🖼️ NEW HELPER FUNCTION TO FIX THE URL ISSUE
+  // Simple usage with the repository helper
+  // This is used for the NetworkImage when no new image is picked.
   String? _getProfilePictureUrl() {
-    final String? relativePath = widget.user.profilePicture;
-
-    if (relativePath == null || relativePath.isEmpty) {
-      return null;
-    }
-
-    // 🚨 FIX: Prepend the base URL (e.g., "http://127.0.0.1:5000")
-    final String baseUrl = ApiService.baseUrl;
-
-    // Normalize slashes to ensure the URL is valid
-    final String normalizedBaseUrl = baseUrl.endsWith('/')
-        ? baseUrl.substring(0, baseUrl.length - 1)
-        : baseUrl;
-
-    final String normalizedPath = relativePath.startsWith('/')
-        ? relativePath.substring(1)
-        : relativePath;
-
-    return '$normalizedBaseUrl/$normalizedPath';
+    return UserRepository.getProfilePictureUrl(widget.user.profilePicture);
   }
 
   Future<void> _pickImage() async {
@@ -74,12 +67,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         imageQuality: 85,
       );
       if (xfile == null) return;
-      if (kIsWeb) {
-        // on web keep XFile (no File API available)
-        setState(() => _pickedXFile = xfile);
-      } else {
-        setState(() => _pickedImageFile = File(xfile.path));
-      }
+
+      // Read the bytes asynchronously right after picking (safe for all platforms)
+      final bytes = await xfile.readAsBytes();
+
+      if (!mounted) return;
+      setState(() {
+        _pickedImageBytes = bytes;
+        _pickedXFileForUpload =
+            xfile; // Store XFile for path/name access during upload
+      });
     } catch (e) {
       debugPrint('Image pick error: $e');
       if (!mounted) return;
@@ -102,39 +99,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       };
       final updated = await _repo.updateUserProfile(widget.user.id, updates);
 
-      // 2) If an image was picked, upload it to avatar endpoint
-      if ((_pickedImageFile != null || _pickedXFile != null)) {
-        // Build MultipartFile for ApiService
-        http.MultipartFile? mfile;
+      // 2) If an image was picked (we have bytes), upload it
+      if (_pickedImageBytes != null && _pickedXFileForUpload != null) {
+        // ✅ Simplified upload logic: always use bytes now
+        http.MultipartFile mfile = http.MultipartFile.fromBytes(
+          'avatar',
+          _pickedImageBytes!,
+          filename:
+              _pickedXFileForUpload!.name, // Use the stored XFile for filename
+        );
 
-        if (kIsWeb && _pickedXFile != null) {
-          // web: read bytes from XFile
-          final bytes = await _pickedXFile!.readAsBytes();
-          mfile = http.MultipartFile.fromBytes(
-            'avatar',
-            bytes,
-            filename: _pickedXFile!.name,
-          );
-        } else if (_pickedImageFile != null) {
-          // native: from path
-          mfile = await http.MultipartFile.fromPath(
-            'avatar',
-            _pickedImageFile!.path,
-          );
-        }
+        // Use ApiService.postMultipart('users/me/avatar')
+        final resp = await ApiService.postMultipart(
+          'users/me/avatar',
+          files: [mfile],
+        );
 
-        if (mfile != null) {
-          // Use ApiService.postMultipart('users/me/avatar')
-          final resp = await ApiService.postMultipart(
-            'users/me/avatar',
-            files: [mfile],
-          );
-
-          // ApiService.postMultipart returns http.Response (after handling)
-          // After success, parse response body and refresh user object below
-          // (we'll refresh by re-fetching current user)
-          debugPrint('Avatar upload status: ${resp.statusCode}');
-        }
+        debugPrint('Avatar upload status: ${resp.statusCode}');
       }
 
       // 3) Re-fetch the current user to get updated profilePicture/fields
@@ -168,18 +149,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Widget _buildAvatarPreview(double radius) {
-    // 🚨 FIX USAGE: Get the corrected URL using the new helper
-    final profileUrl = _getProfilePictureUrl();
     ImageProvider? provider;
 
-    if (_pickedImageFile != null) {
-      provider = FileImage(_pickedImageFile!);
-    } else if (_pickedXFile != null) {
-      // web preview from XFile is okay
-      provider = NetworkImage(_pickedXFile!.path);
-    } else if (profileUrl != null && profileUrl.isNotEmpty) {
-      // This NetworkImage now uses the full, web-accessible URL
-      provider = NetworkImage(profileUrl);
+    // 1. New Image Picked (Use stored bytes for preview on all platforms)
+    if (_pickedImageBytes != null) {
+      provider = MemoryImage(_pickedImageBytes!);
+    }
+    // 2. Existing Profile Picture (NetworkImage)
+    else {
+      // ✅ FIX: Use the repository helper to get the full absolute URL
+      final profileUrl = UserRepository.getProfilePictureUrl(
+        widget.user.profilePicture,
+      );
+
+      if (profileUrl != null && profileUrl.isNotEmpty) {
+        provider = NetworkImage(profileUrl);
+      }
     }
 
     return Stack(
@@ -187,6 +172,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       children: [
         CircleAvatar(
           radius: radius,
+          // Fallback to a plain color/icon if provider is null
+          backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
           backgroundImage: provider,
           child: provider == null ? const Icon(Icons.person, size: 36) : null,
         ),

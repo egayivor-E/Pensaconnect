@@ -111,7 +111,7 @@ class AppDrawer extends StatelessWidget {
                   context,
                   icon: Icons.help,
                   title: 'Help & Support',
-                  route: '/help',
+                  route: '/help-support',
                 ),
               ],
             ),

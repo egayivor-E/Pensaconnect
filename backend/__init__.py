@@ -17,8 +17,9 @@ from backend.routes.admin_auth import admin_auth
 
 # ✅ ADD WEBSOCKET IMPORTS
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_jwt_extended import decode_token
 
-from backend.config import ProductionConfig, DevelopmentConfig, TestingConfig, StagingConfig
+from backend.config import ProductionConfig, DevelopmentConfig, RenderConfig, TestingConfig, StagingConfig
 from backend.extensions import (
     configure_extensions, db, limiter, jwt, 
     cache, init_celery, celery
@@ -58,128 +59,256 @@ def _set_csp_headers(app: Flask):
         response.headers["Content-Security-Policy"] = csp
         return response
 
-# ✅ ADD WEBSOCKET EVENT HANDLERS
+# ✅ SAFE EMIT HELPER FUNCTION
+def safe_emit(event, data, room=None, skip_sid=None, include_self=True):
+    """Safely emit events with proper context handling"""
+    try:
+        if room:
+            emit(event, data, room=room, skip_sid=skip_sid, include_self=include_self)
+        else:
+            emit(event, data, skip_sid=skip_sid, include_self=include_self)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Emit error for event {event}: {e}")
+        return False
+
+# ✅ ENHANCED WEBSOCKET EVENT HANDLERS
 def _register_websocket_events(socketio_instance):
-    """Register WebSocket event handlers"""
-    
-    @socketio_instance.on('connect')
-    def handle_connect():
-        logger.info(f"🔌 WebSocket client connected: {request.sid}")
-        emit('connected', {'message': 'Connected to WebSocket', 'sid': request.sid})
-    
-    @socketio_instance.on('disconnect')
-    def handle_disconnect():
-        logger.info(f"🔌 WebSocket client disconnected: {request.sid}")
-    
-    @socketio_instance.on('join_group')
-    def handle_join_group(data):
+    """
+    Production-ready WebSocket event handlers.
+    Tracks connected users, rooms, typing, and safe message delivery.
+    """
+    connected_users = {}  # {socket_id: {'user_id': int, 'rooms': set, 'connected_at': datetime}}
+    user_typing = {}      # {group_id: set(user_ids)}
+
+    # ---------------- Helper Functions ----------------
+    def safe_emit(event, data, room=None, skip_sid=None, include_self=True):
+        """Emit safely with logging."""
         try:
-            group_id = data.get('groupId')
-            if group_id:
-                room_name = f'group_{group_id}'
-                join_room(room_name)
-                logger.info(f"👥 Client {request.sid} joined group {group_id}")
-                emit('joined_group', {
-                    'message': f'Joined group {group_id}',
-                    'groupId': group_id
-                }, room=request.sid)
+            if room:
+                socketio_instance.emit(event, data, room=room, skip_sid=skip_sid, include_self=include_self)
             else:
-                emit('error', {'message': 'Missing groupId'})
+                socketio_instance.emit(event, data, skip_sid=skip_sid, include_self=include_self)
+            return True
         except Exception as e:
-            logger.error(f"Error joining group: {e}")
-            emit('error', {'message': str(e)})
-    
-    @socketio_instance.on('leave_group')
+            logger.error(f"Emit error for event '{event}': {e}")
+            return False
+
+    def get_connected_users_count(group_id):
+        """Count users in a specific group room."""
+        room_name = f"group_{group_id}"
+        return sum(1 for u in connected_users.values() if room_name in u.get('rooms', set()))
+
+    def _is_rate_limited(user_id, group_id):
+        """Simple memory-based rate limiting for free tier"""
+        import time
+        from flask import current_app
+        
+        if not hasattr(current_app, 'rate_limit_store'):
+            current_app.rate_limit_store = {}
+        
+        key = f"{user_id}:{group_id}"
+        current_time = time.time()
+        
+        # Initialize for this key
+        if key not in current_app.rate_limit_store:
+            current_app.rate_limit_store[key] = []
+        
+        # Clean old entries (older than 1 minute)
+        current_app.rate_limit_store[key] = [
+            t for t in current_app.rate_limit_store[key]
+            if current_time - t < 60  # 1 minute window
+        ]
+        
+        # Check limit (10 messages per minute)
+        if len(current_app.rate_limit_store[key]) >= 10:
+            return True
+        
+        # Add this request
+        current_app.rate_limit_store[key].append(current_time)
+        return False
+
+    # ---------------- Connection ----------------
+    @socketio_instance.on("connect")
+    def handle_connect(auth=None):
+        try:
+            token = request.args.get("token")
+            if not token:
+                logger.warning(f"No token provided for {request.sid}")
+                return False  # reject connection
+
+            decoded = decode_token(token)
+            user_id = decoded.get("sub")
+            if not user_id:
+                logger.warning(f"Invalid token payload: {request.sid}")
+                return False
+
+            connected_users[request.sid] = {
+                "user_id": user_id,
+                "rooms": set(),
+                "connected_at": datetime.utcnow()
+            }
+
+            safe_emit("connected", {
+                "status": "success",
+                "sid": request.sid,
+                "userId": user_id,
+                "timestamp": datetime.utcnow().isoformat()
+            }, room=request.sid)
+
+            logger.info(f"✅ User {user_id} connected via WebSocket (SID: {request.sid})")
+
+        except Exception as e:
+            logger.error(f"WebSocket authentication failed: {e}")
+            return False
+
+    @socketio_instance.on("disconnect")
+    def handle_disconnect():
+        user_info = connected_users.pop(request.sid, None)
+        if user_info:
+            logger.info(f"❌ User {user_info['user_id']} disconnected (SID: {request.sid})")
+        else:
+            logger.info(f"❌ Unknown SID disconnected: {request.sid}")
+
+    # ---------------- Join / Leave Rooms ----------------
+    @socketio_instance.on("join_group")
+    def handle_join_group(data):
+        group_id = int(data.get("groupId"))
+        room = f"group_{group_id}"
+        join_room(room)
+
+        if request.sid in connected_users:
+            connected_users[request.sid]["rooms"].add(room)
+
+        safe_emit("joined", {"groupId": group_id}, room=request.sid)
+        logger.info(f"✅ User {request.sid} joined room {room}")
+
+    @socketio_instance.on("leave_group")
     def handle_leave_group(data):
-        try:
-            group_id = data.get('groupId')
-            if group_id:
-                room_name = f'group_{group_id}'
-                leave_room(room_name)
-                logger.info(f"👥 Client {request.sid} left group {group_id}")
-                emit('left_group', {
-                    'message': f'Left group {group_id}',
-                    'groupId': group_id
-                }, room=request.sid)
-        except Exception as e:
-            logger.error(f"Error leaving group: {e}")
-    
-    @socketio.on("new_message")
-    def handle_new_message(data):
-        from backend.models import db, User, GroupMessage
+        group_id = int(data.get("groupId"))
+        room = f"group_{group_id}"
+        leave_room(room)
 
+        if request.sid in connected_users:
+            connected_users[request.sid]["rooms"].discard(room)
+
+        safe_emit("left", {"groupId": group_id}, room=request.sid)
+        logger.info(f"⚠️ User {request.sid} left room {room}")
+
+        # ---------------- Messaging ----------------
+
+    @socketio_instance.on("send_message")
+    def handle_send_message(data):
         try:
-            group_id = data.get("groupId")
+            logger.debug(f"DEBUG send_message received data: {data}")
+            
+            # Get user info
+            user_info = connected_users.get(request.sid, {})
+            user_id = user_info.get("user_id")
+            
+            if not user_id:
+                raise Exception("Unauthenticated socket - user not found in connected_users")
+            
+            # Get message data
+            group_id = data.get("groupId") or data.get("group_id")
             content = data.get("content")
-            sender_id = data.get("senderId")
-
-            if not group_id or not content or not sender_id:
-                emit("error", {"message": "Missing required fields"})
-                return
-
-            # ✅ Fetch actual user instance
-            sender = db.session.get(User, sender_id)
-            if not sender:
-                emit("error", {"message": "Sender not found"})
-                return
-
-            # ✅ Create and save message
-            new_msg = GroupMessage(
-            group_chat_id=group_id,  # ✅ Correct field name
-            sender_id=sender_id,
-            content=content,
+            
+            logger.debug(f"DEBUG: group_id={group_id}, content={content}")
+            
+            # Validate data
+            if group_id is None:
+                raise ValueError("Missing groupId")
+            if content is None:
+                raise ValueError("Missing content")
+            
+            group_id = int(group_id)
+            
+            if not content.strip():
+                raise Exception("Message content empty")
+            
+            if _is_rate_limited(user_id, group_id):
+                raise Exception("Rate limit exceeded")
+            
+            # ✅ USE THE CORRECT MODEL: GroupMessage
+            from backend.models import db, GroupMessage
+            from datetime import datetime
+            
+            # Create the message
+            message = GroupMessage(
+                group_chat_id=group_id,
+                sender_id=user_id,
+                content=content.strip(),
+                message_type='text',
+                created_at=datetime.utcnow()
             )
-            db.session.add(new_msg)
+            
+            db.session.add(message)
             db.session.commit()
-
-            # ✅ Broadcast to group room
-            emit(
-                "message_received",
-                {
-                    "id": new_msg.id,
-                    "groupId": group_id,
-                    "content": new_msg.content,
-                    "createdAt": new_msg.created_at.isoformat(),
-                    "sender": {
-                        "id": sender.id,
-                        "full_name": getattr(sender, "full_name", sender.username),
-                        "avatar": getattr(sender, "avatar_url", None),
-                    },
-                },
-                room=f"group_{group_id}",
-                include_self=True,
+            
+            # Format message for sending
+            message_data = {
+                "id": message.id,
+                "groupId": group_id,
+                "senderId": user_id,
+                "content": content.strip(),
+                "messageType": message.message_type,
+                "createdAt": message.created_at.isoformat(),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            # Add sender info
+            try:
+                from backend.models import User
+                user = User.query.get(user_id)
+                if user:
+                    message_data["senderName"] = user.get_full_name() if hasattr(user, 'get_full_name') else user.username
+                    message_data["senderUsername"] = user.username
+                    message_data["senderProfilePicture"] = user.profile_picture
+            except Exception as e:
+                logger.warning(f"Could not get user info: {e}")
+            
+            # Broadcast to room
+            safe_emit(
+                "new_message",
+                message_data,
+                room=f"group_{group_id}"
             )
-
-            print(f"✅ Broadcasted message from {sender.username} to group {group_id}")
-
+            
+            logger.info(f"📩 User {user_id} sent message to group_{group_id}")
+            
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            emit("error", {"message": str(e)})
+            logger.error(f"❌ Message send failed: {e}")
+            logger.error(f"Error details:", exc_info=True)
+            safe_emit("send_error", {"error": str(e)}, room=request.sid)
+                
+                
+        # ---------------- Typing Indicator ----------------
+        @socketio_instance.on("typing")
+        def handle_typing(data):
+            group_id = int(data.get("groupId"))
+            user_id = connected_users.get(request.sid, {}).get("user_id")
+            if not user_id:
+                return
 
-    @socketio_instance.on('typing_start')
-    def handle_typing_start(data):
-        group_id = data.get('groupId')
-        user_id = data.get('userId')
-        if group_id and user_id:
-            room_name = f'group_{group_id}'
-            emit('user_typing', {
-                'userId': user_id,
-                'groupId': group_id,
-                'typing': True
-            }, room=room_name, include_self=False)
-    
-    @socketio_instance.on('typing_stop')
-    def handle_typing_stop(data):
-        group_id = data.get('groupId')
-        user_id = data.get('userId')
-        if group_id and user_id:
-            room_name = f'group_{group_id}'
-            emit('user_typing', {
-                'userId': user_id,
-                'groupId': group_id,
-                'typing': False
-            }, room=room_name, include_self=False)
+            user_typing.setdefault(group_id, set()).add(user_id)
+            safe_emit("user_typing", {"user_id": user_id, "group_id": group_id}, room=f"group_{group_id}", include_self=False)
+
+        @socketio_instance.on("stop_typing")
+        def handle_stop_typing(data):
+            group_id = int(data.get("group_id"))
+            user_id = connected_users.get(request.sid, {}).get("user_id")
+            if not user_id:
+                return
+
+            user_typing.setdefault(group_id, set()).discard(user_id)
+            safe_emit("user_stop_typing", {"user_id": user_id, "group_id": group_id}, room=f"group_{group_id}", include_self=False)
+
+        # ---------------- Error Handling ----------------
+        @socketio_instance.on_error_default
+        def socket_error_handler(e):
+            logger.error(f"Socket.IO error: {e}")
+
+
 
 def create_app(config_name: Optional[str] = None) -> Flask:
     """Application factory for creating Flask app"""
@@ -199,45 +328,66 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     # ✅ Configure API docs BEFORE creating Api instance
     _configure_api_docs(app)
     
-    # ✅ SIMPLE CORS configuration
+        # ✅ SIMPLE CORS configuration
+    # ✅ FIXED CORS CONFIGURATION
+    # Determine allowed origins based on environment
+    if config_name == 'production' or config_name == 'render' or os.getenv('FLASK_ENV') == 'production':
+        # Production: restricted origins
+        allowed_origins = [
+            "https://pensaconnect.onrender.com",  # Your Render backend URL
+            "http://localhost:*",                  # For local testing
+            "http://127.0.0.1:*",                  # For local testing   # GitHub Pages
+            # Add your production domains when you have them
+        ]
+        print(f"🔒 Production CORS origins: {allowed_origins}")
+    else:
+        # Development: allow localhost for testing
+        allowed_origins = [
+            "http://localhost:58672",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:58672",
+            "http://0.0.0.0:58672",
+        ]
+        print(f"🔓 Development CORS origins: {allowed_origins}")
+
     CORS(app,
-     resources={r"/api/*": {
-         "origins": [
-             "http://localhost:58672",
-             "http://localhost:*",
-             "http://127.0.0.1:*",
-             "http://0.0.0.0:*"
-         ],
-         "methods": ["GET", "POST", "PUT","PATCH", "DELETE", "OPTIONS"],
-         "allow_headers": ["Content-Type", "Authorization"],
-         "supports_credentials": True,
-         "expose_headers": ["Content-Type", "Authorization"],
-         
-         r"/uploads/*": {  # ✅ ADD THIS FOR UPLOADS
-         "origins": "*",  # Allow all origins for images
-         "methods": ["GET", "OPTIONS"],
-         "allow_headers": ["Content-Type"],
-         "expose_headers": ["Content-Type"]
-     }
-     }})
+        resources={
+            r"/api/*": {
+                "origins": allowed_origins,
+                "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization"],
+                "supports_credentials": True,
+                "expose_headers": ["Content-Type", "Authorization"],
+            },
+            r"/uploads/*": {
+                "origins": allowed_origins,  # NOT "*"
+                "methods": ["GET", "OPTIONS"],
+                "allow_headers": ["Content-Type"],
+                "expose_headers": ["Content-Type"]
+            },
+        })
+        # ✅ WEBSOCKET SETUP - MUST BE BEFORE OTHER EXTENSIONS
     
-    # ✅ Extensions AFTER config
-    configure_extensions(app)
-    admin.init_app(app)
-    
-    # ✅ WEBSOCKET SETUP
+    # ✅ FIXED WEBSOCKET SETUP
     global socketio
     socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    logger=True,
-    engineio_logger=True,
-    async_mode='threading'
+        app,
+        cors_allowed_origins=allowed_origins,  # ✅ Use the same allowed origins
+        logger=(config_name != 'production' and config_name != 'render'),  # Disable in production
+        engineio_logger=(config_name != 'production' and config_name != 'render'),  # Disable in production
+        async_mode='gevent',
+        ping_timeout=60,
+        ping_interval=25,
+        max_http_buffer_size=1000000
     )
-
     
-    # ✅ Register WebSocket events
+    # ✅ Register WebSocket events IMMEDIATELY after SocketIO creation
     _register_websocket_events(socketio)
+    
+    # ✅ THEN configure other extensions
+    configure_extensions(app)
+    admin.init_app(app)
     
     # ✅ Secure CSP headers with nonce
     _set_csp_headers(app)
@@ -262,6 +412,15 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     def log_request_info():
         logger.info(f"Incoming request: {request.method} {request.path}")
         logger.info(f"Origin: {request.headers.get('Origin')}")
+
+    # ✅ WebSocket health check
+    @app.route("/ws-health")
+    def ws_health():
+        return jsonify({
+            "status": "healthy", 
+            "websocket": "enabled",
+            "connected_clients": len(socketio.server.manager.rooms.get('/', {}))
+        })
 
     # ✅ Serve frontend (SPA fallback)
     @app.route("/", defaults={"path": ""})
@@ -302,31 +461,45 @@ def create_app(config_name: Optional[str] = None) -> Flask:
         
         logger.info(f"✅ Serving file: {file_path}")
         response = send_from_directory(upload_folder, filename)
-        response.headers.add("Access-Control-Allow-Origin", "*")
         return response
+        
     @app.context_processor
     def inject_nonce():
          return {"csp_nonce": getattr(g, "csp_nonce", "")}
+         
+    logger.info("✅ Flask app created successfully with WebSocket support")
     return app
 
 # ---------------- Config ----------------
 def _configure_app(app: Flask, config_name: Optional[str]):
     if not config_name:
         config_name = os.getenv("FLASK_ENV", "development")
+    
+    # ✅ AUTO-DETECT RENDER
+    if 'RENDER' in os.environ:
+        config_name = 'render'
+        print("🚀 Detected Render environment - using RenderConfig")
 
     config_map = {
         "production": ProductionConfig,
         "staging": StagingConfig,
         "testing": TestingConfig,
         "development": DevelopmentConfig,
+        "render": RenderConfig,  # ✅ Added RenderConfig
     }
-    app.config.from_object(config_map.get(config_name, DevelopmentConfig))
+    
+    config_class = config_map.get(config_name, DevelopmentConfig)  # ✅ Define config_class
+    app.config.from_object(config_class)
+    
+    # ✅ Initialize RenderConfig if needed (AFTER defining config_class)
+    if config_name == 'render' and hasattr(config_class, 'init_app'):
+        config_class.init_app(app)
+    
     app.config.from_pyfile("config.py", silent=True)
     app.config.from_prefixed_env()
 
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["ENV"] = config_name
-
 def _configure_api_docs(app: Flask):
     """Configure OpenAPI / Swagger / Redoc docs - MUST be called before Api() creation"""
     app.config.update(
@@ -433,6 +606,24 @@ def register_health(app: Flask):
         """Simple ping endpoint"""
         return jsonify({"status": "ok", "message": "pong"})
 
-# ✅ ADD THIS: Make socketio available for running the app
+# ✅ Make socketio available for running the app
 def get_socketio():
     return socketio
+
+# ✅ Add this to ensure proper app context for WebSocket
+def run_app():
+    """Run the application with Socket.IO support"""
+    app = create_app()
+    socketio_instance = get_socketio()
+    
+    if socketio_instance is None:
+        raise RuntimeError("Socket.IO not initialized")
+    
+    logger.info("🚀 Starting PensaConnect with WebSocket support...")
+    socketio_instance.run(
+        app, 
+        host='0.0.0.0', 
+        port=5000, 
+        debug=True,
+        allow_unsafe_werkzeug=True
+    )

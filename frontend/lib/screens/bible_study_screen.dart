@@ -1,5 +1,5 @@
 // lib/screens/bible_study_screen.dart
-// ignore_for_file: curly_braces_in_flow_control_structures
+// ignore_for_file: curly_braces_in_flow_control_structures, unused_element
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -40,13 +40,13 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
     _tabController.addListener(_handleTabChange);
 
     // ✅ Delay logic until after first build
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _hasCheckedForActivePlan) return;
+    //WidgetsBinding.instance.addPostFrameCallback((_) async {
+    //if (!mounted || _hasCheckedForActivePlan) return;
 
-      await _checkAndNavigateToActivePlan();
+    //await _checkAndNavigateToActivePlan();
 
-      _hasCheckedForActivePlan = true;
-    });
+    // _hasCheckedForActivePlan = true;
+    // });
   }
 
   Future<void> _checkAndNavigateToActivePlan() async {

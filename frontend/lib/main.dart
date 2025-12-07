@@ -1,4 +1,4 @@
-import 'dart:math' as developer;
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -7,11 +7,15 @@ import 'package:go_router/go_router.dart';
 import 'package:pensaconnect/models/forum_model.dart';
 import 'package:pensaconnect/models/profile_view_model.dart';
 import 'package:pensaconnect/models/user.dart';
+import 'package:pensaconnect/models/worship_song.dart';
+import 'package:pensaconnect/providers/app_providers.dart';
 import 'package:pensaconnect/repositories/forum_repository.dart';
 import 'package:pensaconnect/repositories/group_chat_repository.dart';
 import 'package:pensaconnect/repositories/testimony_repository.dart';
 import 'package:pensaconnect/screens/CreateStudyPlanScreen.dart';
+import 'package:pensaconnect/screens/admin_upload_screen.dart';
 import 'package:pensaconnect/services/api_service.dart';
+import 'package:pensaconnect/services/socketio_service.dart'; // ✅ ADD THIS IMPORT
 import 'package:provider/provider.dart';
 import 'providers/threads_provider.dart';
 
@@ -76,11 +80,31 @@ class Routes {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load .env file with debug info
+  print("🔄 Loading .env file...");
   await dotenv.load(fileName: ".env");
+
+  // Debug: Check if .env variables are loaded
+  print("🎯 .env FILE DEBUG INFO:");
+  print("   - ENABLE_LIVE_CHAT: '${dotenv.env['ENABLE_LIVE_CHAT']}'");
+  print("   - BACKEND_URL: '${dotenv.env['BACKEND_URL']}'");
+  print("   - WEBSOCKET_URL: '${dotenv.env['WEBSOCKET_URL']}'");
+  print("   - YOUTUBE_VIDEO_ID: '${dotenv.env['YOUTUBE_VIDEO_ID']}'");
+  print("   - All loaded keys: ${dotenv.env.keys.length}");
 
   print("🔄 MAIN: Starting ApiService.init()...");
   await ApiService.init();
   print("✅ MAIN: ApiService.init() completed");
+
+  // ✅ Initialize Socket.IO Service
+  print("🔄 Initializing Socket.IO Service...");
+  try {
+    await SocketIoService().initialize();
+    print("✅ Socket.IO Service initialized");
+  } catch (e) {
+    print("❌ Socket.IO Service initialization failed: $e");
+  }
 
   // Debug: Check token status after init
   await ApiService.debugTokenStatus();
@@ -102,6 +126,10 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => PrayerRepository()),
         Provider<TestimonyRepository>(create: (_) => TestimonyRepository()),
         ChangeNotifierProvider(create: (_) => ThreadsProvider()),
+
+        ChangeNotifierProvider(create: (_) => SongProvider()),
+        ChangeNotifierProvider(create: (_) => PlayerProvider()),
+        ChangeNotifierProvider(create: (_) => DownloadProvider()),
 
         // ✅ Dio instance for HTTP
         Provider<Dio>(create: (_) => Dio()),
@@ -125,6 +153,9 @@ Future<void> main() async {
             groupRepo: context.read<GroupChatRepository>(),
           ),
         ),
+
+        // ✅ Socket.IO Service Provider
+        Provider<SocketIoService>(create: (_) => SocketIoService()),
       ],
       child: MyApp(autoLoggedIn: autoLoggedIn),
     ),
@@ -195,7 +226,7 @@ class MyApp extends StatelessWidget {
               },
             ),
             GoRoute(
-              path: 'study-plan/create', // This matches your navigation
+              path: 'study-plan/create',
               builder: (context, state) => const CreateStudyPlanScreen(),
             ),
           ],
@@ -208,13 +239,17 @@ class MyApp extends StatelessWidget {
         ),
         GoRoute(
           path: '/worship/player',
-          builder: (context, state) {
-            final extra = state.extra as Map<String, dynamic>? ?? {};
+          builder: (_, state) {
+            final extra = state.extra! as Map;
             return WorshipPlayerScreen(
-              songs: extra['songs'] as List<Map<String, dynamic>>? ?? [],
-              initialIndex: extra['initialIndex'] as int? ?? 0,
+              songs: List<WorshipSong>.from(extra['songs']),
+              initialIndex: extra['initialIndex'],
             );
           },
+        ),
+        GoRoute(
+          path: '/worship/upload',
+          builder: (context, state) => const AdminUploadScreen(),
         ),
 
         // 🔹 Forums
@@ -301,7 +336,7 @@ class MyApp extends StatelessWidget {
           builder: (context, state) {
             final extras = state.extra as Map<String, dynamic>? ?? {};
             return GroupChatDetailScreen(
-              groupId: extras['groupId'] as int? ?? 0, // ✅ Changed to int
+              groupId: extras['groupId'] as int? ?? 0,
               groupName: extras['groupName'] as String? ?? 'Group Chat',
             );
           },
