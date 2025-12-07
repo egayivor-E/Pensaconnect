@@ -17,20 +17,6 @@ from flask_cors import cross_origin # <-- ADD THIS LINE!
 env = os.getenv("FLASK_ENV", "development")
 app = create_app(config[env])
 
-# ✅ Serve uploaded files (publicly accessible)
-@app.route("/uploads/<path:filename>")
-def serve_uploads(filename):
-    project_root = Path(app.root_path).parent
-    upload_folder = os.path.join(project_root, "uploads")
-    
-    # Get the file response first
-    response = send_from_directory(upload_folder, filename)
-    
-    # 🚨 CRITICAL FIX: Manually add the CORS header to the response
-    # Using "*" is acceptable for development/localhost/known origins
-    response.headers.add("Access-Control-Allow-Origin", "*")
-    
-    return response
 
 # Gunicorn / uWSGI entrypoint
 if __name__ == "__main__":
