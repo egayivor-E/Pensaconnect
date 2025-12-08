@@ -70,3 +70,8 @@ services:
       # Optional: Add Redis if you upgrade
       # - key: REDIS_URL
       #   value: "redis://redis:6379"
+
+      databases:
+  - name: pensaconnect-db
+    region: oregon
+    plan: free 
