@@ -31,11 +31,11 @@ def setup_database():
         
         # Import models
         from backend.models import User, Role
+        from sqlalchemy import or_ # <-- Import 'or_' for conditional filtering
         
         # 1. Create admin role if it doesn't exist
         admin_role = Role.query.filter_by(name='admin').first()
         if not admin_role:
-            # FIXED: Remove 'description' field - Role model doesn't have it
             admin_role = Role(name='admin')
             db.session.add(admin_role)
             db.session.commit()
@@ -43,21 +43,31 @@ def setup_database():
         else:
             print("✅ Admin role exists")
         
-        # 2. Create admin user
-        admin_email = 'gayivore@gmail.com'  # Updated email
-        admin = User.query.filter_by(email=admin_email).first()
+        # 2. Create admin user (FIXED LOGIC)
+        admin_email = 'gayivore@gmail.com'
+        admin_username = 'admin'
+        
+        # Check if a user with the target username OR email already exists.
+        # This prevents the IntegrityError if the 'admin' username exists 
+        # but is tied to an old/different email address.
+        admin = User.query.filter(
+            or_(
+                User.username == admin_username,
+                User.email == admin_email
+            )
+        ).first()
         
         if not admin:
-            # Create admin user
+            # Create admin user only if NO user was found with that username or email
             admin = User(
-                username='admin',
+                username=admin_username,
                 email=admin_email,
                 first_name='Admin',
                 last_name='User',
                 email_verified=True,
                 status='active'
             )
-            admin.set_password('JesusSave123!')  # Updated password
+            admin.set_password('JesusSave123!')
             
             # Add admin role to user
             admin.roles.append(admin_role)
@@ -67,19 +77,18 @@ def setup_database():
             print(f"✅ Admin user created: {admin_email}")
             print("   Password: JesusSave123!")
         else:
-            # Make sure admin has admin role
+            # User exists, ensure they have the admin role
             if admin_role not in admin.roles:
                 admin.roles.append(admin_role)
                 db.session.commit()
-                print(f"✅ Added admin role to existing user: {admin_email}")
+                print(f"✅ Added admin role to existing user: {admin.email}")
             else:
-                print(f"✅ Admin already exists with admin role: {admin_email}")
+                print(f"✅ Admin already exists with admin role: {admin.email}")
             
     except Exception as e:
         print(f"⚠️ Could not create admin: {e}")
         import traceback
         traceback.print_exc()
-
 def run_app():
     """Main application runner"""
     print("=" * 60)
