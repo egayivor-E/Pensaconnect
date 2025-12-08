@@ -2,20 +2,63 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from flask import send_from_directory # Import necessary for serving static files
 
-# Load environment
+# Load environment variables from .env file
 load_dotenv()
 
-# Detect Render
+# Detect Render environment
 RENDER = 'RENDER' in os.environ or os.environ.get('RENDER_EXTERNAL_URL') is not None
 if RENDER:
     os.environ['FLASK_ENV'] = 'production'
-    os.environ['RUN_FRONTEND'] = 'false'
+    # FIX: Set RUN_FRONTEND to 'true' so the server attempts to serve the built Flutter app.
+    os.environ['RUN_FRONTEND'] = 'true'
     print("🚀 RENDER DETECTED: Using production settings")
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 from backend import create_app, db, get_socketio
+
+
+# --- NEW FUNCTION: Frontend Serving Logic ---
+def add_frontend_routes(app):
+    """
+    Adds routes to serve the built Flutter web app (index.html and assets).
+    This logic only runs if the Flutter build was successful.
+    """
+    # Assuming run.py is in the root directory and Flutter is in './frontend'
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__)) 
+    FRONTEND_WEB_DIR = os.path.join(BASE_DIR, 'frontend', 'build', 'web')
+    
+    # CRITICAL CHECK: Ensure the built files exist
+    INDEX_HTML_PATH = os.path.join(FRONTEND_WEB_DIR, 'index.html')
+    if not os.path.exists(INDEX_HTML_PATH):
+        print(f"⚠️ Flutter Frontend build files not found at: {FRONTEND_WEB_DIR}")
+        print("   Falling back to simple API-only serving.")
+        # If frontend is missing, we skip adding frontend routes.
+        # This prevents the whole app from crashing if the build step failed.
+        return 
+
+    print(f"✅ Serving frontend from: {FRONTEND_WEB_DIR}")
+
+    # 1. Main Route: Serves index.html for the root URL
+    @app.route('/', methods=['GET'])
+    def serve_index():
+        return send_from_directory(FRONTEND_WEB_DIR, 'index.html')
+
+    # 2. Catch-all Route: Serves static assets and handles Flutter deep linking
+    @app.route('/<path:path>', methods=['GET'])
+    def serve_static(path):
+        # 1. Try to serve the specific static file (e.g., app.js, fonts, images)
+        if os.path.exists(os.path.join(FRONTEND_WEB_DIR, path)):
+            return send_from_directory(FRONTEND_WEB_DIR, path)
+        
+        # 2. Fallback: For Flutter deep links (e.g., /profile), serve index.html
+        # This allows Flutter's internal routing to take over.
+        return send_from_directory(FRONTEND_WEB_DIR, 'index.html')
+
+# --- END OF NEW FUNCTION ---
+
 
 def ensure_instance():
     Path("instance").mkdir(exist_ok=True)
@@ -31,7 +74,7 @@ def setup_database():
         
         # Import models
         from backend.models import User, Role
-        from sqlalchemy import or_ # <-- Import 'or_' for conditional filtering
+        from sqlalchemy import or_
         
         # 1. Create admin role if it doesn't exist
         admin_role = Role.query.filter_by(name='admin').first()
@@ -48,8 +91,6 @@ def setup_database():
         admin_username = 'admin'
         
         # Check if a user with the target username OR email already exists.
-        # This prevents the IntegrityError if the 'admin' username exists 
-        # but is tied to an old/different email address.
         admin = User.query.filter(
             or_(
                 User.username == admin_username,
@@ -89,6 +130,7 @@ def setup_database():
         print(f"⚠️ Could not create admin: {e}")
         import traceback
         traceback.print_exc()
+
 def run_app():
     """Main application runner"""
     print("=" * 60)
@@ -106,15 +148,24 @@ def run_app():
         print(f"🎯 Using {env} configuration")
         app = create_app(env)
     
+    # --- FIX: Add Frontend Serving Routes First ---
+    # This must run if RUN_FRONTEND is true (which it is on Render now)
+    if os.getenv('RUN_FRONTEND', 'true') == 'true':
+        add_frontend_routes(app)
+    # ---------------------------------------------
+    
     # Add health endpoint (REQUIRED for Render)
+    # This specific route takes precedence over the generic '/' from frontend routes.
     @app.route('/health')
     def health():
         return {"status": "healthy", "service": "PensaConnect"}, 200
     
-    @app.route('/')
-    def index():
-        return {"message": "PensaConnect API", "docs": "/docs"}, 200
-    
+    # ORIGINAL ROOT ROUTE: 
+    # The original API root route is REMOVED/OVERRIDDEN 
+    # by the frontend route added in add_frontend_routes. 
+    # If the frontend files are missing, the app will serve nothing at '/', 
+    # but the API endpoints will still work.
+
     # Setup database
     with app.app_context():
         setup_database()
