@@ -1,4 +1,4 @@
-# render.yaml - UPDATED WITH YOUR DB NAME
+# render.yaml - UPDATED
 version: "1"
 
 services:
@@ -10,18 +10,21 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python run.py
     healthCheckPath: /health
+    
+    # Environment variables
     envVars:
+      - key: RENDER
+        value: "true"
       - key: FLASK_ENV
-        value: production
+        value: "production"
       - key: CREATE_ADMIN
         value: "true"
       - key: DATABASE_URL
-        fromDatabase:
-          name: pensaconnect-db  # ← Change to your database name
-          property: connectionString
-
-# You can REMOVE the databases section since you already created it
-databases:
-  - name: pensaconnect_db
-    region: oregon
-    plan: free
+        value: "postgresql://pensaconnect_db_user:TZc8DzreDknCJnqX2P7wF6E6pnr6jiaa@dpg-d4r8v2ogjchc73boaug0-a/pensaconnect_db"
+    
+    # OPTIONAL: If you want Render to manage the connection
+    # envVars:
+    #   - key: DATABASE_URL
+    #     fromDatabase:
+    #       name: pensaconnect_db  # This should match your database name in Render
+    #       property: connectionString
