@@ -1,0 +1,17 @@
+# render-static.yaml (FRONTEND - Flutter Web)
+version: "1"
+
+services:
+  - type: web
+    name: pensaconnect-web
+    env: static
+    region: oregon
+    plan: free
+    buildCommand: |
+      flutter pub get
+      flutter build web --release --no-tree-shake-icons
+    staticPublishPath: build/web
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
