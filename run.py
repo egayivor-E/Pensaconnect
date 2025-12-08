@@ -68,7 +68,7 @@ def migrate_or_create():
             from backend.models import User
             
             # Check if admin already exists
-            admin_exists = User.query.filter_by(email='admin@pensaconnect.com').first()
+            admin_exists = User.query.filter_by(email='gayivore@gmail.com').first()
             
             if not admin_exists:
                 admin = User(
