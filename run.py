@@ -35,7 +35,8 @@ def setup_database():
         # 1. Create admin role if it doesn't exist
         admin_role = Role.query.filter_by(name='admin').first()
         if not admin_role:
-            admin_role = Role(name='admin', description='Administrator')
+            # FIXED: Remove 'description' field - Role model doesn't have it
+            admin_role = Role(name='admin')
             db.session.add(admin_role)
             db.session.commit()
             print("✅ Admin role created")
@@ -43,7 +44,7 @@ def setup_database():
             print("✅ Admin role exists")
         
         # 2. Create admin user
-        admin_email = 'gayivore@gmail.com'
+        admin_email = 'gayivore@mail.com'  # Updated email
         admin = User.query.filter_by(email=admin_email).first()
         
         if not admin:
@@ -56,7 +57,7 @@ def setup_database():
                 email_verified=True,
                 status='active'
             )
-            admin.set_password('jesus@save')
+            admin.set_password('jesus@save')  # Updated password
             
             # Add admin role to user
             admin.roles.append(admin_role)
@@ -78,6 +79,7 @@ def setup_database():
         print(f"⚠️ Could not create admin: {e}")
         import traceback
         traceback.print_exc()
+
 def run_app():
     """Main application runner"""
     print("=" * 60)
