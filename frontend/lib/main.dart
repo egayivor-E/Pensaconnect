@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/config/config.dart';
 import 'package:pensaconnect/models/forum_model.dart';
 import 'package:pensaconnect/models/profile_view_model.dart';
 import 'package:pensaconnect/models/user.dart';
@@ -81,17 +83,21 @@ class Routes {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Load .env file with debug info
-  print("🔄 Loading .env file...");
-  await dotenv.load(fileName: ".env");
+  // ================================
+  // ENVIRONMENT LOADING
+  // ================================
+  if (!kReleaseMode) {
+    // DEVELOPMENT: Load .env file
+    print("🔄 DEVELOPMENT MODE: Loading .env file...");
+    await dotenv.load(fileName: ".env");
+  } else {
+    // PRODUCTION: No .env file needed
+    print("🚀 PRODUCTION MODE: Using hardcoded production URLs");
+  }
 
-  // Debug: Check if .env variables are loaded
-  print("🎯 .env FILE DEBUG INFO:");
-  print("   - ENABLE_LIVE_CHAT: '${dotenv.env['ENABLE_LIVE_CHAT']}'");
-  print("   - BACKEND_URL: '${dotenv.env['BACKEND_URL']}'");
-  print("   - WEBSOCKET_URL: '${dotenv.env['WEBSOCKET_URL']}'");
-  print("   - YOUTUBE_VIDEO_ID: '${dotenv.env['YOUTUBE_VIDEO_ID']}'");
-  print("   - All loaded keys: ${dotenv.env.keys.length}");
+  // Print debug info
+  Config.debugModeInfo();
+  Config.printConfig();
 
   print("🔄 MAIN: Starting ApiService.init()...");
   await ApiService.init();

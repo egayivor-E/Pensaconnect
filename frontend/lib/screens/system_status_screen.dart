@@ -50,7 +50,10 @@ class _SystemStatusScreenState extends State<SystemStatusScreen> {
             const SizedBox(height: 8),
             SelectableText(raw),
             const Spacer(),
-            ElevatedButton(onPressed: _checkHealth, child: const Text('Recheck'))
+            ElevatedButton(
+              onPressed: _checkHealth,
+              child: const Text('Recheck'),
+            ),
           ],
         ),
       ),
