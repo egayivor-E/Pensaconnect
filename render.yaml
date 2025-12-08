@@ -20,7 +20,7 @@ services:
       - key: CREATE_ADMIN
         value: "true"
       - key: DATABASE_URL
-        value: "postgresql://pensaconnect_db_user:TZc8DzreDknCJnqX2P7wF6E6pnr6jiaa@dpg-d4r8v2ogjchc73boaug0-a/pensaconnect_db"
+        value: "postgresql://pensaconnect_db_3zjo_user:VZcXyZFcRVTXBZuW3x4HDfcl3XQAlqvs@dpg-d4rbr37gi27c73aknms0-a.oregon-postgres.render.com/pensaconnect_db_3zjo"
     
     # OPTIONAL: If you want Render to manage the connection
     # envVars:
