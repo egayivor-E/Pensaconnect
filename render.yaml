@@ -1,4 +1,4 @@
-# render.yaml - WITH DATABASE
+# render.yaml - UPDATED WITH YOUR DB NAME
 version: "1"
 
 services:
@@ -7,37 +7,21 @@ services:
     env: python
     region: oregon
     plan: free
-    
-    buildCommand: |
-      pip install -r requirements.txt
-      echo "✅ Dependencies installed"
-    
+    buildCommand: pip install -r requirements.txt
     startCommand: python run.py
-    autoDeploy: true
-    branch: main
-    
-    # Health check (make sure you have /health endpoint)
     healthCheckPath: /health
-    
     envVars:
-      - key: RENDER
-        value: "true"
       - key: FLASK_ENV
-        value: "production"
+        value: production
       - key: CREATE_ADMIN
         value: "true"
-      - key: PORT
-        value: 10000
-      # This connects to the database below
       - key: DATABASE_URL
         fromDatabase:
-          name: pensaconnect-db
+          name: pensaconnect-db  # ← Change to your database name
           property: connectionString
 
-# Database definition (OUTSIDE services block)
+# You can REMOVE the databases section since you already created it
 databases:
-  - name: pensaconnect-db
+  - name: pensaconnect_db
     region: oregon
-    plan: free  # 90MB free database
-    databaseName: pensaconnect
-    user: pensaconnect_user
+    plan: free
