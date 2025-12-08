@@ -44,7 +44,7 @@ def setup_database():
             print("✅ Admin role exists")
         
         # 2. Create admin user
-        admin_email = 'gayivore@mail.com'  # Updated email
+        admin_email = 'gayivore@gmail.com'  # Updated email
         admin = User.query.filter_by(email=admin_email).first()
         
         if not admin:
