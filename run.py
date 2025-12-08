@@ -25,42 +25,59 @@ def setup_database():
     print("🔄 Setting up database...")
     
     try:
-        # Show database info
-        db_url = db.engine.url
-        print(f"🔍 Database: {db_url}")
-        
-        # Create all tables
+        # Create tables
         db.create_all()
         print("✅ Tables created")
         
-        # Create admin user
-        from backend.models import User
+        # Import models
+        from backend.models import User, Role
         
+        # 1. Create admin role if it doesn't exist
+        admin_role = Role.query.filter_by(name='admin').first()
+        if not admin_role:
+            admin_role = Role(name='admin', description='Administrator')
+            db.session.add(admin_role)
+            db.session.commit()
+            print("✅ Admin role created")
+        else:
+            print("✅ Admin role exists")
+        
+        # 2. Create admin user
         admin_email = 'gayivore@gmail.com'
         admin = User.query.filter_by(email=admin_email).first()
         
         if not admin:
+            # Create admin user
             admin = User(
                 username='admin',
                 email=admin_email,
                 first_name='Admin',
                 last_name='User',
-                is_admin=True,
                 email_verified=True,
                 status='active'
             )
-            admin.set_password('Jesus@save')
+            admin.set_password('jesus@save')
+            
+            # Add admin role to user
+            admin.roles.append(admin_role)
+            
             db.session.add(admin)
             db.session.commit()
-            print(f"✅ Admin created: {admin_email}")
+            print(f"✅ Admin user created: {admin_email}")
+            print("   Password: jesus@save")
         else:
-            print(f"✅ Admin exists: {admin_email}")
+            # Make sure admin has admin role
+            if admin_role not in admin.roles:
+                admin.roles.append(admin_role)
+                db.session.commit()
+                print(f"✅ Added admin role to existing user: {admin_email}")
+            else:
+                print(f"✅ Admin already exists with admin role: {admin_email}")
             
     except Exception as e:
-        print(f"⚠️ Database setup error: {e}")
+        print(f"⚠️ Could not create admin: {e}")
         import traceback
         traceback.print_exc()
-
 def run_app():
     """Main application runner"""
     print("=" * 60)
