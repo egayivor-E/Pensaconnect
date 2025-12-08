@@ -57,7 +57,7 @@ def setup_database():
                 email_verified=True,
                 status='active'
             )
-            admin.set_password('jesus@save')  # Updated password
+            admin.set_password('JesusSave123!')  # Updated password
             
             # Add admin role to user
             admin.roles.append(admin_role)
@@ -65,7 +65,7 @@ def setup_database():
             db.session.add(admin)
             db.session.commit()
             print(f"✅ Admin user created: {admin_email}")
-            print("   Password: jesus@save")
+            print("   Password: JesusSave123!")
         else:
             # Make sure admin has admin role
             if admin_role not in admin.roles:
