@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:pensaconnect/config/config.dart';
 
 /// 🔹 API Service Class - Production Ready
 class ApiService {
@@ -272,20 +271,39 @@ class ApiService {
 
   // --- CONFIG ---
   static String get baseUrl {
-    // Use your Config class which already handles dev/prod correctly
-    return Config.baseUrl;
+    try {
+      String backend = dotenv.get('BACKEND_URL');
+      // ✅ FIX: Strip trailing slash if present
+      if (backend.endsWith('/')) {
+        backend = backend.substring(0, backend.length - 1);
+      }
+      return backend; // Returns clean string, e.g., "http://127.0.0.1:5000"
+    } catch (_) {
+      const fallback = 'https://pensaconnect.onrender.com';
+      // ... (logging remains the same)
+      return fallback;
+    }
   }
 
   static String get _apiPrefix {
-    // Extract api/v1 from Config.apiBaseUrl
-    final apiUrl = Config.apiBaseUrl;
-    final base = Config.baseUrl;
+    try {
+      String prefix = dotenv.get('API_PREFIX');
 
-    if (apiUrl.startsWith(base)) {
-      return apiUrl.substring(base.length + 1); // +1 for the slash
+      // ✅ FIX 1: Strip leading slash
+      if (prefix.startsWith('/')) {
+        prefix = prefix.substring(1);
+      }
+      // ✅ FIX 2: Strip trailing slash
+      if (prefix.endsWith('/')) {
+        prefix = prefix.substring(0, prefix.length - 1);
+      }
+
+      // Returns clean string, e.g., "api/v1"
+      return prefix.isNotEmpty ? prefix : 'api/v1';
+    } catch (_) {
+      // Fallback should also be clean
+      return 'api/v1';
     }
-
-    return 'api/v1'; // fallback
   }
 
   // === REQUEST HELPERS ===

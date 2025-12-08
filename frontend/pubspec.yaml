@@ -91,7 +91,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - .env
+    # - .env
     - assets/.env
     - assets/images/user.png
     - assets/images/drawer_bg.png
