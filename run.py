@@ -6,8 +6,24 @@ from time import sleep
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env
+# ========== RENDER-SPECIFIC SETTINGS ==========
+# Set RENDER environment variable early
+os.environ['RENDER'] = 'true' if 'RENDER' in os.environ else 'false'
+
+# Load .env for local development
 load_dotenv()
+
+# Override defaults for Render
+if os.environ.get('RENDER') == 'true':
+    os.environ['FLASK_ENV'] = 'production'
+    os.environ['RUN_FRONTEND'] = 'false'
+    print("🚀 Running on Render platform")
+    
+    # Fix PostgreSQL URL for SQLAlchemy if needed
+    db_url = os.environ.get('DATABASE_URL')
+    if db_url and db_url.startswith('postgres://'):
+        os.environ['DATABASE_URL'] = db_url.replace('postgres://', 'postgresql://', 1)
+        print("✅ Fixed PostgreSQL URL for SQLAlchemy")
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
@@ -15,10 +31,24 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from backend import create_app, db, get_socketio, run_app
 from backend.config import config
 
+# Get environment variables
 FLASK_ENV = os.getenv("FLASK_ENV", "development").lower()
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "5000"))
 RUN_FRONTEND = os.getenv("RUN_FRONTEND", "false").lower() in ("1", "true", "yes")
+RENDER = os.getenv("RENDER", "false").lower() == "true"
+
+# On Render, force no frontend
+if RENDER:
+    RUN_FRONTEND = False
+
+print("=" * 60)
+print(f"🚀 PensaConnect Server Starting...")
+print(f"🌍 Environment: {FLASK_ENV}")
+print(f"📍 Host: {HOST}:{PORT}")
+print(f"🖥️  Run Frontend: {RUN_FRONTEND}")
+print(f"🚀 On Render: {RENDER}")
+print("=" * 60)
 
 def ensure_instance():
     Path("instance").mkdir(exist_ok=True)
@@ -32,22 +62,52 @@ def migrate_or_create():
         else:
             db.create_all()
             print("✅ Ensured tables (dev/testing)")
+        
+        # ====== ADD ADMIN CREATION ======
+        try:
+            from backend.models import User
+            
+            # Check if admin already exists
+            admin_exists = User.query.filter_by(email='admin@pensaconnect.com').first()
+            
+            if not admin_exists:
+                admin = User(
+                    username='admin',
+                    email='gayivore@gmail.com',
+                    first_name='Admin',
+                    last_name='User',
+                    is_admin=True,
+                    email_verified=True,
+                    status='active'
+                )
+                admin.set_password('Admin123!')
+                db.session.add(admin)
+                db.session.commit()
+                print("✅ Admin user created!")
+                print("   Email: admin@pensaconnect.com")
+                print("   Password: Admin123!")
+            else:
+                print(f"ℹ️ Admin already exists (ID: {admin_exists.id})")
+                
+        except Exception as admin_error:
+            print(f"⚠️ Could not create admin user: {admin_error}")
+        # ====== END ADMIN CREATION ======
+            
     except Exception as e:
         print(f"❌ DB setup issue: {e}")
 
 def run_backend():
-    """Run backend with WebSocket support - FIXED VERSION"""
+    """Run backend with WebSocket support - OPTIMIZED FOR RENDER"""
     ensure_instance()
     
     print(f"🚀 Starting backend in {FLASK_ENV} mode")
     print(f"📍 Backend URL: http://{HOST}:{PORT}")
-    print(f"🔌 WebSocket URL: ws://{HOST}:{PORT}/socket.io")
-    print(f"📚 API Docs: http://{HOST}:{PORT}/docs/swagger-ui")
-    print(f"❤️  Health Check: http://{HOST}:{PORT}/health")
-    print(f"🔍 WebSocket Health: http://{HOST}:{PORT}/ws-health")
     
-    # ✅ FIX: Use manual startup with proper WebSocket configuration
-    app = create_app(FLASK_ENV)
+    if RENDER:
+        print("🎯 Running on Render - WebSocket optimized")
+    
+    # ✅ Use RenderConfig from your config
+    app = create_app('render' if RENDER else FLASK_ENV)
     socketio = get_socketio()
     
     if socketio is None:
@@ -55,12 +115,13 @@ def run_backend():
     
     # Initialize database within app context
     with app.app_context():
-        migrate_or_create()
+        migrate_or_create()  # This creates admin too!
     
     print("✅ Starting Socket.IO server...")
     
-    # ✅ FIX: Environment-specific configuration
-    if FLASK_ENV == "production":
+    # ✅ RENDER-SPECIFIC CONFIGURATION
+    if RENDER or FLASK_ENV == "production":
+        # Optimized for Render/production
         socketio.run(
             app, 
             debug=False, 
@@ -68,10 +129,12 @@ def run_backend():
             port=PORT, 
             use_reloader=False,
             allow_unsafe_werkzeug=False,
-            log_output=False
+            log_output=True,  # Keep True to see logs in Render
+            ping_timeout=60,
+            ping_interval=25
         )
     else:
-        # Development mode with better WebSocket support
+        # Development mode
         socketio.run(
             app, 
             debug=True, 
@@ -82,57 +145,21 @@ def run_backend():
             log_output=True
         )
 
-def run_frontend():
-    """Run Flutter frontend"""
-    try:
-        sleep(5)  # ✅ INCREASED: Give backend more time to start
-        print("🎨 Starting Flutter frontend...")
-        
-        # Check if frontend directory exists
-        frontend_dir = Path("frontend")
-        if not frontend_dir.exists():
-            print("❌ Frontend directory not found")
-            return
-            
-        # Try to run Flutter
-        print("🚀 Launching Flutter in Chrome...")
-        result = subprocess.run(
-            ["flutter", "run", "-d", "chrome", "--web-port=58672"], 
-            cwd="frontend", 
-            capture_output=True, 
-            text=True
-        )
-        
-        if result.returncode != 0:
-            print(f"❌ Flutter run failed: {result.stderr}")
-            print("💡 Make sure Flutter is installed and configured")
-        else:
-            print("✅ Flutter frontend started successfully")
-            
-    except FileNotFoundError:
-        print("❌ Flutter not found. Please install Flutter SDK")
-    except Exception as e:
-        print(f"❌ Frontend start failed: {e}")
-
 def check_dependencies():
     """Check if required dependencies are available"""
     print("🔍 Checking dependencies...")
     
-    # Check Python dependencies
     try:
         import flask_socketio
         print("✅ flask-socketio available")
     except ImportError:
-        print("❌ flask-socketio not installed. Run: pip install flask-socketio")
+        print("❌ flask-socketio not installed")
         return False
         
-    try:
-        import eventlet
-        print("✅ eventlet available (optional)")
-    except ImportError:
-        print("⚠️  eventlet not installed (using threading mode)")
+    if RENDER:
+        print("✅ Running on Render - skipping Flutter check")
+        return True
     
-    # Check Flutter if needed
     if RUN_FRONTEND:
         try:
             result = subprocess.run(["flutter", "--version"], capture_output=True, text=True)
@@ -147,60 +174,29 @@ def check_dependencies():
     
     return True
 
-def test_websocket_connection():
-    """Test if WebSocket server is responding"""
-    import requests
-    try:
-        response = requests.get(f"http://{HOST}:{PORT}/ws-health", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            print(f"✅ WebSocket server is running: {data}")
-            return True
-        else:
-            print(f"❌ WebSocket health check failed: {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"❌ Cannot connect to WebSocket server: {e}")
-        return False
-
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🚀 PensaConnect Server Starting...")
-    print("=" * 60)
-    
     # Check dependencies first
     if not check_dependencies():
-        print("❌ Missing dependencies. Please install required packages.")
+        print("❌ Missing dependencies")
         sys.exit(1)
     
-    # Start the application
-    if RUN_FRONTEND:
+    # On Render, always run backend only
+    if RENDER:
+        print("🔧 Starting backend only (Render deployment)...")
+        run_backend()
+    elif RUN_FRONTEND:
         print("🔧 Starting both backend and frontend...")
-        
-        # ✅ FIX: Start backend in a NON-daemon thread
-        backend_thread = threading.Thread(target=run_backend, daemon=False)  # Changed to False
+        backend_thread = threading.Thread(target=run_backend, daemon=False)
         backend_thread.start()
-        
-        # ✅ FIX: Wait for backend to be fully ready
-        print("⏳ Waiting for backend to start...")
-        sleep(8)  # Increased wait time for WebSocket initialization
-        
-        # Test WebSocket connection before starting frontend
-        if test_websocket_connection():
-            print("✅ WebSocket server ready, starting frontend...")
-            run_frontend()
-        else:
-            print("❌ WebSocket server not ready. Frontend may not connect properly.")
-            run_frontend()  # Still try to start frontend
+        sleep(8)
+        # Frontend code would go here, but disabled on Render
+        print("⚠️ Frontend disabled for this deployment")
+        # Keep running
+        try:
+            while True:
+                sleep(1)
+        except KeyboardInterrupt:
+            print("\n🛑 Shutting down...")
     else:
         print("🔧 Starting backend only...")
-        # Run backend in main thread (recommended for WebSocket)
         run_backend()
-    
-    # Keep the main thread alive
-    try:
-        while True:
-            sleep(1)
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down PensaConnect...")
-        print("👋 Thank you for using PensaConnect!")
