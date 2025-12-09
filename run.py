@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
-from flask import send_from_directory # Import necessary for serving static files
+from flask import send_from_directory
 
 # Load environment variables from .env file
 load_dotenv()
@@ -11,7 +11,6 @@ load_dotenv()
 RENDER = 'RENDER' in os.environ or os.environ.get('RENDER_EXTERNAL_URL') is not None
 if RENDER:
     os.environ['FLASK_ENV'] = 'production'
-    # FIX: Set RUN_FRONTEND to 'true' so the server attempts to serve the built Flutter app.
     os.environ['RUN_FRONTEND'] = 'true'
     print("🚀 RENDER DETECTED: Using production settings")
 
@@ -20,26 +19,120 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from backend import create_app, db, get_socketio
 
 
-# --- NEW FUNCTION: Frontend Serving Logic ---
+# --- IMPROVED: Frontend Serving Logic ---
 def add_frontend_routes(app):
     """
-    Adds routes to serve the built Flutter web app (index.html and assets).
-    This logic only runs if the Flutter build was successful.
+    Adds routes to serve the built Flutter web app.
+    Uses multiple fallback paths to locate the build files.
     """
-    # Assuming run.py is in the root directory and Flutter is in './frontend'
-    BASE_DIR = os.path.abspath(os.path.dirname(__file__)) 
-    FRONTEND_WEB_DIR = os.path.join(BASE_DIR, 'frontend', 'build', 'web')
+    print("🔍 Looking for Flutter frontend build...")
     
-    # CRITICAL CHECK: Ensure the built files exist
-    INDEX_HTML_PATH = os.path.join(FRONTEND_WEB_DIR, 'index.html')
-    if not os.path.exists(INDEX_HTML_PATH):
-        print(f"⚠️ Flutter Frontend build files not found at: {FRONTEND_WEB_DIR}")
-        print("   Falling back to simple API-only serving.")
-        # If frontend is missing, we skip adding frontend routes.
-        # This prevents the whole app from crashing if the build step failed.
-        return 
-
+    # Try multiple possible locations for the Flutter build
+    possible_paths = []
+    
+    # Get base directory where this script is located
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+    print(f"📁 Script directory: {BASE_DIR}")
+    print(f"📁 Current working directory: {os.getcwd()}")
+    
+    # Common locations to check
+    possible_paths = [
+        # 1. Relative from script location
+        os.path.join(BASE_DIR, 'frontend', 'build', 'web'),
+        # 2. Relative from parent directory
+        os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build', 'web'),
+        # 3. Absolute path for Render
+        '/opt/render/project/src/frontend/build/web',
+        # 4. Current working directory relative
+        os.path.join(os.getcwd(), 'frontend', 'build', 'web'),
+        # 5. If script is in subdirectory
+        os.path.join(BASE_DIR, '..', 'frontend', 'build', 'web'),
+    ]
+    
+    FRONTEND_WEB_DIR = None
+    for i, path in enumerate(possible_paths):
+        index_path = os.path.join(path, 'index.html')
+        if os.path.exists(index_path):
+            FRONTEND_WEB_DIR = path
+            print(f"✅ Found Flutter build at option {i+1}: {path}")
+            break
+    
+    if not FRONTEND_WEB_DIR:
+        print("❌ Flutter frontend build NOT FOUND in any location!")
+        print("   Checked these locations:")
+        for i, path in enumerate(possible_paths):
+            exists = os.path.exists(path)
+            print(f"   {i+1}. {path} - {'EXISTS' if exists else 'NOT FOUND'}")
+            if exists:
+                print(f"      Contents: {os.listdir(path)[:5]}...")
+        
+        # Create a fallback route that shows a helpful message
+        @app.route('/')
+        def fallback_index():
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>PensaConnect - Setup Required</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; }
+                    .container { max-width: 800px; margin: 0 auto; }
+                    .alert { background: #fff3cd; border: 1px solid #ffeaa7; padding: 20px; border-radius: 5px; }
+                    .success { background: #d4edda; border: 1px solid #c3e6cb; }
+                    code { background: #f8f9fa; padding: 2px 5px; border-radius: 3px; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>PensaConnect</h1>
+                    <div class="alert">
+                        <h3>⚠️ Frontend Build Not Found</h3>
+                        <p>The Flutter frontend build files could not be found.</p>
+                        <p>This usually means:</p>
+                        <ul>
+                            <li>The Flutter build failed during deployment</li>
+                            <li>The build files are in a different location than expected</li>
+                            <li>You need to run: <code>cd frontend && flutter build web --release --no-tree-shake-icons</code></li>
+                        </ul>
+                    </div>
+                    
+                    <div class="alert success">
+                        <h3>✅ Backend API is Running</h3>
+                        <p>Your Flask backend is working correctly!</p>
+                        <ul>
+                            <li><a href="/api/v1">API Endpoints</a></li>
+                            <li><a href="/admin">Admin Panel</a></li>
+                            <li><a href="/health">Health Check</a></li>
+                        </ul>
+                    </div>
+                    
+                    <h3>Debug Information:</h3>
+                    <pre id="debug"></pre>
+                </div>
+                
+                <script>
+                    // Show debug info
+                    const debugInfo = {
+                        scriptDir: window.location.origin + '/debug/paths',
+                        checkedPaths: """ + str(possible_paths) + """,
+                        renderEnv: """ + str(RENDER) + """
+                    };
+                    document.getElementById('debug').textContent = JSON.stringify(debugInfo, null, 2);
+                </script>
+            </body>
+            </html>
+            """, 200
+        print("✅ Created fallback route for missing frontend")
+        return
+    
     print(f"✅ Serving frontend from: {FRONTEND_WEB_DIR}")
+    
+    # List some files to confirm
+    try:
+        files = os.listdir(FRONTEND_WEB_DIR)
+        print(f"📄 Found {len(files)} files, including: {[f for f in files if f.endswith(('.html', '.js', '.css'))][:5]}")
+    except:
+        pass
 
     # 1. Main Route: Serves index.html for the root URL
     @app.route('/', methods=['GET'])
@@ -49,15 +142,16 @@ def add_frontend_routes(app):
     # 2. Catch-all Route: Serves static assets and handles Flutter deep linking
     @app.route('/<path:path>', methods=['GET'])
     def serve_static(path):
-        # 1. Try to serve the specific static file (e.g., app.js, fonts, images)
-        if os.path.exists(os.path.join(FRONTEND_WEB_DIR, path)):
+        # Try to serve the specific static file
+        file_path = os.path.join(FRONTEND_WEB_DIR, path)
+        if os.path.exists(file_path) and not os.path.isdir(file_path):
             return send_from_directory(FRONTEND_WEB_DIR, path)
         
-        # 2. Fallback: For Flutter deep links (e.g., /profile), serve index.html
-        # This allows Flutter's internal routing to take over.
+        # Fallback: For Flutter deep links, serve index.html
         return send_from_directory(FRONTEND_WEB_DIR, 'index.html')
 
-# --- END OF NEW FUNCTION ---
+
+# --- END OF IMPROVED FUNCTION ---
 
 
 def ensure_instance():
@@ -86,7 +180,7 @@ def setup_database():
         else:
             print("✅ Admin role exists")
         
-        # 2. Create admin user (FIXED LOGIC)
+        # 2. Create admin user
         admin_email = 'gayivore@gmail.com'
         admin_username = 'admin'
         
@@ -99,7 +193,7 @@ def setup_database():
         ).first()
         
         if not admin:
-            # Create admin user only if NO user was found with that username or email
+            # Create admin user only if NO user was found
             admin = User(
                 username=admin_username,
                 email=admin_email,
@@ -148,24 +242,45 @@ def run_app():
         print(f"🎯 Using {env} configuration")
         app = create_app(env)
     
-    # --- FIX: Add Frontend Serving Routes First ---
-    # This must run if RUN_FRONTEND is true (which it is on Render now)
+    # --- Add Debug Route ---
+    @app.route('/debug/paths')
+    def debug_paths():
+        """Debug endpoint to check file locations"""
+        BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+        info = {
+            'script_location': __file__,
+            'script_directory': BASE_DIR,
+            'current_working_directory': os.getcwd(),
+            'is_render': RENDER,
+            'frontend_paths_checked': [
+                os.path.join(BASE_DIR, 'frontend', 'build', 'web'),
+                os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build', 'web'),
+                '/opt/render/project/src/frontend/build/web',
+                os.path.join(os.getcwd(), 'frontend', 'build', 'web'),
+                os.path.join(BASE_DIR, '..', 'frontend', 'build', 'web'),
+            ],
+            'directory_contents': {}
+        }
+        
+        # Check what exists
+        for path in info['frontend_paths_checked']:
+            if os.path.exists(path):
+                try:
+                    info['directory_contents'][path] = os.listdir(path)
+                except:
+                    info['directory_contents'][path] = 'ACCESS DENIED'
+        
+        return info
+    
+    # --- Add Frontend Serving Routes ---
     if os.getenv('RUN_FRONTEND', 'true') == 'true':
         add_frontend_routes(app)
-    # ---------------------------------------------
     
     # Add health endpoint (REQUIRED for Render)
-    # This specific route takes precedence over the generic '/' from frontend routes.
     @app.route('/health')
     def health():
         return {"status": "healthy", "service": "PensaConnect"}, 200
     
-    # ORIGINAL ROOT ROUTE: 
-    # The original API root route is REMOVED/OVERRIDDEN 
-    # by the frontend route added in add_frontend_routes. 
-    # If the frontend files are missing, the app will serve nothing at '/', 
-    # but the API endpoints will still work.
-
     # Setup database
     with app.app_context():
         setup_database()
