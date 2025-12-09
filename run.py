@@ -19,7 +19,7 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from backend import create_app, db, get_socketio
 
 
-# --- IMPROVED: Frontend Serving Logic ---
+# --- FIXED: Frontend Serving Logic ---
 def add_frontend_routes(app):
     """
     Adds routes to serve the built Flutter web app.
@@ -127,31 +127,43 @@ def add_frontend_routes(app):
     
     print(f"✅ Serving frontend from: {FRONTEND_WEB_DIR}")
     
-    # List some files to confirm
+    # List ALL files for debugging
     try:
-        files = os.listdir(FRONTEND_WEB_DIR)
-        print(f"📄 Found {len(files)} files, including: {[f for f in files if f.endswith(('.html', '.js', '.css'))][:5]}")
-    except:
-        pass
+        print("📄 Listing ALL files in build directory:")
+        for root, dirs, files in os.walk(FRONTEND_WEB_DIR):
+            level = root.replace(FRONTEND_WEB_DIR, '').count(os.sep)
+            indent = ' ' * 2 * level
+            print(f"{indent}{os.path.basename(root)}/")
+            subindent = ' ' * 2 * (level + 1)
+            for file in files[:10]:  # First 10 files per directory
+                print(f"{subindent}{file}")
+    except Exception as e:
+        print(f"⚠️ Could not list files: {e}")
 
     # 1. Main Route: Serves index.html for the root URL
     @app.route('/', methods=['GET'])
     def serve_index():
+        print("🌐 Serving index.html for /")
         return send_from_directory(FRONTEND_WEB_DIR, 'index.html')
 
     # 2. Catch-all Route: Serves static assets and handles Flutter deep linking
     @app.route('/<path:path>', methods=['GET'])
     def serve_static(path):
-        # Try to serve the specific static file
-        file_path = os.path.join(FRONTEND_WEB_DIR, path)
-        if os.path.exists(file_path) and not os.path.isdir(file_path):
-            return send_from_directory(FRONTEND_WEB_DIR, path)
+        print(f"🔍 Request for: {path}")
         
-        # Fallback: For Flutter deep links, serve index.html
-        return send_from_directory(FRONTEND_WEB_DIR, 'index.html')
+        # Build the full path
+        full_path = os.path.join(FRONTEND_WEB_DIR, path)
+        
+        # Check if file exists and is a file (not directory)
+        if os.path.isfile(full_path):
+            print(f"✅ Serving static file: {path}")
+            return send_from_directory(FRONTEND_WEB_DIR, path)
+        else:
+            print(f"⚠️ File not found, serving index.html for deep link: {path}")
+            return send_from_directory(FRONTEND_WEB_DIR, 'index.html')
 
 
-# --- END OF IMPROVED FUNCTION ---
+# --- END OF FIXED FUNCTION ---
 
 
 def ensure_instance():
@@ -373,6 +385,6 @@ def run_app():
             use_reloader=True,
             allow_unsafe_werkzeug=True
         )
-        
+
 if __name__ == '__main__':
     run_app()
