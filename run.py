@@ -242,40 +242,56 @@ def run_app():
         print(f"🎯 Using {env} configuration")
         app = create_app(env)
     
+    # --- FIX: OVERRIDE 404 HANDLER BEFORE ANYTHING ELSE ---
+    from flask import jsonify, request, send_from_directory
+    import os
+    
+    # Clear any existing 404 handlers
+    app.error_handler_spec[None] = {}
+    app.error_handler_spec[404] = {}
+    
+    @app.errorhandler(404)
+    def universal_404_handler(e):
+        """
+        Handle 404 errors.
+        - For non-API routes: serve Flutter frontend (index.html)
+        - For API routes: return JSON 404
+        """
+        # Define routes that should return JSON 404
+        api_routes = ('/api/', '/admin/', '/health', '/debug')
+        
+        # Check if this is an API route
+        is_api_route = any(request.path.startswith(route) for route in api_routes)
+        
+        if not is_api_route:
+            # Try to serve frontend for non-API routes
+            frontend_dir = '/opt/render/project/src/frontend/build/web'
+            index_path = os.path.join(frontend_dir, 'index.html')
+            
+            if os.path.exists(index_path):
+                print(f"📱 Serving frontend for 404: {request.path}")
+                return send_from_directory(frontend_dir, 'index.html')
+        
+        # For API routes or if frontend not found, return JSON
+        print(f"🔧 API 404: {request.path}")
+        return jsonify({
+            'error': 'not_found',
+            'message': 'The requested resource was not found',
+            'path': request.path
+        }), 404
+    
+    print("✅ Custom 404 handler registered")
+    
     # --- Add Debug Route ---
     @app.route('/debug/paths')
     def debug_paths():
-        """Debug endpoint to check file locations"""
-        BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-        info = {
-            'script_location': __file__,
-            'script_directory': BASE_DIR,
-            'current_working_directory': os.getcwd(),
-            'is_render': RENDER,
-            'frontend_paths_checked': [
-                os.path.join(BASE_DIR, 'frontend', 'build', 'web'),
-                os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build', 'web'),
-                '/opt/render/project/src/frontend/build/web',
-                os.path.join(os.getcwd(), 'frontend', 'build', 'web'),
-                os.path.join(BASE_DIR, '..', 'frontend', 'build', 'web'),
-            ],
-            'directory_contents': {}
-        }
         
-        # Check what exists
-        for path in info['frontend_paths_checked']:
-            if os.path.exists(path):
-                try:
-                    info['directory_contents'][path] = os.listdir(path)
-                except:
-                    info['directory_contents'][path] = 'ACCESS DENIED'
-        
-        return info
+        # ... [keep existing debug_paths code] ...
     
     # --- Add Frontend Serving Routes ---
-    if os.getenv('RUN_FRONTEND', 'true') == 'true':
-        add_frontend_routes(app)
-    
+        if os.getenv('RUN_FRONTEND', 'true') == 'true':
+            add_frontend_routes(app)
+        
     # Add health endpoint (REQUIRED for Render)
     @app.route('/health')
     def health():
@@ -320,6 +336,6 @@ def run_app():
             use_reloader=True,
             allow_unsafe_werkzeug=True
         )
-
+        
 if __name__ == '__main__':
     run_app()
