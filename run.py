@@ -242,60 +242,97 @@ def run_app():
         print(f"🎯 Using {env} configuration")
         app = create_app(env)
     
-    # --- FIX: OVERRIDE 404 HANDLER BEFORE ANYTHING ELSE ---
-    from flask import jsonify, request, send_from_directory
-    import os
+    # --- CRITICAL: Register frontend routes BEFORE anything else ---
+    if os.getenv('RUN_FRONTEND', 'true') == 'true':
+        print("📱 Adding frontend routes...")
+        add_frontend_routes(app)
     
-    # Clear any existing 404 handlers
-    app.error_handler_spec[None] = {}
-    app.error_handler_spec[404] = {}
+    # --- Add Debug Route ---
+    @app.route('/debug/paths')
+    def debug_paths():
+        """Debug endpoint to check file locations"""
+        BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+        info = {
+            'script_location': __file__,
+            'script_directory': BASE_DIR,
+            'current_working_directory': os.getcwd(),
+            'is_render': RENDER,
+            'frontend_paths_checked': [
+                os.path.join(BASE_DIR, 'frontend', 'build', 'web'),
+                os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'build', 'web'),
+                '/opt/render/project/src/frontend/build/web',
+                os.path.join(os.getcwd(), 'frontend', 'build', 'web'),
+                os.path.join(BASE_DIR, '..', 'frontend', 'build', 'web'),
+            ],
+            'directory_contents': {}
+        }
+        
+        # Check what exists
+        for path in info['frontend_paths_checked']:
+            if os.path.exists(path):
+                try:
+                    info['directory_contents'][path] = os.listdir(path)
+                except:
+                    info['directory_contents'][path] = 'ACCESS DENIED'
+        
+        return info
     
+    # --- Add health endpoint (REQUIRED for Render) ---
+    @app.route('/health')
+    def health():
+        return {"status": "healthy", "service": "PensaConnect"}, 200
+    
+    # --- CRITICAL: Add custom 404 handler that serves Flutter for non-API routes ---
     @app.errorhandler(404)
-    def universal_404_handler(e):
-        """
-        Handle 404 errors.
-        - For non-API routes: serve Flutter frontend (index.html)
-        - For API routes: return JSON 404
-        """
-        # Define routes that should return JSON 404
-        api_routes = ('/api/', '/admin/', '/health', '/debug')
+    def handle_404(e):
+        """Handle 404 errors: serve Flutter app for non-API routes"""
+        from flask import request, send_from_directory, jsonify
+        import os
+        
+        # Log the 404 attempt
+        print(f"🔍 404 encountered for: {request.path}")
+        
+        # Define API routes that should return JSON 404
+        api_routes = ('/api/', '/admin/', '/health', '/debug', '/static/')
         
         # Check if this is an API route
         is_api_route = any(request.path.startswith(route) for route in api_routes)
         
         if not is_api_route:
-            # Try to serve frontend for non-API routes
+            # Try to serve Flutter frontend for non-API routes
             frontend_dir = '/opt/render/project/src/frontend/build/web'
             index_path = os.path.join(frontend_dir, 'index.html')
             
             if os.path.exists(index_path):
-                print(f"📱 Serving frontend for 404: {request.path}")
+                print(f"📱 Serving Flutter app for: {request.path}")
                 return send_from_directory(frontend_dir, 'index.html')
+            else:
+                print(f"⚠️ Flutter index.html not found at: {index_path}")
         
         # For API routes or if frontend not found, return JSON
-        print(f"🔧 API 404: {request.path}")
+        print(f"🔧 Returning JSON 404 for API route: {request.path}")
         return jsonify({
             'error': 'not_found',
             'message': 'The requested resource was not found',
             'path': request.path
         }), 404
     
-    print("✅ Custom 404 handler registered")
+    print("✅ Custom 404 handler registered for Flutter frontend")
     
-    # --- Add Debug Route ---
-    @app.route('/debug/paths')
-    def debug_paths():
+    # --- Optional: Test route to verify frontend serving ---
+    @app.route('/test-frontend')
+    def test_frontend():
+        """Test route to verify frontend is being served"""
+        from flask import send_from_directory
+        import os
         
-        # ... [keep existing debug_paths code] ...
-    
-    # --- Add Frontend Serving Routes ---
-        if os.getenv('RUN_FRONTEND', 'true') == 'true':
-            add_frontend_routes(app)
+        frontend_dir = '/opt/render/project/src/frontend/build/web'
+        index_path = os.path.join(frontend_dir, 'index.html')
         
-    # Add health endpoint (REQUIRED for Render)
-    @app.route('/health')
-    def health():
-        return {"status": "healthy", "service": "PensaConnect"}, 200
+        if os.path.exists(index_path):
+            return send_from_directory(frontend_dir, 'index.html')
+        else:
+            return f"Frontend not found at: {index_path}<br>Current dir: {os.getcwd()}"
     
     # Setup database
     with app.app_context():
