@@ -1,5 +1,5 @@
-# Multi-stage build
-FROM cirrusci/flutter:stable AS build
+FROM ghcr.io/flutter/flutter:stable AS build
+# Rest of the file remains the same
 
 WORKDIR /app
 
