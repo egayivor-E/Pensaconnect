@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pensaconnect-frontend  # More descriptive name
+    env: docker
+    region: oregon  # Choose region closest to your users
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: BACKEND_URL
+        value: https://pensaconnect.onrender.com
+        sync: false  # This prevents Render from overriding during sync
+    plan: free  # Explicitly set plan
+    healthCheckPath: /
+    autoDeploy: true
+    branch: main  # Specify which branch to deploy

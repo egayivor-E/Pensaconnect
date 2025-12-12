@@ -90,9 +90,7 @@ class AuthProvider with ChangeNotifier {
         return false;
       }
 
-      debugPrint(
-        "➡️ Login payload: {identifier: $identifier, password: $password}",
-      );
+      
 
       final response = await ApiService.post('auth/login', {
         'identifier': identifier,
