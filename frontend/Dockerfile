@@ -1,4 +1,4 @@
-FROM ghcr.io/flutter/flutter:stable AS build
+FROM cirrusci/flutter:latest AS build
 # Rest of the file remains the same
 
 WORKDIR /app
