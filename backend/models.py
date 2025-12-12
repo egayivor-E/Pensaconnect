@@ -1490,8 +1490,6 @@ class GroupMessage(BaseModel):
         
 
 
-from flask import current_app
-import os
 
 class WorshipSong(db.Model):
     __tablename__ = 'worship_songs'
