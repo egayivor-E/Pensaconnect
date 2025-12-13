@@ -1,8 +1,6 @@
 # Use a specific, recent tag of Flutter that includes Dart SDK >= 3.8.1
 # Example: Using 3.22.0 which uses a recent Dart version (check the cirrusci tags for the absolute latest if 3.22.0 is not sufficient)
-FROM cirrusci/flutter:3.22 AS build 
-# This tag (without the final .0) is often used for the latest patch release of that major version. 
-
+FROM cirrusci/flutter:latest AS build
 # ----------------------------------------------------
 # Secure Build Stage
 # ----------------------------------------------------
