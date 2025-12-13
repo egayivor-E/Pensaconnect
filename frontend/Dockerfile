@@ -1,14 +1,21 @@
-# Use a specific, recent tag of Flutter that includes Dart SDK >= 3.8.1
-# Example: Using 3.22.0 which uses a recent Dart version (check the cirrusci tags for the absolute latest if 3.22.0 is not sufficient)
-FROM cirrusci/flutter:latest AS build
+FROM cirrusci/flutter:latest AS build 
+
 # ----------------------------------------------------
 # Secure Build Stage
 # ----------------------------------------------------
 WORKDIR /app
 
 # Best Practice: Run build steps as a non-root user
-RUN useradd -ms /bin/bash nonroot
+RUN useradd --no-create-home --shell /bin/false nonroot
+
+# FIX: Change ownership of the Flutter SDK to the nonroot user.
+# This prevents "Permission denied" on cache/version files and "dubious ownership" from Git.
+RUN chown -R nonroot:nonroot /sdks/flutter
+
+# Change ownership of the app directory
 RUN chown -R nonroot:nonroot /app
+
+# Switch to the non-root user
 USER nonroot
 
 # Copy pubspec files first for better layer caching
