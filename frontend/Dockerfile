@@ -1,11 +1,11 @@
-# Use the official Flutter Docker image instead
-FROM flutter:stable AS build
+# Use the correct Flutter Docker image
+FROM ghcr.io/cirruslabs/flutter:stable AS build
 
 WORKDIR /app
 
 # Best Practice: Run build steps as a non-root user
 RUN useradd -m --shell /bin/bash nonroot
-# Note: The Flutter SDK path might be different in official image
+# In this image, Flutter is installed at /flutter
 RUN chown -R nonroot:nonroot /flutter
 RUN chown -R nonroot:nonroot /app
 ENV HOME /home/nonroot
