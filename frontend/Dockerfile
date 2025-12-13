@@ -1,41 +1,45 @@
-FROM ubuntu:22.04 AS build
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    unzip \
-    xz-utils \
-    zip \
-    libglu1-mesa \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Flutter
-RUN git clone https://github.com/flutter/flutter.git -b stable --depth 1 /flutter
-ENV PATH="$PATH:/flutter/bin"
-
-# Pre-download dependencies
-RUN flutter precache
-RUN flutter config --enable-web
+# Use the correct Flutter Docker image
+FROM ghcr.io/cirruslabs/flutter:stable AS build
 
 WORKDIR /app
 
-# Create non-root user
-RUN useradd -m -s /bin/bash nonroot
-RUN chown -R nonroot:nonroot /flutter /app
+# Best Practice: Run build steps as a non-root user
+RUN useradd -m --shell /bin/bash nonroot
+
+# First, check where Flutter is installed
+# In cirruslabs images, it's usually at /sdks/flutter or /opt/flutter
+RUN ls -la /  # Debug: List root directory to see where Flutter is
+
+# In cirruslabs images, Flutter is typically at /sdks/flutter
+RUN chown -R nonroot:nonroot /sdks/flutter
+RUN chown -R nonroot:nonroot /app
+ENV HOME /home/nonroot
 USER nonroot
 
-# Copy pubspec files
-COPY --chown=nonroot:nonroot pubspec.yaml pubspec.lock ./
-RUN flutter pub get
+# Copy pubspec files first for better layer caching
+COPY pubspec.yaml pubspec.lock ./
 
-# Copy app and build
-COPY --chown=nonroot:nonroot . .
-RUN flutter build web --release
+# Keep the suppress flag for robustness
+RUN flutter pub get --suppress-analytics
 
-# Production stage
+# Copy the rest of the code
+COPY . .
+
+# Build for web with optimizations
+RUN flutter build web --release \
+    --web-renderer canvaskit \
+    --dart-define=BACKEND_URL=${BACKEND_URL:-https://pensaconnect.onrender.com} \
+    --pwa-strategy offline-first \
+    --source-maps
+
+# ----------------------------------------------------
+# Production Stage (NGINX)
+# ----------------------------------------------------
 FROM nginx:alpine
 COPY --from=build /app/build/web /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/nginx.conf
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:80/ || exit 1
+
 EXPOSE 80
