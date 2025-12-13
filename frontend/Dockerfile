@@ -1,32 +1,32 @@
 FROM cirrusci/flutter:latest AS build 
 
-# ... (Previous WORKDIR /app and useradd steps)
+# ... (Lines before WORKDIR /app)
+
 WORKDIR /app
 
 # Best Practice: Run build steps as a non-root user
-RUN useradd --no-create-home --shell /bin/false nonroot
 
-# FIX: Change ownership of the Flutter SDK to the nonroot user.
-# This prevents "Permission denied" on cache/version files and "dubious ownership" from Git.
+# 1. Create the user with a real home directory (e.g., /home/nonroot)
+RUN useradd -m --shell /bin/bash nonroot
+
+# 2. FIX: Change ownership of the Flutter SDK to the nonroot user.
 RUN chown -R nonroot:nonroot /sdks/flutter
 
-# Change ownership of the app directory
+# 3. Change ownership of the app directory
 RUN chown -R nonroot:nonroot /app
 
-# Switch to the non-root user
+# 4. EXPLICIT FIX: Set the HOME variable for Flutter
+# The default HOME is /home/nonroot, but setting it explicitly helps in CI.
+ENV HOME /home/nonroot
+
+# 5. Switch to the non-root user
 USER nonroot
 
 # Copy pubspec files first for better layer caching
 COPY pubspec.yaml pubspec.lock ./
 
-# FIX: Suppress analytics to bypass tool initialization failure (Exit Code 255)
+# Keep the suppress flag for robustness
 RUN flutter pub get --suppress-analytics
-
-# Copy the rest of the code
-COPY . /app
-
-# Run the build
-RUN flutter build web --release
 
 # ... (Rest of the Dockerfile)
 
