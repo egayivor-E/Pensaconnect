@@ -7,7 +7,7 @@ FROM cirrusci/flutter:latest AS build
 WORKDIR /app
 
 # Best Practice: Run build steps as a non-root user
-RUN adduser -D nonroot
+RUN useradd -ms /bin/bash nonroot
 RUN chown -R nonroot:nonroot /app
 USER nonroot
 
