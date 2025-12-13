@@ -1,8 +1,6 @@
 FROM cirrusci/flutter:latest AS build 
 
-# ----------------------------------------------------
-# Secure Build Stage
-# ----------------------------------------------------
+# ... (Previous WORKDIR /app and useradd steps)
 WORKDIR /app
 
 # Best Practice: Run build steps as a non-root user
@@ -20,7 +18,17 @@ USER nonroot
 
 # Copy pubspec files first for better layer caching
 COPY pubspec.yaml pubspec.lock ./
-RUN flutter pub get
+
+# FIX: Suppress analytics to bypass tool initialization failure (Exit Code 255)
+RUN flutter pub get --suppress-analytics
+
+# Copy the rest of the code
+COPY . /app
+
+# Run the build
+RUN flutter build web --release
+
+# ... (Rest of the Dockerfile)
 
 # Copy the rest of the code
 COPY . .
