@@ -3,7 +3,7 @@ FROM ghcr.io/cirruslabs/flutter:stable AS build
 
 WORKDIR /app
 
-# Install web dependencies and Chrome for testing
+# Install web dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     unzip \
@@ -13,27 +13,25 @@ RUN apt-get update && apt-get install -y \
 # Best Practice: Run build steps as a non-root user
 RUN useradd -m --shell /bin/bash nonroot
 
-# Add Flutter to PATH for nonroot user
-RUN echo 'export PATH="$PATH:/flutter/bin"' >> /home/nonroot/.bashrc
-
-# Check where Flutter is actually installed in this image
-RUN FLUTTER_PATH=$(find / -type d -name "flutter" 2>/dev/null | head -1) && \
-    if [ -n "$FLUTTER_PATH" ]; then \
+# First, fix the Flutter Git safety issue
+# Flutter is located at /sdks/flutter in this image
+RUN FLUTTER_PATH="/sdks/flutter" && \
+    if [ -d "$FLUTTER_PATH" ]; then \
         echo "Flutter found at: $FLUTTER_PATH" && \
-        chown -R nonroot:nonroot "$FLUTTER_PATH" && \
-        echo "export PATH=\"\$PATH:$FLUTTER_PATH/bin\"" >> /home/nonroot/.bashrc; \
+        # Fix Git safety directory issue for all users
+        git config --global --add safe.directory "$FLUTTER_PATH" && \
+        # Set proper ownership for nonroot user
+        chown -R nonroot:nonroot "$FLUTTER_PATH" || true; \
     else \
-        echo "Warning: Flutter directory not found." && \
-        echo "export PATH=\"\$PATH:/flutter/bin\"" >> /home/nonroot/.bashrc; \
+        echo "Warning: Flutter directory not found at /sdks/flutter"; \
     fi
+
+# Add Flutter to PATH for all users
+ENV PATH="$PATH:/sdks/flutter/bin"
 
 RUN chown -R nonroot:nonroot /app
 ENV HOME /home/nonroot
-ENV PATH="$PATH:/flutter/bin"
 USER nonroot
-
-# Ensure Flutter is available
-RUN which flutter && flutter --version
 
 # Copy pubspec files first for better layer caching
 COPY --chown=nonroot:nonroot pubspec.yaml pubspec.lock ./
@@ -44,7 +42,7 @@ RUN flutter pub get --suppress-analytics
 # Copy the rest of the code
 COPY --chown=nonroot:nonroot . .
 
-# Enable web support and get dependencies
+# Enable web support if not already enabled
 RUN flutter config --enable-web
 
 # Build for web with optimizations
