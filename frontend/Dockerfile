@@ -6,24 +6,28 @@ WORKDIR /app
 # Best Practice: Run build steps as a non-root user
 RUN useradd -m --shell /bin/bash nonroot
 
-# First, check where Flutter is installed
-# In cirruslabs images, it's usually at /sdks/flutter or /opt/flutter
-RUN ls -la /  # Debug: List root directory to see where Flutter is
+# Check where Flutter is actually installed in this image
+# Run a command to find the Flutter installation
+RUN FLUTTER_PATH=$(find / -type d -name "flutter" 2>/dev/null | head -1) && \
+    if [ -n "$FLUTTER_PATH" ]; then \
+        echo "Flutter found at: $FLUTTER_PATH" && \
+        chown -R nonroot:nonroot "$FLUTTER_PATH"; \
+    else \
+        echo "Warning: Flutter directory not found. Skipping ownership change."; \
+    fi
 
-# In cirruslabs images, Flutter is typically at /sdks/flutter
-RUN chown -R nonroot:nonroot /sdks/flutter
 RUN chown -R nonroot:nonroot /app
 ENV HOME /home/nonroot
 USER nonroot
 
 # Copy pubspec files first for better layer caching
-COPY pubspec.yaml pubspec.lock ./
+COPY --chown=nonroot:nonroot pubspec.yaml pubspec.lock ./
 
 # Keep the suppress flag for robustness
 RUN flutter pub get --suppress-analytics
 
 # Copy the rest of the code
-COPY . .
+COPY --chown=nonroot:nonroot . .
 
 # Build for web with optimizations
 RUN flutter build web --release \
