@@ -1,22 +1,14 @@
-# Use the correct Flutter Docker image
 FROM ghcr.io/cirruslabs/flutter:stable AS build
 
 WORKDIR /app
 
-# Best Practice: Run build steps as a non-root user
+# Create non-root user
 RUN useradd -m --shell /bin/bash nonroot
 
-# Check where Flutter is actually installed in this image
-# Run a command to find the Flutter installation
-RUN FLUTTER_PATH=$(find / -type d -name "flutter" 2>/dev/null | head -1) && \
-    if [ -n "$FLUTTER_PATH" ]; then \
-        echo "Flutter found at: $FLUTTER_PATH" && \
-        chown -R nonroot:nonroot "$FLUTTER_PATH"; \
-    else \
-        echo "Warning: Flutter directory not found. Skipping ownership change."; \
-    fi
-
+# Set ownership only on /app (skip /flutter as it's not needed for build)
 RUN chown -R nonroot:nonroot /app
+
+# Set environment and switch to non-root user
 ENV HOME /home/nonroot
 USER nonroot
 
