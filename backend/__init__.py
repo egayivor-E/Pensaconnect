@@ -336,7 +336,8 @@ def create_app(config_name: Optional[str] = None) -> Flask:
         allowed_origins = [
             "https://pensaconnect.onrender.com",  # Your Render backend URL
             "http://localhost:*",                  # For local testing
-            "http://127.0.0.1:*",                  # For local testing   # GitHub Pages
+            "http://127.0.0.1:*",  
+            "https://pensaconnect-frontend.onrender.com",# For testing   # GitHub Pages
             # Add your production domains when you have them
         ]
         print(f"🔒 Production CORS origins: {allowed_origins}")
@@ -348,6 +349,7 @@ def create_app(config_name: Optional[str] = None) -> Flask:
             "http://127.0.0.1:3000",
             "http://127.0.0.1:58672",
             "http://0.0.0.0:58672",
+            "https://pensaconnect-frontend.onrender.com",
         ]
         print(f"🔓 Development CORS origins: {allowed_origins}")
 

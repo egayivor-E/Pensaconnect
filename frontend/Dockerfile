@@ -14,10 +14,10 @@ COPY . .
 
 # Build for web with optimizations
 RUN flutter build web --release \
-    --web-renderer canvaskit \
     --dart-define=BACKEND_URL=${BACKEND_URL:-https://pensaconnect.onrender.com} \
     --pwa-strategy offline-first \
-    --source-maps
+    --source-maps \
+    --no-tree-shake-icons
 
 # ----------------------------------------------------
 # Production Stage (NGINX)
