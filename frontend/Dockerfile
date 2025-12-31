@@ -3,44 +3,31 @@ FROM ghcr.io/cirruslabs/flutter:stable AS build
 
 WORKDIR /app
 
-# Copy pubspec files first for better layer caching
+# 1. Copy pubspec files first
 COPY pubspec.yaml pubspec.lock ./
 
-# Get dependencies
+# 2. Get dependencies
 RUN flutter pub get --suppress-analytics
 
-# Copy the rest of the code
+# 3. Copy the rest of the code
 COPY . .
 
-<<<<<<< HEAD
-# Copy .env file from frontend/assets to assets directory
+# 4. Fix the .env file pathing
+# Ensure the assets directory exists where your pubspec expects it
 RUN mkdir -p assets && \
-    cp frontend/assets/.env assets/.env || echo ".env file not found, creating default" && \
-    echo "BACKEND_URL=https://pensaconnect-pjz9.onrender.com/" > assets/.env
+    cp frontend/assets/.env assets/.env || echo "BACKEND_URL=https://pensaconnect-pjz9.onrender.com/" > assets/.env
 
-# Add this line before the build command
+# 5. Generate code for freezed/json_serializable
 RUN flutter pub run build_runner build --delete-conflicting-outputs
 
-RUN flutter clean && \
-    flutter pub get && \
-    flutter build web --release \
-        --dart-define=BACKEND_URL=https://pensaconnect-pjz9.onrender.com/ \
-        --no-tree-shake-icons \
-        --no-wasm \
-        --verbose
-=======
-# Use environment variable with fallback
+# 6. Single Build Command
+# Removed the duplicate RUN command and fixed the variable syntax
 ARG BACKEND_URL=https://pensaconnect-pjz9.onrender.com
-ENV BACKEND_URL=${BACKEND_URL}
-
-# Single build command with all necessary flags
 RUN flutter build web --release \
-    --dart-define=BACKEND_URL=${BACKEND_URL} \
+    --dart-define=BACKEND_URL=$BACKEND_URL \
     --no-tree-shake-icons \
     --no-wasm \
-    --pwa-strategy=offline-first \
     --verbose
->>>>>>> 82cd073 (Merge remote changes)
 
 # ----------------------------------------------------
 # Production Stage (NGINX)
@@ -50,7 +37,7 @@ FROM nginx:alpine
 # Copy built web files
 COPY --from=build /app/build/web /usr/share/nginx/html
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
-
+# EXPOSE is fine, but ensure your nginx.conf handles SPA routing
 EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
