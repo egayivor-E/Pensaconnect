@@ -12,10 +12,12 @@ RUN flutter pub get --suppress-analytics
 # Copy the rest of the code
 COPY . .
 
-# Build for web with optimizations
+# Add this line before the build command
+RUN flutter pub run build_runner build --delete-conflicting-outputs
+
+# Simplify the build command to rule out PWA issues
 RUN flutter build web --release \
     --dart-define=BACKEND_URL=$BACKEND_URL \
-    --pwa-strategy offline-first \
     --no-tree-shake-icons
 
 # ----------------------------------------------------
