@@ -14,7 +14,7 @@ COPY . .
 
 # Build for web with optimizations
 RUN flutter build web --release \
-    --dart-define=BACKEND_URL=${BACKEND_URL:-https://pensaconnect.onrender.com} \
+    --dart-define=BACKEND_URL=${BACKEND_URL:https://pensaconnect-pjz9.onrender.com} \
     --pwa-strategy offline-first \
     --source-maps \
     --no-tree-shake-icons
