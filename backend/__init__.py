@@ -344,7 +344,7 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     else:
         # Development: allow localhost for testing
         allowed_origins = [
-            "http://localhost:58672",
+            "http://localhost:58672",            
             "http://localhost:3000",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:58672",

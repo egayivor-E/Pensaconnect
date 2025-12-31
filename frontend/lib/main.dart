@@ -83,7 +83,7 @@ Future<void> main() async {
 
   // Load .env file with debug info
   print("🔄 Loading .env file...");
-  await dotenv.load(fileName: "assets/.env");
+  await dotenv.load(fileName: ".env");
 
   // Debug: Check if .env variables are loaded
   print("🎯 .env FILE DEBUG INFO:");

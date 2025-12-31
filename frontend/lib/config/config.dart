@@ -15,8 +15,9 @@ class Config {
   }
 
   static String get apiBaseUrl {
-    final prefix = dotenv.env['API_PREFIX'] ?? '';
-    return '$_rawBackendUrl/$prefix';
+    final prefix = dotenv.env['API_PREFIX'] ?? 'api/v1'; // Default value
+    final cleanPrefix = prefix.startsWith('/') ? prefix.substring(1) : prefix;
+    return '$_rawBackendUrl/$cleanPrefix';
   }
 
   static String get baseUrl => _rawBackendUrl;
