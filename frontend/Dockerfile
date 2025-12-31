@@ -15,10 +15,12 @@ COPY . .
 # Add this line before the build command
 RUN flutter pub run build_runner build --delete-conflicting-outputs
 
-# Simplify the build command to rule out PWA issues
-RUN flutter build web --release \
-    --dart-define=BACKEND_URL=$BACKEND_URL \
-    --no-tree-shake-icons
+RUN flutter clean && \
+    flutter pub get && \
+    flutter build web --release \
+        --dart-define=BACKEND_URL=$BACKEND_URL \
+        --no-tree-shake-icons \
+        --verbose
 
 # ----------------------------------------------------
 # Production Stage (NGINX)
