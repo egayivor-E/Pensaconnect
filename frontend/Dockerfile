@@ -12,14 +12,20 @@ RUN flutter pub get --suppress-analytics
 # Copy the rest of the code
 COPY . .
 
+# Copy .env file from frontend/assets to assets directory
+RUN mkdir -p assets && \
+    cp frontend/assets/.env assets/.env || echo ".env file not found, creating default" && \
+    echo "BACKEND_URL=https://pensaconnect-pjz9.onrender.com/" > assets/.env
+
 # Add this line before the build command
 RUN flutter pub run build_runner build --delete-conflicting-outputs
 
 RUN flutter clean && \
     flutter pub get && \
     flutter build web --release \
-        --dart-define=BACKEND_URL=$BACKEND_URL \
+        --dart-define=BACKEND_URL=https://pensaconnect-pjz9.onrender.com/ \
         --no-tree-shake-icons \
+        --no-wasm \
         --verbose
 
 # ----------------------------------------------------
