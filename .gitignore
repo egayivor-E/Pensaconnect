@@ -33,7 +33,7 @@ frontend/.next/
 frontend/.nuxt/
 frontend/dist/
 frontend/build/
-frontend/.env
+
 frontend/.env.*
 
 # ==========================
