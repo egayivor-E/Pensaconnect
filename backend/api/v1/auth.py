@@ -12,7 +12,7 @@ from .utils import success_response, error_response
 import logging
 from sqlalchemy import or_
 
-# ✅ UTILS IMPORTS
+# ✅ ADD THESE IMPORTS
 from backend.utils import (
     validate_user_registration, 
     validate_email, 
@@ -63,7 +63,7 @@ def register():
         validation_result = validate_user_registration(validation_data)
         if not validation_result.is_valid:
             logger.warning(f"Registration validation failed: {validation_result.errors}")
-            # ✅ FIXED: Use error_response instead of jsonify
+            # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
             return error_response(validation_result.errors, 400)
 
         # ✅ CHECK FOR EXISTING USER (case-insensitive)
@@ -76,6 +76,7 @@ def register():
         ).first()
         
         if existing_user:
+            # Determine which field caused the conflict
             conflict_fields = []
             if existing_user.email.lower() == email.lower():
                 conflict_fields.append("email")
@@ -137,6 +138,7 @@ def register():
 def login():
     data = request.get_json(silent=True) or {}
     
+    # ✅ SANITIZE INPUTS
     identifier = sanitize_input(
         data.get("identifier") or 
         data.get("email") or 
@@ -147,11 +149,16 @@ def login():
 
     logger.info(f"Login attempt for identifier: {identifier}")
 
+    # ✅ BASIC VALIDATION
     if not identifier or not password:
-        return error_response("Identifier and password are required", 400)
+        return error_response(
+            "Identifier and password are required", 400
+        )
 
+    # Normalize phone for login as well
     normalized_identifier = normalize_phone(identifier)
 
+    # ✅ CASE-INSENSITIVE QUERY
     user = User.query.filter(
         or_(
             User.email.ilike(identifier),
@@ -164,12 +171,14 @@ def login():
         logger.warning(f"Failed login attempt for identifier: {identifier}")
         return error_response("Invalid credentials", 401)
 
+    # ✅ UPDATE LAST LOGIN
     try:
         user.update_last_login()
         db.session.commit()
     except Exception as e:
         logger.warning(f"Could not update last login: {e}")
 
+    # ✅ GENERATE TOKENS
     access_token = create_access_token(
         identity=user.id, 
         expires_delta=timedelta(hours=1)
@@ -179,6 +188,7 @@ def login():
         expires_delta=timedelta(days=30)
     )
 
+    # ✅ RETURN USER DATA WITH ROLES
     user_data = user.to_dict(exclude=["password_hash"])
     user_data["roles"] = [r.name for r in user.roles]
 
@@ -194,6 +204,86 @@ def login():
     )
 
 
+@auth_bp.route("/refresh", methods=["POST"])
+@jwt_required(refresh=True)
+def refresh():
+    try:
+        current_identity = get_jwt_identity()
+
+        # ✅ VERIFY USER STILL EXISTS
+        user = User.query.get(current_identity)
+        if not user:
+            return error_response("User no longer exists", 401)
+
+        # ✅ ISSUE NEW TOKENS
+        new_access_token = create_access_token(
+            identity=current_identity, 
+            expires_delta=timedelta(hours=1)
+        )
+        new_refresh_token = create_refresh_token(
+            identity=current_identity, 
+            expires_delta=timedelta(days=30)
+        )
+
+        logger.info(f"Tokens refreshed for user ID: {current_identity}")
+
+        return success_response(
+            {
+                "access_token": new_access_token,
+                "refresh_token": new_refresh_token,
+            },
+            "Tokens refreshed",
+        )
+        
+    except Exception as e:
+        logger.error(f"Token refresh error: {e}")
+        return error_response("Token refresh failed", 401)
+
+
+@auth_bp.route("/me", methods=["GET"])
+@jwt_required()
+def me():
+    """Return current user details with roles"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+
+        if not user:
+            return error_response("User not found", 404)
+
+        user_data = user.to_dict(exclude=["password_hash"])
+        user_data["roles"] = [r.name for r in user.roles]
+
+        return success_response(user_data)
+        
+    except Exception as e:
+        logger.error(f"Error fetching user profile: {e}")
+        return error_response("Failed to fetch user profile", 500)
+
+
+@auth_bp.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    """Initiate password reset process"""
+    data = request.get_json(silent=True) or {}
+    email = sanitize_input(data.get("email", "")).lower()
+    
+    if not email:
+        return error_response("Email is required", 400)
+    
+    email_validation = validate_email(email)
+    if not email_validation.is_valid:
+        return error_response(email_validation.message, 400)
+    
+    user = User.query.filter_by(email=email).first()
+    
+    if user:
+        logger.info(f"Password reset requested for: {email}")
+    
+    return success_response(
+        message="If the email exists, a password reset link has been sent"
+    )
+
+
 @auth_bp.route("/reset-password", methods=["POST"])
 def reset_password():
     """Reset password with token"""
@@ -206,7 +296,7 @@ def reset_password():
     
     password_validation = validate_password(new_password)
     if not password_validation.is_valid:
-        # ✅ FIXED: Use error_response instead of jsonify
+        # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
         return error_response(password_validation.errors, 400)
     
     return success_response(message="Password reset successfully")
@@ -236,7 +326,7 @@ def update_profile():
         from backend.utils import validate_user_profile_update
         validation_result = validate_user_profile_update(update_data)
         if not validation_result.is_valid:
-            # ✅ FIXED: Use error_response instead of jsonify
+            # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
             return error_response(validation_result.errors, 400)
         
         for field, value in update_data.items():
