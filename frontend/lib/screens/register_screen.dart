@@ -1,4 +1,3 @@
-// screens/register_screen.dart
 // ignore_for_file: use_build_context_synchronously
 
 import 'package:flutter/material.dart';
@@ -13,10 +12,16 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  // New Controllers for Names
+  final TextEditingController _firstNameController = TextEditingController();
+  final TextEditingController _lastNameController = TextEditingController();
+
+  // Existing Controllers
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+
   bool _isLoading = false;
 
   Future<void> _register() async {
@@ -24,6 +29,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     try {
       final response = await ApiService.post("auth/register", {
+        "first_name": _firstNameController.text.trim(),
+        "last_name": _lastNameController.text.trim(),
         "username": _usernameController.text.trim(),
         "email": _emailController.text.trim(),
         "phone_number": _phoneController.text.trim(),
@@ -36,13 +43,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("✅ Registration successful! Please login."),
+            backgroundColor: Colors.green,
           ),
         );
         context.go('/'); // back to login
       } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("❌ Error: ${response.body}")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ Error: ${response.body}"),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       setState(() => _isLoading = false);
@@ -66,14 +77,43 @@ class _RegisterScreenState extends State<RegisterScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            // --- Side-by-Side Name Fields ---
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _firstNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'First Name',
+                      prefixIcon: Icon(Icons.person_outline),
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _lastNameController,
+                    decoration: const InputDecoration(labelText: 'Last Name'),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // --- Username Field ---
             TextFormField(
               controller: _usernameController,
               decoration: const InputDecoration(
                 labelText: 'Username',
-                prefixIcon: Icon(Icons.person),
+                prefixIcon: Icon(Icons.alternate_email),
+                hintText: 'e.g. Gayivor_E',
               ),
             ),
             const SizedBox(height: 12),
+
+            // --- Email Field ---
             TextFormField(
               controller: _emailController,
               decoration: const InputDecoration(
@@ -83,6 +123,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               keyboardType: TextInputType.emailAddress,
             ),
             const SizedBox(height: 12),
+
+            // --- Phone Field ---
             TextFormField(
               controller: _phoneController,
               decoration: const InputDecoration(
@@ -92,6 +134,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               keyboardType: TextInputType.phone,
             ),
             const SizedBox(height: 12),
+
+            // --- Password Field ---
             TextFormField(
               controller: _passwordController,
               decoration: const InputDecoration(
@@ -100,9 +144,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               obscureText: true,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
+
+            // --- Register Button ---
             SizedBox(
               width: double.infinity,
+              height: 50,
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _register,
                 child: _isLoading
@@ -114,7 +161,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           strokeWidth: 2,
                         ),
                       )
-                    : const Text('Register'),
+                    : const Text(
+                        'Register Account',
+                        style: TextStyle(fontSize: 16),
+                      ),
               ),
             ),
           ],
