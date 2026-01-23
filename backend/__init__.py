@@ -51,7 +51,7 @@ def _set_csp_headers(app: Flask):
             f"style-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
             f"img-src 'self' data:; "
             f"font-src 'self' https://cdn.jsdelivr.net; "
-            f"connect-src 'self'; "
+            f"connect-src 'self' https://pensaconnect-pjz9.onrender.com wss://pensaconnect-pjz9.onrender.com; "
             f"object-src 'none'; "
             f"base-uri 'self'; "
             f"form-action 'self'; "
@@ -337,7 +337,7 @@ def create_app(config_name: Optional[str] = None) -> Flask:
             "https://pensaconnect-pjz9.onrender.com",  # Your Render backend URL
             "http://localhost:*",                  # For local testing
             "http://127.0.0.1:*", 
-            "https://pensaconnect-1.onrender.com ",
+            "https://pensaconnect-1.onrender.com",
             # For testing   # GitHub Pages
             # Add your production domains when you have them
         ]
