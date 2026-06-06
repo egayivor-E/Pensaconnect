@@ -501,6 +501,12 @@ def _configure_app(app: Flask, config_name: Optional[str]):
     
     app.config.from_pyfile("config.py", silent=True)
     app.config.from_prefixed_env()
+    app.config['ADMIN_EMAIL'] = os.getenv('ADMIN_EMAIL')
+    app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
+    app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+    app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True').lower() in ['true', 'on', '1']
+    app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
+    app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
 
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["ENV"] = config_name
