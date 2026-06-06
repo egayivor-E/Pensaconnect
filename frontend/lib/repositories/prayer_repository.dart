@@ -36,25 +36,22 @@ class PrayerRepository extends ChangeNotifier {
       final res = await ApiService.get("prayers", queryParams: queryParams);
 
      // ✅ FIX: Accept both 200 and 201 successful HTTP codes
-      if (res.statusCode == 200 || res.statusCode == 201) {
+       if (res.statusCode == 201) {
         final body = ApiService.parseBody(res);
-        
-        if (body != null && body['data'] != null) {
-          final newRequest = PrayerRequest.fromJson(body['data']);
-          _requests.insert(0, newRequest);
-          notifyListeners();
-          return true;
-        }
-        return false;
+        final newRequest = PrayerRequest.fromJson(body['data']);
+        _requests.insert(0, newRequest);
+        notifyListeners();
+        return true;
       } else {
-        debugPrint("❌ createRequest failed with server code: ${res.statusCode}");
+        debugPrint("❌ createRequest failed: ${res.statusCode}");
         return false;
       }
     } catch (e) {
-      debugPrint("❌ createRequest exception error: $e");
+      debugPrint("❌ createRequest error: $e");
       return false;
     }
   }
+
 
   Future<bool> createRequest({
     required String title,
