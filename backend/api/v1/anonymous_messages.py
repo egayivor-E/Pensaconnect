@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 # Create blueprint
 anonymous_bp = Blueprint('anonymous_messages', __name__, url_prefix='/anonymous')
 
-@anonymous_bp.route('/send-message', methods=['POST'])
+@anonymous_bp.route('/send-message', methods=['GET','POST'])
 def send_anonymous_message():
     """
     Send anonymous message to admin email
