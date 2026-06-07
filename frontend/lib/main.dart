@@ -97,20 +97,25 @@ Future<void> main() async {
   await ApiService.init();
   print("✅ MAIN: ApiService.init() completed");
 
-  // ✅ Initialize Socket.IO Service
-  print("🔄 Initializing Socket.IO Service...");
+  final authProvider = AuthProvider();
+  final autoLoggedIn = await authProvider.tryAutoLogin();
+
+  // ✅ ONLY initialize Socket.IO after auto-login and get token
+  print("🔄 Initializing Socket.IO Service after auth...");
   try {
-    await SocketIoService().initialize();
-    print("✅ Socket.IO Service initialized");
+    final token = await ApiService.getToken();
+    if (token != null || autoLoggedIn) {
+      await SocketIoService().initialize();
+      print("✅ Socket.IO Service initialized successfully");
+    } else {
+      print("⚠️ No auth token yet, Socket.IO will initialize after login");
+    }
   } catch (e) {
     print("❌ Socket.IO Service initialization failed: $e");
   }
 
   // Debug: Check token status after init
   await ApiService.debugTokenStatus();
-
-  final authProvider = AuthProvider();
-  final autoLoggedIn = await authProvider.tryAutoLogin();
 
   runApp(
     MultiProvider(
@@ -154,8 +159,11 @@ Future<void> main() async {
           ),
         ),
 
-        // ✅ Socket.IO Service Provider
-        Provider<SocketIoService>(create: (_) => SocketIoService()),
+        // ✅ Socket.IO Service Provider - use factory to ensure single instance
+        Provider<SocketIoService>(
+          create: (_) => SocketIoService(),
+          lazy: true, // Don't create until needed
+        ),
       ],
       child: MyApp(autoLoggedIn: autoLoggedIn),
     ),
