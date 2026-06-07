@@ -333,59 +333,59 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     # Determine allowed origins based on environment
    # ✅ REPLACE THE ENTIRE CORS CONFIGURATION SECTION WITH THIS:
 
-# ============ CORS CONFIGURATION ============
-# Determine allowed origins based on environment
-is_production = config_name in ['production', 'render'] or os.getenv('FLASK_ENV') == 'production'
-
-if is_production:
-    # Production: explicit allowed origins only
-    ALLOWED_ORIGINS = [
-        "https://pensaconnect-pjz9.onrender.com",  # Backend URL
-        "https://pensaconnect-1.onrender.com",     # Frontend URL
-    ]
-    print(f"🔒 Production CORS origins: {ALLOWED_ORIGINS}")
-else:
-    # Development: allow localhost with any port
-    ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://localhost:5000",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5000",
-    ]
-    print("🔓 Development CORS mode enabled")
-
-# SINGLE CORS configuration - THIS IS ENOUGH, no need for after_request
-CORS(app,
-    resources={
-        r"/api/*": {
-            "origins": ALLOWED_ORIGINS,
-            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-            "expose_headers": ["Content-Type", "Authorization"],
-            "supports_credentials": True,
-            "max_age": 3600
-        },
-        r"/uploads/*": {
-            "origins": ALLOWED_ORIGINS,
-            "methods": ["GET", "OPTIONS"],
-            "allow_headers": ["Content-Type"],
-        },
-    }
-)
-
-# ============ WEBSOCKET SETUP ============
-global socketio
-
-socketio = SocketIO(
-    app,
-    cors_allowed_origins=ALLOWED_ORIGINS if is_production else "*",
-    logger=not is_production,  # Only log in development
-    engineio_logger=not is_production,
-    async_mode='gevent',
-    ping_timeout=60,
-    ping_interval=25,
-    max_http_buffer_size=1000000
-)
+    # ============ CORS CONFIGURATION ============
+    # Determine allowed origins based on environment
+    is_production = config_name in ['production', 'render'] or os.getenv('FLASK_ENV') == 'production'
+    
+    if is_production:
+        # Production: explicit allowed origins only
+        ALLOWED_ORIGINS = [
+            "https://pensaconnect-pjz9.onrender.com",  # Backend URL
+            "https://pensaconnect-1.onrender.com",     # Frontend URL
+        ]
+        print(f"🔒 Production CORS origins: {ALLOWED_ORIGINS}")
+    else:
+        # Development: allow localhost with any port
+        ALLOWED_ORIGINS = [
+            "http://localhost:3000",
+            "http://localhost:5000",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5000",
+        ]
+        print("🔓 Development CORS mode enabled")
+    
+    # SINGLE CORS configuration - THIS IS ENOUGH, no need for after_request
+    CORS(app,
+        resources={
+            r"/api/*": {
+                "origins": ALLOWED_ORIGINS,
+                "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                "expose_headers": ["Content-Type", "Authorization"],
+                "supports_credentials": True,
+                "max_age": 3600
+            },
+            r"/uploads/*": {
+                "origins": ALLOWED_ORIGINS,
+                "methods": ["GET", "OPTIONS"],
+                "allow_headers": ["Content-Type"],
+            },
+        }
+    )
+    
+    # ============ WEBSOCKET SETUP ============
+    global socketio
+    
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins=ALLOWED_ORIGINS if is_production else "*",
+        logger=not is_production,  # Only log in development
+        engineio_logger=not is_production,
+        async_mode='gevent',
+        ping_timeout=60,
+        ping_interval=25,
+        max_http_buffer_size=1000000
+    )
 
     
     # ✅ Register WebSocket events IMMEDIATELY after SocketIO creation
