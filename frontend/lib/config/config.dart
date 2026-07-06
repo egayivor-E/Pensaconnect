@@ -41,30 +41,32 @@ class Config {
   }
 
   static String get websocketUrl {
-  // 1. Load from .env, ensure it defaults to your actual backend URL
-  // Do NOT hardcode 'wss://' here; use 'https://'
-  var wsUrl = dotenv.env['WEBSOCKET_URL'] ?? 'https://pensaconnect-pjz9.onrender.com';
+    // 1. Initial retrieval and immediate trim (removes \n and spaces)
+    String url =
+        (dotenv.env['WEBSOCKET_URL'] ??
+                'https://pensaconnect-pjz9.onrender.com')
+            .trim();
 
-  // 2. Normalize to HTTP/HTTPS for the handshake
-  // Socket.IO requires an HTTP/HTTPS base URL to perform the initial handshake.
-  if (wsUrl.startsWith('ws://')) {
-    wsUrl = wsUrl.replaceFirst('ws://', 'http://');
-  }
-  if (wsUrl.startsWith('wss://')) {
-    wsUrl = wsUrl.replaceFirst('wss://', 'https://');
+    // 2. Normalize scheme to HTTP/HTTPS for Socket.IO handshake
+    if (url.startsWith('ws://')) {
+      url = url.replaceFirst('ws://', 'http://');
+    } else if (url.startsWith('wss://')) {
+      url = url.replaceFirst('wss://', 'https://');
+    }
+
+    // 3. Remove path suffixes that interfere with socket.io
+    if (url.endsWith('/ws')) {
+      url = url.substring(0, url.length - 3);
+    }
+    if (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+
+    // 4. Final debug to verify the handshake target
+    debugPrint('🔌 Final Handshake URL: "$url"');
+    return url;
   }
 
-  // 3. Clean up path suffixes
-  if (wsUrl.endsWith('/ws')) {
-    wsUrl = wsUrl.substring(0, wsUrl.length - 3);
-  }
-  if (wsUrl.endsWith('/')) {
-    wsUrl = wsUrl.substring(0, wsUrl.length - 1);
-  }
-
-  debugPrint('🔌 Final Handshake URL: $wsUrl');
-  return wsUrl;
-}
 
   // ✅ ADDED: Socket.IO specific configuration options
   static Map<String, dynamic> get socketIOOptions {
