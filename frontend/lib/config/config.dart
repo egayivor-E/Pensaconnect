@@ -64,7 +64,7 @@ class Config {
 
     // 4. Final debug to verify the handshake target
     debugPrint('🔌 Final Handshake URL: "$url"');
-    return url;
+    return url.replaceFirst('wss://', 'https://');
   }
 
 
