@@ -103,7 +103,7 @@ class SocketIoService {
   // CONNECTION MANAGEMENT
   // ================================
 
-  Future<void> _connectToGroup(int groupId) async {
+     Future<void> _connectToGroup(int groupId) async {
     if (!Config.enableLiveChat) return;
 
     try {
@@ -114,21 +114,15 @@ class SocketIoService {
 
       final token = await AuthService().getToken();
 
-      final String handshakeUrl = Config.websocketUrl.replaceFirst(
-        'wss://',
-        'https://',
-      );
-
       // Create socket
       final options = io.OptionBuilder()
-          .setTransports(['websocket', 'polling'])
+          .setTransports(['websocket'])
           .setPath('/socket.io')
           .setExtraHeaders(
             token != null && token.isNotEmpty
                 ? {'Authorization': 'Bearer $token'}
                 : {},
           )
-          .setQuery({'token': token})
           .enableReconnection()
           .setReconnectionAttempts(10)
           .setReconnectionDelay(1000)
@@ -245,6 +239,8 @@ class SocketIoService {
       _logError('connection_setup', e, groupId: groupId);
     }
   }
+
+
 
   // ✅ ADDED: Wait for connection method
   Future<bool> waitForConnection(int groupId, {int timeoutSeconds = 10}) async {
@@ -502,6 +498,8 @@ class SocketIoService {
       _messageControllers[groupId]?.addError(
         'Connection failed after ${Config.maxConnectionRetries} attempts',
       );
+    } else {
+      _scheduleReconnection(groupId);
     }
   }
 
