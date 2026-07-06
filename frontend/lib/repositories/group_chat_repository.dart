@@ -3,7 +3,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:pensaconnect/services/socketio_service.dart';
-import 'package:pensaconnect/services/websocket_service.dart';
 import '../models/group_chat_model.dart';
 import '../services/api_service.dart';
 import '../repositories/auth_repository.dart';
