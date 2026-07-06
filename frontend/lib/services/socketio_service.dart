@@ -103,7 +103,7 @@ class SocketIoService {
   // CONNECTION MANAGEMENT
   // ================================
 
-    Future<void> _connectToGroup(int groupId) async {
+     Future<void> _connectToGroup(int groupId) async {
     if (!Config.enableLiveChat) return;
 
     try {
@@ -112,19 +112,28 @@ class SocketIoService {
       // Cleanup any previous connection
       _cleanupGroupConnection(groupId);
 
+      final token = await AuthService().getToken();
+
       // Create socket
       final options = io.OptionBuilder()
           .setTransports(['websocket'])
-          .disableAutoConnect()
-          .setReconnectionAttempts(Config.maxConnectionRetries)
-          .setReconnectionDelay(Config.connectionRetryDelay * 1000)
+          .setPath('/socket.io')
+          .setExtraHeaders(
+            token != null && token.isNotEmpty
+                ? {'Authorization': 'Bearer $token'}
+                : {},
+          )
+          .enableReconnection()
+          .setReconnectionAttempts(10)
+          .setReconnectionDelay(1000)
+          .setReconnectionDelayMax(5000)
           .setTimeout(30000)
+          .disableAutoConnect()
           .build();
 
+      // 2. Pass ONLY that options object to the socket
       final socket = io.io(Config.websocketUrl, options);
-
       // Attach auth token
-      final token = await AuthService().getToken();
       if (token != null && token.isNotEmpty) {
         socket.io.options?['query'] = {'token': token};
         debugPrint('🔑 Auth token attached for Socket.IO');
@@ -137,13 +146,9 @@ class SocketIoService {
       // ======== CONNECTION EVENTS ========
       socket.onConnect((_) {
         debugPrint('✅ Socket.IO Connected for group $groupId');
-
-        // Complete connection
         if (!_connectionCompleters[groupId]!.isCompleted) {
           _connectionCompleters[groupId]!.complete(true);
         }
-
-        // Auto join group room
         socket.emit('join_group', {'groupId': groupId});
       });
 
@@ -159,7 +164,6 @@ class SocketIoService {
         debugPrint('🔌 Disconnected from group $groupId');
         _handleDisconnection(groupId);
       });
-
       socket.onReconnect((_) {
         debugPrint('🔄 Reconnected to group $groupId');
       });
@@ -235,6 +239,7 @@ class SocketIoService {
       _logError('connection_setup', e, groupId: groupId);
     }
   }
+
 
 
   // ✅ ADDED: Wait for connection method
