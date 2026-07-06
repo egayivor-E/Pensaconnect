@@ -103,7 +103,7 @@ class SocketIoService {
   // CONNECTION MANAGEMENT
   // ================================
 
-  Future<void> _connectToGroup(int groupId) async {
+    Future<void> _connectToGroup(int groupId) async {
     if (!Config.enableLiveChat) return;
 
     try {
@@ -235,6 +235,7 @@ class SocketIoService {
       _logError('connection_setup', e, groupId: groupId);
     }
   }
+
 
   // ✅ ADDED: Wait for connection method
   Future<bool> waitForConnection(int groupId, {int timeoutSeconds = 10}) async {
