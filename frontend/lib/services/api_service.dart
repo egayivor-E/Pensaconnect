@@ -27,6 +27,12 @@ class ApiService {
   static Stream<String?> get tokenStream => _tokenStreamController.stream;
   static String? get authToken => _authToken;
 
+  /// Get the current access token (async version for compatibility)
+  static Future<String?> getToken() async {
+    await ensureInitialized(); // Ensure we're initialized
+    return _authToken;
+  }
+
   // === INITIALIZATION ===
   static Future<void> init() async {
     // Prevent multiple initializations
