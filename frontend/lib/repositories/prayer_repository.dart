@@ -15,6 +15,7 @@ class PrayerRepository extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get hasMore => _hasMore;
 
+  // ✅ FIXED: Changed return type to Future<void> and removed return statements
   Future<void> fetchRequests({
     String filter = "wall",
     int page = 1,
@@ -35,24 +36,29 @@ class PrayerRepository extends ChangeNotifier {
 
       final res = await ApiService.get("prayers", queryParams: queryParams);
 
-     // ✅ FIX: Accept both 200 and 201 successful HTTP codes
-       if (res.statusCode == 201) {
+      if (res.statusCode == 200) {
         final body = ApiService.parseBody(res);
-        final newRequest = PrayerRequest.fromJson(body['data']);
-        _requests.insert(0, newRequest);
+        final List<dynamic> data = body['data'] ?? [];
+        final List<PrayerRequest> newRequests = PrayerRequest.listFromJson(data);
+        
+        if (refresh) {
+          _requests.clear();
+        }
+        _requests.addAll(newRequests);
+        _hasMore = newRequests.length >= perPage;
         notifyListeners();
-        return true;
       } else {
-        debugPrint("❌ createRequest failed: ${res.statusCode}");
-        return false;
+        debugPrint("❌ fetchRequests failed: ${res.statusCode}");
       }
     } catch (e) {
-      debugPrint("❌ createRequest error: $e");
-      return false;
+      debugPrint("❌ fetchRequests error: $e");
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 
-
+  // ✅ FIXED: This method correctly returns Future<bool>
   Future<bool> createRequest({
     required String title,
     required String content,
@@ -74,14 +80,14 @@ class PrayerRepository extends ChangeNotifier {
         final newRequest = PrayerRequest.fromJson(body['data']);
         _requests.insert(0, newRequest);
         notifyListeners();
-        return true;
+        return true; // ✅ Valid return
       } else {
         debugPrint("❌ createRequest failed: ${res.statusCode}");
-        return false;
+        return false; // ✅ Valid return
       }
     } catch (e) {
       debugPrint("❌ createRequest error: $e");
-      return false;
+      return false; // ✅ Valid return
     }
   }
 
