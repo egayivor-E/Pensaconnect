@@ -7,7 +7,9 @@ import 'api_service.dart';
 class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
-  AuthService._internal();
+  AuthService._internal() {
+    _loadCurrentUser();
+  }
 
   Map<String, dynamic>? _currentUser;
   Map<String, dynamic>? get currentUser => _currentUser;
@@ -16,13 +18,6 @@ class AuthService {
   static const _tokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
   static const _secureStorage = FlutterSecureStorage();
-
-  // ✅ FIXED: Initialize properly
-  static Future<AuthService> init() async {
-    final instance = AuthService._instance;
-    await instance._loadCurrentUser();
-    return instance;
-  }
 
   /// Register a new user
   Future<Map<String, dynamic>> register(
@@ -70,7 +65,7 @@ class AuthService {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_userKey, json.encode(_currentUser));
 
-        // Save tokens to SECURE storage
+        // Save tokens to SECURE storage (FIXED)
         if (data['data']['access_token'] != null) {
           await _saveTokensSecurely(
             data['data']['access_token'],
@@ -86,6 +81,7 @@ class AuthService {
         );
         developer.log("✅ Tokens saved to ApiService", name: "AuthService");
 
+        // Verify user is properly set
         developer.log(
           "✅ User set in AuthService: ID=${_currentUser?['id']}, Username=${_currentUser?['username']}",
           name: "AuthService",
@@ -110,9 +106,11 @@ class AuthService {
     String refreshToken,
   ) async {
     try {
+      // Save to secure storage
       await _secureStorage.write(key: _tokenKey, value: accessToken);
       await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
 
+      // Also save to SharedPreferences for backward compatibility
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_tokenKey, accessToken);
       await prefs.setString(_refreshTokenKey, refreshToken);
@@ -120,15 +118,17 @@ class AuthService {
       developer.log("✅ Tokens saved to secure storage", name: "AuthService");
     } catch (e) {
       developer.log("❌ Error saving tokens securely: $e", name: "AuthService");
+      // Fallback to SharedPreferences only
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_tokenKey, accessToken);
       await prefs.setString(_refreshTokenKey, refreshToken);
     }
   }
 
-  /// Get saved token
+  /// Get saved token (with migration from SharedPreferences)
   Future<String?> getToken() async {
     try {
+      // 1. Try secure storage first
       String? token = await _secureStorage.read(key: _tokenKey);
 
       if (token != null && token.isNotEmpty) {
@@ -139,6 +139,7 @@ class AuthService {
         return token;
       }
 
+      // 2. Try SharedPreferences (for migration)
       final prefs = await SharedPreferences.getInstance();
       token = prefs.getString(_tokenKey);
 
@@ -147,12 +148,21 @@ class AuthService {
           "🔄 Token found in SharedPreferences, migrating to secure storage...",
           name: "AuthService",
         );
+
+        // Migrate to secure storage
         await _secureStorage.write(key: _tokenKey, value: token);
+
+        // Remove from SharedPreferences (optional)
         await prefs.remove(_tokenKey);
-        developer.log("✅ Token migrated to secure storage", name: "AuthService");
+
+        developer.log(
+          "✅ Token migrated to secure storage",
+          name: "AuthService",
+        );
         return token;
       }
 
+      // 3. No token found
       developer.log("❌ No token found in any storage", name: "AuthService");
       return null;
     } catch (e) {
@@ -164,9 +174,11 @@ class AuthService {
   /// Get refresh token
   Future<String?> getRefreshToken() async {
     try {
+      // Try secure storage first
       String? token = await _secureStorage.read(key: _refreshTokenKey);
 
       if (token == null || token.isEmpty) {
+        // Fallback to SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         token = prefs.getString(_refreshTokenKey);
       }
@@ -213,14 +225,17 @@ class AuthService {
     try {
       _currentUser = null;
 
+      // Clear from SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_userKey);
       await prefs.remove(_tokenKey);
       await prefs.remove(_refreshTokenKey);
 
+      // Clear from secure storage
       await _secureStorage.delete(key: _tokenKey);
       await _secureStorage.delete(key: _refreshTokenKey);
 
+      // Clear from ApiService
       await ApiService.clearTokens();
 
       developer.log(
@@ -232,7 +247,7 @@ class AuthService {
     }
   }
 
-  /// Load current user from storage
+  /// Load current user from storage on app start
   Future<void> _loadCurrentUser() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -246,6 +261,7 @@ class AuthService {
           name: "AuthService",
         );
 
+        // Load tokens into ApiService
         final token = await getToken();
         final refreshToken = await getRefreshToken();
 
@@ -267,24 +283,9 @@ class AuthService {
     }
   }
 
-  // ✅ FIXED: Ensure user is loaded before accessing
-  Future<Map<String, dynamic>?> getCurrentUser() async {
-    if (_currentUser == null) {
-      await _loadCurrentUser();
-    }
-    return _currentUser;
-  }
-
-  // ✅ FIXED: Get user ID with proper loading
-  Future<int?> getUserId() async {
-    await getCurrentUser();
-    return userId;
-  }
-
   /// Debug method to check authentication state
   Future<void> debugAuthState() async {
     developer.log("🔍 AUTH STATE DEBUG", name: "AuthService");
-    await getCurrentUser();
     developer.log("   - Current User: $_currentUser", name: "AuthService");
     developer.log("   - User ID: $userId", name: "AuthService");
     developer.log("   - Username: $username", name: "AuthService");
@@ -299,6 +300,7 @@ class AuthService {
     final isAuth = await isAuthenticated();
     developer.log("   - Is Authenticated: $isAuth", name: "AuthService");
 
+    // Check SharedPreferences
     final prefs = await SharedPreferences.getInstance();
     final spToken = prefs.getString(_tokenKey);
     developer.log(
@@ -306,6 +308,7 @@ class AuthService {
       name: "AuthService",
     );
 
+    // Check Secure Storage
     final ssToken = await _secureStorage.read(key: _tokenKey);
     developer.log(
       "   - Secure Storage token: ${ssToken != null}",
