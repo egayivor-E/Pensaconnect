@@ -196,7 +196,7 @@ def _register_websocket_events(socketio_instance):
         logger.info(f"⚠️ User {request.sid} left room {room}")
 
     # ================================================================
-    # ✅ FIXED: WebSocket send_message - Uses ID from frontend
+    # ✅ PRODUCTION FIX: WebSocket send_message - Broadcasts to ALL clients
     # The HTTP POST /group-chats/$groupId/messages handles saving
     # ================================================================
     @socketio_instance.on("send_message")
@@ -204,7 +204,8 @@ def _register_websocket_events(socketio_instance):
         """
         Handle incoming WebSocket message.
         ✅ Uses message ID from frontend (sent by Flutter after HTTP save)
-        ✅ ONLY BROADCASTS - NO DATABASE SAVE
+        ✅ Broadcasts to ALL clients in the room (including sender)
+        ✅ NO DATABASE SAVE (HTTP handles saving)
         """
         try:
             logger.debug(f"DEBUG send_message received data: {data}")
@@ -242,7 +243,7 @@ def _register_websocket_events(socketio_instance):
                 safe_emit("send_error", {"error": "Rate limit exceeded"}, room=request.sid)
                 return
             
-            # ✅ FIXED: Get the message ID from frontend (sent after HTTP save)
+            # ✅ Get the message ID from frontend (sent after HTTP save)
             message_id = data.get("id")
             
             # If no ID provided, generate a temporary one (shouldn't happen with fixed frontend)
@@ -251,7 +252,7 @@ def _register_websocket_events(socketio_instance):
                 message_id = int(time.time() * 1000)
                 logger.warning(f"⚠️ No ID provided by frontend, using temporary ID: {message_id}")
             else:
-                logger.debug(f"✅ Using message ID from frontend: {message_id}")
+                logger.info(f"✅ Using message ID from frontend: {message_id}")
             
             # Get sender info from frontend data
             sender_info = data.get("sender", {})
@@ -269,7 +270,7 @@ def _register_websocket_events(socketio_instance):
             
             # ✅ Format message for broadcasting using the ID from frontend
             message_data = {
-                "id": message_id,  # ✅ Use the ID from frontend (real DB ID)
+                "id": message_id,
                 "groupId": group_id,
                 "senderId": user_id,
                 "content": content.strip(),
@@ -284,14 +285,21 @@ def _register_websocket_events(socketio_instance):
                 }
             }
             
-            # ✅ ONLY BROADCAST - NO SAVE TO DATABASE
+            # ✅ FIXED: Broadcast to ALL clients in the room
+            # This ensures everyone (including the sender) gets the message
+            room_name = f"group_{group_id}"
+            
+            # Emit to all clients in the room
             safe_emit(
                 "new_message",
                 message_data,
-                room=f"group_{group_id}"
+                room=room_name,
+                skip_sid=None,      # ✅ Don't skip anyone
+                include_self=True   # ✅ Include the sender
             )
             
-            logger.info(f"📩 Broadcasted message ID {message_id} from user {user_id} to group_{group_id}: {content[:50]}...")
+            # ✅ Log the broadcast
+            logger.info(f"📩 Broadcasted message ID {message_id} to room {room_name} ({get_connected_users_count(group_id)} users)")
             
         except Exception as e:
             logger.error(f"❌ Message broadcast failed: {e}")
