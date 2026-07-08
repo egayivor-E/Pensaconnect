@@ -196,14 +196,15 @@ def _register_websocket_events(socketio_instance):
         logger.info(f"⚠️ User {request.sid} left room {room}")
 
     # ================================================================
-    # ✅ FIXED: WebSocket send_message - ONLY BROADCASTS, NO DATABASE SAVE
+    # ✅ FIXED: WebSocket send_message - Uses ID from frontend
     # The HTTP POST /group-chats/$groupId/messages handles saving
     # ================================================================
     @socketio_instance.on("send_message")
     def handle_send_message(data):
         """
         Handle incoming WebSocket message.
-        ✅ ONLY BROADCASTS - NO DATABASE SAVE (HTTP handles saving)
+        ✅ Uses message ID from frontend (sent by Flutter after HTTP save)
+        ✅ ONLY BROADCASTS - NO DATABASE SAVE
         """
         try:
             logger.debug(f"DEBUG send_message received data: {data}")
@@ -241,36 +242,47 @@ def _register_websocket_events(socketio_instance):
                 safe_emit("send_error", {"error": "Rate limit exceeded"}, room=request.sid)
                 return
             
-            # ✅ REMOVED: Database save - HTTP already saved it
-            # The message is already saved by the HTTP POST /group-chats/$groupId/messages
-            # WebSocket should ONLY broadcast
+            # ✅ FIXED: Get the message ID from frontend (sent after HTTP save)
+            message_id = data.get("id")
             
-            # Format message for broadcasting
+            # If no ID provided, generate a temporary one (shouldn't happen with fixed frontend)
+            if message_id is None or message_id == 0:
+                import time
+                message_id = int(time.time() * 1000)
+                logger.warning(f"⚠️ No ID provided by frontend, using temporary ID: {message_id}")
+            else:
+                logger.debug(f"✅ Using message ID from frontend: {message_id}")
+            
+            # Get sender info from frontend data
+            sender_info = data.get("sender", {})
+            sender_name = sender_info.get("full_name", "Unknown User")
+            sender_username = sender_info.get("username", "unknown")
+            sender_profile_picture = sender_info.get("profile_picture")
+            
+            # Get timestamp
+            created_at = data.get("createdAt")
+            if created_at is None:
+                created_at = datetime.utcnow().isoformat()
+            
+            # Get message type
+            message_type = data.get("messageType", "text")
+            
+            # ✅ Format message for broadcasting using the ID from frontend
             message_data = {
+                "id": message_id,  # ✅ Use the ID from frontend (real DB ID)
                 "groupId": group_id,
                 "senderId": user_id,
                 "content": content.strip(),
-                "messageType": "text",
-                "createdAt": datetime.utcnow().isoformat(),
-                "timestamp": datetime.utcnow().isoformat()
+                "messageType": message_type,
+                "createdAt": created_at,
+                "timestamp": datetime.utcnow().isoformat(),
+                "sender": {
+                    "id": user_id,
+                    "username": sender_username,
+                    "full_name": sender_name,
+                    "profile_picture": sender_profile_picture
+                }
             }
-            
-            # Add sender info
-            try:
-                from backend.models import User
-                user = User.query.get(user_id)
-                if user:
-                    message_data["senderName"] = user.get_full_name() if hasattr(user, 'get_full_name') else user.username
-                    message_data["senderUsername"] = user.username
-                    message_data["senderProfilePicture"] = user.profile_picture
-                    message_data["sender"] = {
-                        "id": user.id,
-                        "username": user.username,
-                        "full_name": user.get_full_name() if hasattr(user, 'get_full_name') else user.username,
-                        "profile_picture": user.profile_picture
-                    }
-            except Exception as e:
-                logger.warning(f"Could not get user info: {e}")
             
             # ✅ ONLY BROADCAST - NO SAVE TO DATABASE
             safe_emit(
@@ -279,7 +291,7 @@ def _register_websocket_events(socketio_instance):
                 room=f"group_{group_id}"
             )
             
-            logger.info(f"📩 Broadcasted message from user {user_id} to group_{group_id}: {content[:50]}...")
+            logger.info(f"📩 Broadcasted message ID {message_id} from user {user_id} to group_{group_id}: {content[:50]}...")
             
         except Exception as e:
             logger.error(f"❌ Message broadcast failed: {e}")
