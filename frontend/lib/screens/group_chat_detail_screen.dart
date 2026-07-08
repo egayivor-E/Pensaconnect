@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../repositories/group_chat_repository.dart';
 import '../models/group_message_model.dart';
 import '../services/socketio_service.dart';
+import '../services/auth_service.dart'; // ✅ ADDED: For direct auth access
 
 class GroupChatDetailScreen extends StatefulWidget {
   final int groupId;
@@ -24,7 +25,7 @@ class GroupChatDetailScreen extends StatefulWidget {
 
 class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   late GroupChatRepository _groupRepo;
-  late SocketIoService _socketService; // ✅ ADDED: Socket service reference
+  late SocketIoService _socketService;
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
@@ -34,9 +35,12 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   bool _sending = false;
   bool _isConnected = false;
   bool _isTyping = false;
-  bool _initialLoadDone = false; // ✅ ADDED: Track initial load
+  bool _initialLoadDone = false;
   Timer? _typingTimer;
   StreamSubscription<List<GroupMessage>>? _messageSubscription;
+  
+  // ✅ ADDED: User ID cache
+  int? _currentUserId;
 
   @override
   void initState() {
@@ -49,10 +53,27 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     _groupRepo = context.read<GroupChatRepository>();
     _socketService = context.read<SocketIoService>();
 
-    // ✅ Initialize socket service (only once)
+    // ✅ Get current user ID from AuthService directly
+    final authService = AuthService();
+    _currentUserId = authService.userId;
+    
+    // ✅ Debug: Log user ID
+    debugPrint('👤 GroupChatDetail: Current User ID = $_currentUserId');
+    
+    if (_currentUserId == null || _currentUserId == 0) {
+      debugPrint('⚠️ Warning: User ID is null or 0! Trying to refresh...');
+      await authService.refreshUser();
+      _currentUserId = authService.userId;
+      debugPrint('🔄 After refresh: User ID = $_currentUserId');
+    }
+
+    // ✅ Initialize socket service
     try {
       await _socketService.initialize();
       debugPrint('✅ SocketIoService initialized');
+      
+      // ✅ Debug socket state
+      _socketService.debugConnectionStatus(widget.groupId);
     } catch (e) {
       debugPrint('❌ SocketIoService init error: $e');
     }
@@ -60,7 +81,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     // ✅ Start listening BEFORE loading messages
     _setupRealtimeListener();
 
-    // ✅ Load messages - this will populate the cache
+    // ✅ Load messages
     await _loadInitialMessages();
 
     // ✅ Join WebSocket room after messages are loaded
@@ -74,13 +95,20 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     try {
       debugPrint('🚀 Joining WebSocket room for group ${widget.groupId}');
 
-      // ✅ Don't call watchMessages here - it was already called in _setupRealtimeListener
-      // Just ensure the socket is connected
+      // ✅ Ensure user ID is available
+      if (_currentUserId == null || _currentUserId == 0) {
+        debugPrint('⚠️ Cannot join room: No user ID available');
+        return;
+      }
+
+      // ✅ Debug connection status
       _socketService.debugConnectionStatus(widget.groupId);
 
       setState(() {
         _isConnected = _socketService.isConnected(widget.groupId);
       });
+      
+      debugPrint('✅ Room join complete. Connected: $_isConnected');
     } catch (e) {
       debugPrint('⚠️ Error joining socket room: $e');
     }
@@ -93,7 +121,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     }
 
     try {
+      debugPrint('📥 Loading initial messages for group ${widget.groupId}...');
       final messages = await _groupRepo.getMessages(widget.groupId);
+      
       if (mounted) {
         setState(() {
           _messages = messages;
@@ -101,6 +131,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           _loading = false;
           _initialLoadDone = true;
         });
+        debugPrint('✅ Loaded ${_messages.length} messages');
         _scrollToBottom();
       }
     } catch (e) {
@@ -123,17 +154,19 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           (newMessages) {
             if (!mounted) return;
 
-            // ✅ This will be called when messages are updated
-            // The socket service now handles deduplication
+            debugPrint('📨 Received real-time update: ${newMessages.length} messages');
+
+            // ✅ Get the latest messages from the socket service cache
+            final cached = _socketService.getCachedMessages(widget.groupId);
+            
             setState(() {
-              // Get the latest messages from the socket service cache
-              final cached = _socketService.getCachedMessages(widget.groupId);
-              if (cached != null) {
+              if (cached != null && cached.isNotEmpty) {
                 _messages = List.from(cached);
                 _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
                 _isConnected = _socketService.isConnected(widget.groupId);
+                debugPrint('✅ Updated from cache: ${_messages.length} messages');
               } else {
-                // Fallback: use the new messages from the stream
+                // ✅ Fallback: Merge new messages
                 for (final msg in newMessages) {
                   if (!_messages.any((m) => m.id == msg.id)) {
                     _messages.add(msg);
@@ -141,6 +174,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                 }
                 _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
                 _isConnected = true;
+                debugPrint('✅ Merged messages: ${_messages.length} total');
               }
             });
             _scrollToBottom();
@@ -160,8 +194,12 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     _controller.addListener(() {
       _typingTimer?.cancel();
 
-      // ✅ Send typing start event via socket
-      _socketService.sendTyping(widget.groupId, true);
+      // ✅ Only send typing if user ID is available
+      if (_currentUserId != null && _currentUserId! > 0) {
+        _socketService.sendTyping(widget.groupId, true);
+      } else {
+        debugPrint('⚠️ Skipping typing indicator: No user ID');
+      }
 
       if (mounted) {
         setState(() {
@@ -170,8 +208,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
       }
 
       _typingTimer = Timer(const Duration(seconds: 2), () {
-        // ✅ Send typing stop event via socket
-        _socketService.sendTyping(widget.groupId, false);
+        if (_currentUserId != null && _currentUserId! > 0) {
+          _socketService.sendTyping(widget.groupId, false);
+        }
         if (mounted) {
           setState(() {
             _isTyping = false;
@@ -185,18 +224,41 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
 
+    // ✅ Check if user ID is available
+    if (_currentUserId == null || _currentUserId == 0) {
+      debugPrint('❌ Cannot send message: User ID not available');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please login to send messages'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _sending = true);
 
     try {
       // Clear typing state
       _typingTimer?.cancel();
-      _socketService.sendTyping(widget.groupId, false);
+      if (_currentUserId != null && _currentUserId! > 0) {
+        _socketService.sendTyping(widget.groupId, false);
+      }
 
-      // Send via WebSocket for real-time delivery
-      await _groupRepo.sendMessage(groupId: widget.groupId, content: text);
+      // ✅ Send message with user ID
+      debugPrint('📤 Sending message with user ID: $_currentUserId');
+      await _groupRepo.sendMessage(
+        groupId: widget.groupId,
+        content: text,
+      );
 
       _controller.clear();
       _focusNode.unfocus();
+      
+      debugPrint('✅ Message sent successfully');
     } catch (e) {
       debugPrint('❌ Error sending message: $e');
       if (mounted) {
@@ -205,6 +267,11 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             content: Text('Failed to send message: ${e.toString()}'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () => _sendMessage(),
+              textColor: Colors.white,
+            ),
           ),
         );
       }
@@ -227,16 +294,18 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     });
   }
 
+  // ✅ FIXED: Use _currentUserId instead of auth provider
   Widget _buildMessageBubble(GroupMessage message) {
-    final currentUserId = context.read<AuthProvider>().currentUser?.id;
-    final isMe = message.sender?['id'] == currentUserId;
+    final isMe = message.senderId == _currentUserId;
 
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
     // Get profile picture URL
     final profilePictureUrl = _getProfilePictureUrl(message.sender);
-    final fullName = message.sender?['full_name'] ?? 'Unknown User';
+    final fullName = message.sender?['full_name'] ?? 
+                     message.sender?['username'] ?? 
+                     'Unknown User';
 
     // Calculate if message is short for better sizing
     final messageLength = message.content.length;
@@ -477,9 +546,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
       return profilePictureStr;
     }
 
-    // ✅ Updated to production URL
     final baseUrl = 'https://pensaconnect.onrender.com';
-
     final cleanPath = profilePictureStr.startsWith('/')
         ? profilePictureStr.substring(1)
         : profilePictureStr;
@@ -713,7 +780,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             icon: const Icon(Icons.refresh),
             onPressed: () async {
               setState(() => _loading = true);
-              // ✅ Reset load flag to allow refresh
               _initialLoadDone = false;
               await _loadInitialMessages();
               setState(() => _loading = false);
