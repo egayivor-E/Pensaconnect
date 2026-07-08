@@ -3,11 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:pensaconnect/services/auth_service.dart'; // ✅ ADDED
 
 import '../repositories/group_chat_repository.dart';
 import '../models/group_message_model.dart';
 import '../services/socketio_service.dart';
-import '../services/auth_service.dart'; // ✅ ADDED: For direct auth access
 
 class GroupChatDetailScreen extends StatefulWidget {
   final int groupId;
@@ -39,7 +39,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   Timer? _typingTimer;
   StreamSubscription<List<GroupMessage>>? _messageSubscription;
   
-  // ✅ ADDED: User ID cache
+  // ✅ ADDED: Current user ID cache
   int? _currentUserId;
 
   @override
@@ -57,7 +57,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     final authService = AuthService();
     _currentUserId = authService.userId;
     
-    // ✅ Debug: Log user ID
     debugPrint('👤 GroupChatDetail: Current User ID = $_currentUserId');
     
     if (_currentUserId == null || _currentUserId == 0) {
@@ -71,8 +70,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     try {
       await _socketService.initialize();
       debugPrint('✅ SocketIoService initialized');
-      
-      // ✅ Debug socket state
       _socketService.debugConnectionStatus(widget.groupId);
     } catch (e) {
       debugPrint('❌ SocketIoService init error: $e');
@@ -84,7 +81,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     // ✅ Load messages
     await _loadInitialMessages();
 
-    // ✅ Join WebSocket room after messages are loaded
+    // ✅ Join WebSocket room
     _joinSocketRoom();
 
     // Setup typing detection
@@ -95,20 +92,16 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     try {
       debugPrint('🚀 Joining WebSocket room for group ${widget.groupId}');
 
-      // ✅ Ensure user ID is available
       if (_currentUserId == null || _currentUserId == 0) {
         debugPrint('⚠️ Cannot join room: No user ID available');
         return;
       }
 
-      // ✅ Debug connection status
       _socketService.debugConnectionStatus(widget.groupId);
 
       setState(() {
         _isConnected = _socketService.isConnected(widget.groupId);
       });
-      
-      debugPrint('✅ Room join complete. Connected: $_isConnected');
     } catch (e) {
       debugPrint('⚠️ Error joining socket room: $e');
     }
@@ -145,7 +138,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   }
 
   void _setupRealtimeListener() {
-    // ✅ Cancel any existing subscription
     _messageSubscription?.cancel();
 
     _messageSubscription = _groupRepo
@@ -154,19 +146,16 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           (newMessages) {
             if (!mounted) return;
 
-            debugPrint('📨 Received real-time update: ${newMessages.length} messages');
+            debugPrint('📨 Received real-time update');
 
-            // ✅ Get the latest messages from the socket service cache
-            final cached = _socketService.getCachedMessages(widget.groupId);
-            
             setState(() {
+              final cached = _socketService.getCachedMessages(widget.groupId);
               if (cached != null && cached.isNotEmpty) {
                 _messages = List.from(cached);
                 _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
                 _isConnected = _socketService.isConnected(widget.groupId);
                 debugPrint('✅ Updated from cache: ${_messages.length} messages');
               } else {
-                // ✅ Fallback: Merge new messages
                 for (final msg in newMessages) {
                   if (!_messages.any((m) => m.id == msg.id)) {
                     _messages.add(msg);
@@ -194,7 +183,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     _controller.addListener(() {
       _typingTimer?.cancel();
 
-      // ✅ Only send typing if user ID is available
       if (_currentUserId != null && _currentUserId! > 0) {
         _socketService.sendTyping(widget.groupId, true);
       } else {
@@ -224,7 +212,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
 
-    // ✅ Check if user ID is available
     if (_currentUserId == null || _currentUserId == 0) {
       debugPrint('❌ Cannot send message: User ID not available');
       if (mounted) {
@@ -242,13 +229,11 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     setState(() => _sending = true);
 
     try {
-      // Clear typing state
       _typingTimer?.cancel();
       if (_currentUserId != null && _currentUserId! > 0) {
         _socketService.sendTyping(widget.groupId, false);
       }
 
-      // ✅ Send message with user ID
       debugPrint('📤 Sending message with user ID: $_currentUserId');
       await _groupRepo.sendMessage(
         groupId: widget.groupId,
@@ -257,7 +242,6 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
 
       _controller.clear();
       _focusNode.unfocus();
-      
       debugPrint('✅ Message sent successfully');
     } catch (e) {
       debugPrint('❌ Error sending message: $e');
@@ -301,13 +285,11 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    // Get profile picture URL
     final profilePictureUrl = _getProfilePictureUrl(message.sender);
     final fullName = message.sender?['full_name'] ?? 
                      message.sender?['username'] ?? 
                      'Unknown User';
 
-    // Calculate if message is short for better sizing
     final messageLength = message.content.length;
     final isShortMessage = messageLength < 25;
     final isVeryShort = messageLength < 10;
@@ -315,9 +297,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
-        mainAxisAlignment: isMe
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
+        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isMe) ...[
@@ -326,9 +306,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           ],
           Flexible(
             child: Column(
-              crossAxisAlignment: isMe
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
+              crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
                 if (!isMe)
                   Padding(
@@ -353,18 +331,12 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                     vertical: isShortMessage ? 10 : 12,
                   ),
                   decoration: BoxDecoration(
-                    color: isMe
-                        ? colorScheme.primary
-                        : colorScheme.surfaceContainerHighest,
+                    color: isMe ? colorScheme.primary : colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.only(
                       topLeft: const Radius.circular(18),
                       topRight: const Radius.circular(18),
-                      bottomLeft: isMe
-                          ? const Radius.circular(18)
-                          : const Radius.circular(4),
-                      bottomRight: isMe
-                          ? const Radius.circular(4)
-                          : const Radius.circular(18),
+                      bottomLeft: isMe ? const Radius.circular(18) : const Radius.circular(4),
+                      bottomRight: isMe ? const Radius.circular(4) : const Radius.circular(18),
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -528,8 +500,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   String? _getProfilePictureUrl(Map<String, dynamic>? sender) {
     if (sender == null) return null;
 
-    final profilePicture =
-        sender['profile_picture'] ??
+    final profilePicture = sender['profile_picture'] ??
         sender['profilePicture'] ??
         sender['avatar'] ??
         sender['profile_image'] ??
@@ -579,9 +550,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: _isConnected
-            ? Colors.green.withOpacity(0.1)
-            : Colors.orange.withOpacity(0.1),
+        color: _isConnected ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: _isConnected ? Colors.green : Colors.orange,
@@ -599,9 +568,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           const SizedBox(width: 6),
           Text(
             _isConnected ? 'Connected' : 'Connecting...',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -618,14 +587,12 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
         children: [
           CircleAvatar(
             radius: 16,
-            backgroundColor: Theme.of(
-              context,
-            ).colorScheme.surfaceContainerHighest,
+            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: Text(
               '?',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -652,9 +619,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                 Text(
                   'Typing...',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.6),
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
                   ),
                 ),
               ],
@@ -689,9 +654,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                   borderSide: BorderSide.none,
                 ),
                 filled: true,
-                fillColor: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerHighest,
+                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 12,
@@ -744,10 +707,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     _controller.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
-
-    // ✅ Clean up socket for this group
     _socketService.disposeGroup(widget.groupId);
-
     super.dispose();
   }
 
@@ -761,9 +721,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           children: [
             Text(
               widget.groupName,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
             ),
             Text(
               '${_messages.length} messages',
@@ -794,38 +754,38 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _messages.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.chat_bubble_outline,
-                          size: 64,
-                          color: Colors.grey,
+                    ? const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.chat_bubble_outline,
+                              size: 64,
+                              color: Colors.grey,
+                            ),
+                            SizedBox(height: 16),
+                            Text(
+                              'No messages yet',
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                            Text(
+                              'Start the conversation!',
+                              style: TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                          ],
                         ),
-                        SizedBox(height: 16),
-                        Text(
-                          'No messages yet',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                        Text(
-                          'Start the conversation!',
-                          style: TextStyle(color: Colors.grey, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _messages.length + 1,
-                    itemBuilder: (context, index) {
-                      if (index == _messages.length) {
-                        return _buildTypingIndicator();
-                      }
-                      return _buildMessageBubble(_messages[index]);
-                    },
-                  ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _messages.length + 1,
+                        itemBuilder: (context, index) {
+                          if (index == _messages.length) {
+                            return _buildTypingIndicator();
+                          }
+                          return _buildMessageBubble(_messages[index]);
+                        },
+                      ),
           ),
           _buildMessageInput(),
         ],
