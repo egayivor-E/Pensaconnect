@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 class GroupMessage {
@@ -48,7 +47,7 @@ class GroupMessage {
     this.isLocal = false,
   });
 
-  // Add this additional factory constructor to your GroupMessage class
+  // Socket.IO factory constructor
   factory GroupMessage.fromSocketIO(Map<String, dynamic> json) {
     debugPrint('🔌 Creating GroupMessage from Socket.IO data: $json');
 
@@ -56,27 +55,28 @@ class GroupMessage {
       id: _parseInt(json['id']),
       uuid: '', // Socket.IO might not send UUID
       groupChatId: _parseInt(json['groupId']),
-      senderId: _parseInt(json['sender']?['id']),
+      senderId: _parseSenderId(json), // Use the improved parser
       content: _parseString(json['content']),
       messageType: _parseString(json['messageType']) ?? 'text',
-      attachments: [], // Socket.IO might not send attachments
+      attachments: _parseList(json['attachments']),
       repliedToId: null,
       readBy: _parseList(json['readBy']),
       createdAt: _parseDateTime(json['createdAt']),
-      updatedAt: _parseDateTime(json['createdAt']), // Use same as createdAt
+      updatedAt: _parseDateTime(json['createdAt']),
       isActive: true,
-      sender: _parseMap(json['sender']),
+      sender: _parseSenderObject(json),
     );
   }
 
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
-    debugPrint('🔍 Parsing GroupMessage from JSON (all formats)');
+    debugPrint('🔍 Parsing GroupMessage from JSON');
+    debugPrint('📋 JSON keys: ${json.keys}');
 
-    // Parse sender ID - handle multiple possible field names
+    // Parse sender ID using improved parser
     final senderId = _parseSenderId(json);
 
-    // Parse sender object - handle both formats
-    final sender = _parseSender(json, senderId);
+    // Parse sender object
+    final sender = _parseSenderObject(json);
 
     return GroupMessage(
       id: _parseInt(json['id']),
@@ -102,43 +102,156 @@ class GroupMessage {
     );
   }
 
+  // ✅ IMPROVED: Parse sender ID with multiple fallback options
   static int _parseSenderId(Map<String, dynamic> json) {
-    // Try multiple possible field names in order of priority
-    if (json['sender_id'] != null) return _parseInt(json['sender_id']);
-    if (json['senderId'] != null) return _parseInt(json['senderId']);
-    if (json['sender'] != null && json['sender'] is Map) {
-      return _parseInt(json['sender']['id']);
+    // Debug what we received
+    debugPrint('🔍 Looking for sender ID in: ${json.keys}');
+    
+    // 1. Try direct sender_id (REST API format)
+    if (json.containsKey('sender_id')) {
+      final id = _parseInt(json['sender_id']);
+      if (id > 0) {
+        debugPrint('✅ Found sender_id: $id');
+        return id;
+      }
     }
-    return 0;
+    
+    // 2. Try senderId (alternative naming)
+    if (json.containsKey('senderId')) {
+      final id = _parseInt(json['senderId']);
+      if (id > 0) {
+        debugPrint('✅ Found senderId: $id');
+        return id;
+      }
+    }
+    
+    // 3. Try userId (WebSocket sometimes uses this)
+    if (json.containsKey('userId')) {
+      final id = _parseInt(json['userId']);
+      if (id > 0) {
+        debugPrint('✅ Found userId: $id');
+        return id;
+      }
+    }
+    
+    // 4. Try user_id (WebSocket alternative)
+    if (json.containsKey('user_id')) {
+      final id = _parseInt(json['user_id']);
+      if (id > 0) {
+        debugPrint('✅ Found user_id: $id');
+        return id;
+      }
+    }
+    
+    // 5. Try from sender object
+    if (json.containsKey('sender') && json['sender'] is Map) {
+      final senderMap = json['sender'] as Map;
+      debugPrint('🔍 Checking sender object: $senderMap');
+      
+      // Try different ID fields in sender object
+      if (senderMap.containsKey('id')) {
+        final id = _parseInt(senderMap['id']);
+        if (id > 0) {
+          debugPrint('✅ Found sender.id: $id');
+          return id;
+        }
+      }
+      if (senderMap.containsKey('userId')) {
+        final id = _parseInt(senderMap['userId']);
+        if (id > 0) {
+          debugPrint('✅ Found sender.userId: $id');
+          return id;
+        }
+      }
+      if (senderMap.containsKey('user_id')) {
+        final id = _parseInt(senderMap['user_id']);
+        if (id > 0) {
+          debugPrint('✅ Found sender.user_id: $id');
+          return id;
+        }
+      }
+    }
+    
+    // 6. Try from user object
+    if (json.containsKey('user') && json['user'] is Map) {
+      final userMap = json['user'] as Map;
+      debugPrint('🔍 Checking user object: $userMap');
+      
+      if (userMap.containsKey('id')) {
+        final id = _parseInt(userMap['id']);
+        if (id > 0) {
+          debugPrint('✅ Found user.id: $id');
+          return id;
+        }
+      }
+      if (userMap.containsKey('userId')) {
+        final id = _parseInt(userMap['userId']);
+        if (id > 0) {
+          debugPrint('✅ Found user.userId: $id');
+          return id;
+        }
+      }
+    }
+    
+    // 7. Try parsing the entire JSON for any ID field
+    for (final key in json.keys) {
+      if (key.toLowerCase().contains('id') && json[key] != null) {
+        final id = _parseInt(json[key]);
+        if (id > 0) {
+          debugPrint('✅ Found ID in field "$key": $id');
+          return id;
+        }
+      }
+    }
+    
+    // 8. Last resort: Check if the message has a sender object with any ID
+    debugPrint('⚠️ Could not find sender ID in any field');
+    debugPrint('📋 Available keys: ${json.keys}');
+    debugPrint('📋 Full JSON: $json');
+    
+    return 0; // Return 0 as fallback
   }
 
-  static Map<String, dynamic>? _parseSender(
-    Map<String, dynamic> json,
-    int senderId,
-  ) {
+  // ✅ IMPROVED: Parse sender object
+  static Map<String, dynamic>? _parseSenderObject(Map<String, dynamic> json) {
     // Case 1: sender is already a complete object (API format)
-    if (json['sender'] is Map && json['sender'] != null) {
+    if (json.containsKey('sender') && json['sender'] is Map) {
       final senderMap = Map<String, dynamic>.from(json['sender'] as Map);
-      // Ensure it has required fields
-      if (senderMap.containsKey('id')) {
+      if (senderMap.containsKey('id') || senderMap.containsKey('userId')) {
+        debugPrint('✅ Found complete sender object');
         return senderMap;
       }
     }
 
     // Case 2: sender details are in root fields (WebSocket format)
+    final senderId = _parseSenderId(json);
     if (senderId > 0) {
-      return {
+      final senderMap = <String, dynamic>{
         'id': senderId,
-        'full_name': _parseString(
-          json['senderName'] ?? json['sender_name'] ?? json['senderFullName'],
-        ),
-        'username': _parseString(
-          json['senderUsername'] ?? json['sender_username'],
-        ),
-        'profile_picture': _parseString(
-          json['senderProfilePicture'] ?? json['sender_profile_picture'],
-        ),
       };
+      
+      // Add any sender details found in root
+      if (json.containsKey('senderName')) {
+        senderMap['full_name'] = _parseString(json['senderName']);
+      }
+      if (json.containsKey('sender_name')) {
+        senderMap['full_name'] = _parseString(json['sender_name']);
+      }
+      if (json.containsKey('senderUsername')) {
+        senderMap['username'] = _parseString(json['senderUsername']);
+      }
+      if (json.containsKey('sender_username')) {
+        senderMap['username'] = _parseString(json['sender_username']);
+      }
+      if (json.containsKey('senderProfilePicture')) {
+        senderMap['profile_picture'] = _parseString(json['senderProfilePicture']);
+      }
+      if (json.containsKey('sender_profile_picture')) {
+        senderMap['profile_picture'] = _parseString(json['sender_profile_picture']);
+      }
+      
+      debugPrint('✅ Created sender object from root fields: $senderMap');
+      return senderMap;
     }
 
     return null;
@@ -184,7 +297,7 @@ class GroupMessage {
           // Fallback to ISO 8601 parsing
           return DateTime.parse(dateString);
         } catch (e) {
-          print('Failed to parse date: $dateString');
+          debugPrint('❌ Failed to parse date: $dateString');
           return DateTime.now();
         }
       }
