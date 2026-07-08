@@ -566,7 +566,7 @@ class SocketIoService {
   }
 
   // ================================
-  // PUBLIC METHODS - FIXED WITH PROPER USER ID
+  // PUBLIC METHODS - SIMPLIFIED AND FIXED
   // ================================
 
   Future<void> sendMessage(
@@ -583,36 +583,11 @@ class SocketIoService {
         throw Exception('Socket connection timeout for group $groupId');
     }
 
-    // ✅ FIXED: Get user from AuthService
+    // ✅ Get user from AuthService
     final user = AuthService().currentUser;
     final userId = user?['id'];
     
-    // ✅ If user is null, try to get from AuthProvider
     if (userId == null) {
-      try {
-        final authProvider = AuthProvider();
-        final currentUser = authProvider.currentUser;
-        if (currentUser != null) {
-          final userData = currentUser.toJson();
-          final enhancedMessage = Map<String, dynamic>.from(messageData)
-            ..addAll({
-              'senderId': userData['id'],
-              'sentAt': DateTime.now().toIso8601String(),
-              'clientId': 'flutter_${DateTime.now().millisecondsSinceEpoch}',
-              'sender': {
-                'id': userData['id'],
-                'username': userData['username'] ?? 'unknown',
-                'full_name': userData['full_name'] ?? 'Unknown User',
-                'profile_picture': userData['profile_picture'],
-              }
-            });
-          socket.emit('send_message', enhancedMessage);
-          debugPrint('📤 Sent message to group $groupId with user ID: ${userData['id']}');
-          return;
-        }
-      } catch (e) {
-        debugPrint('⚠️ Could not get user from AuthProvider: $e');
-      }
       throw Exception('User not authenticated - cannot send message');
     }
 
@@ -642,29 +617,10 @@ class SocketIoService {
       return;
     }
 
-    // ✅ FIXED: Get user from AuthService
     final user = AuthService().currentUser;
     final userId = user?['id'];
     
-    // ✅ If user is null, try AuthProvider
     if (userId == null) {
-      try {
-        final authProvider = AuthProvider();
-        final currentUser = authProvider.currentUser;
-        if (currentUser != null) {
-          final userData = currentUser.toJson();
-          final event = isTyping ? 'user_typing' : 'user_stop_typing';
-          socket.emit(event, {
-            'userId': userData['id'],
-            'groupId': groupId,
-            'timestamp': DateTime.now().toIso8601String(),
-          });
-          debugPrint('💬 Sent typing event [$event] for user ${userData['id']} in group $groupId');
-          return;
-        }
-      } catch (e) {
-        debugPrint('⚠️ Could not get user from AuthProvider: $e');
-      }
       debugPrint('⚠️ User ID not available for typing indicator');
       return;
     }
@@ -682,7 +638,6 @@ class SocketIoService {
   void markRead(int groupId, int messageId) {
     final socket = _sockets[groupId];
     if (socket != null && socket.connected) {
-      // ✅ FIXED: Get user from AuthService
       final user = AuthService().currentUser;
       final userId = user?['id'];
       
@@ -710,24 +665,12 @@ class SocketIoService {
     debugPrint('   - WebSocket URL: ${Config.websocketUrl}');
     debugPrint('   - Live Chat Enabled: ${Config.enableLiveChat}');
 
-    // ✅ FIXED: Get user from AuthService
     final user = AuthService().currentUser;
     if (user != null) {
       debugPrint('   - User ID: ${user['id']}');
       debugPrint('   - Username: ${user['username']}');
     } else {
       debugPrint('   - User ID: NOT FOUND - Authentication issue!');
-      // ✅ Try AuthProvider as fallback
-      try {
-        final authProvider = AuthProvider();
-        final currentUser = authProvider.currentUser;
-        if (currentUser != null) {
-          debugPrint('   - AuthProvider User ID: ${currentUser.id}');
-          debugPrint('   - AuthProvider Username: ${currentUser.username}');
-        }
-      } catch (e) {
-        debugPrint('   - AuthProvider error: $e');
-      }
     }
   }
 
