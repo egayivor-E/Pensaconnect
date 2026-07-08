@@ -15,7 +15,7 @@ import 'package:pensaconnect/repositories/testimony_repository.dart';
 import 'package:pensaconnect/screens/CreateStudyPlanScreen.dart';
 import 'package:pensaconnect/screens/admin_upload_screen.dart';
 import 'package:pensaconnect/services/api_service.dart';
-import 'package:pensaconnect/services/socketio_service.dart'; // ✅ ADD THIS IMPORT
+import 'package:pensaconnect/services/socketio_service.dart';
 import 'package:provider/provider.dart';
 import 'providers/threads_provider.dart';
 
@@ -97,25 +97,21 @@ Future<void> main() async {
   await ApiService.init();
   print("✅ MAIN: ApiService.init() completed");
 
-  final authProvider = AuthProvider();
-  final autoLoggedIn = await authProvider.tryAutoLogin();
-
-  // ✅ ONLY initialize Socket.IO after auto-login and get token
-  print("🔄 Initializing Socket.IO Service after auth...");
+  // ✅ Initialize Socket.IO Service - Use singleton instance
+  print("🔄 Initializing Socket.IO Service...");
+  final socketService = SocketIoService(); // ✅ Get singleton instance
   try {
-    final token = await ApiService.getToken();
-    if (token != null || autoLoggedIn) {
-      await SocketIoService().initialize();
-      print("✅ Socket.IO Service initialized successfully");
-    } else {
-      print("⚠️ No auth token yet, Socket.IO will initialize after login");
-    }
+    await socketService.initialize();
+    print("✅ Socket.IO Service initialized successfully");
   } catch (e) {
     print("❌ Socket.IO Service initialization failed: $e");
   }
 
   // Debug: Check token status after init
   await ApiService.debugTokenStatus();
+
+  final authProvider = AuthProvider();
+  final autoLoggedIn = await authProvider.tryAutoLogin();
 
   runApp(
     MultiProvider(
@@ -141,11 +137,20 @@ Future<void> main() async {
 
         Provider<ForumRepository>(create: (_) => ForumRepository()),
 
-        // ✅ GroupChatRepository depends on Dio & AuthRepository
-        Provider<GroupChatRepository>(
-          create: (context) => GroupChatRepository(
-            context.read<Dio>(),
-            context.read<AuthRepository>(),
+        // ✅ Socket.IO Service Provider - SINGLE INSTANCE
+        Provider<SocketIoService>(create: (_) => socketService),
+
+        // ✅ GroupChatRepository depends on Dio, AuthRepository & SocketService
+        ProxyProvider3<
+          Dio,
+          AuthRepository,
+          SocketIoService,
+          GroupChatRepository
+        >(
+          update: (_, dio, auth, socket, __) => GroupChatRepository(
+            dio,
+            auth,
+            socket, // ✅ Pass the socket service
           ),
         ),
 
@@ -157,12 +162,6 @@ Future<void> main() async {
             testimonyRepo: context.read<TestimonyRepository>(),
             groupRepo: context.read<GroupChatRepository>(),
           ),
-        ),
-
-        // ✅ Socket.IO Service Provider - use factory to ensure single instance
-        Provider<SocketIoService>(
-          create: (_) => SocketIoService(),
-          lazy: true, // Don't create until needed
         ),
       ],
       child: MyApp(autoLoggedIn: autoLoggedIn),
