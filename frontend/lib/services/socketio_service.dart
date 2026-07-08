@@ -20,10 +20,8 @@ class SocketIoService {
   // ================================
 
   final Map<int, List<GroupMessage>> _messageCache = {};
-  final Map<int, Set<int>> _messageIds =
-      {}; // ✅ TRACK MESSAGE IDs FOR DEDUPLICATION
-  final Map<int, Set<String>> _messageContentHashes =
-      {}; // ✅ ADDED: Content-based deduplication
+  final Map<int, Set<int>> _messageIds = {};
+  final Map<int, Set<String>> _messageContentHashes = {};
   final Map<int, List<dynamic>> _memberCache = {};
   final Map<int, io.Socket> _sockets = {};
   final Map<int, StreamController<List<GroupMessage>>> _messageControllers = {};
@@ -45,7 +43,6 @@ class SocketIoService {
     if (_isServiceInitialized) return;
 
     try {
-      // Verify configuration
       if (Config.websocketUrl.isEmpty) {
         throw Exception('WebSocket URL not configured');
       }
@@ -69,12 +66,9 @@ class SocketIoService {
       _messageControllers[groupId] =
           StreamController<List<GroupMessage>>.broadcast();
 
-      // ✅ Initialize message ID set for deduplication
       _messageIds[groupId] = <int>{};
-      _messageContentHashes[groupId] =
-          <String>{}; // ✅ Initialize content hashes
+      _messageContentHashes[groupId] = <String>{};
 
-      // ✅ Load cached messages first if available
       if (_messageCache.containsKey(groupId)) {
         final cached = _messageCache[groupId]!;
         if (cached.isNotEmpty) {
@@ -90,7 +84,6 @@ class SocketIoService {
     return _messageControllers[groupId]!.stream;
   }
 
-  // ✅ ADDED: Member stream
   Stream<List<dynamic>> watchGroupMembers(int groupId) {
     if (!_memberControllers.containsKey(groupId)) {
       _memberControllers[groupId] = StreamController<List<dynamic>>.broadcast();
@@ -106,17 +99,11 @@ class SocketIoService {
     return _typingControllers[groupId]!.stream;
   }
 
-  // Connection status stream
   Stream<bool> watchConnectionStatus(int groupId) {
     final controller = StreamController<bool>.broadcast();
-
-    // Initial status
     controller.add(_sockets[groupId]?.connected ?? false);
-
-    // Listen for connection changes
     _sockets[groupId]?.onConnect((_) => controller.add(true));
     _sockets[groupId]?.onDisconnect((_) => controller.add(false));
-
     return controller.stream;
   }
 
@@ -130,17 +117,10 @@ class SocketIoService {
     try {
       debugPrint('🔌 Connecting Socket.IO for group $groupId...');
 
-      // Cleanup any previous connection
       _cleanupGroupConnection(groupId);
 
       final token = await AuthService().getToken();
 
-      final String handshakeUrl = Config.websocketUrl.replaceFirst(
-        'wss://',
-        'https://',
-      );
-
-      // Create socket
       final options = io.OptionBuilder()
           .setTransports(['websocket', 'polling'])
           .setPath('/socket.io')
@@ -158,9 +138,7 @@ class SocketIoService {
           .disableAutoConnect()
           .build();
 
-      // 2. Pass ONLY that options object to the socket
       final socket = io.io(Config.websocketUrl, options);
-      // Attach auth token
       if (token != null && token.isNotEmpty) {
         socket.io.options?['query'] = {'token': token};
         debugPrint('🔑 Auth token attached for Socket.IO');
@@ -174,9 +152,8 @@ class SocketIoService {
       socket.onConnect((_) {
         debugPrint('✅ Socket.IO Connected for group $groupId');
 
-        // ✅ Reset message IDs on reconnect to prevent stale cache
         _messageIds[groupId] = <int>{};
-        _messageContentHashes[groupId] = <String>{}; // ✅ Reset content hashes
+        _messageContentHashes[groupId] = <String>{};
 
         if (!_connectionCompleters[groupId]!.isCompleted) {
           _connectionCompleters[groupId]!.complete(true);
@@ -196,6 +173,7 @@ class SocketIoService {
         debugPrint('🔌 Disconnected from group $groupId');
         _handleDisconnection(groupId);
       });
+
       socket.onReconnect((_) {
         debugPrint('🔄 Reconnected to group $groupId');
       });
@@ -212,10 +190,10 @@ class SocketIoService {
       // ======== SERVER EVENTS ========
       socket.on('joined', (data) {
         debugPrint('✅ Joined group room: $data');
-        _connectToGroupMembers(groupId); // Init members stream
+        _connectToGroupMembers(groupId);
       });
 
-      // ✅ FIXED: new_message handler with enhanced deduplication
+      // ✅ FIXED: new_message handler - processes ALL messages from ANY user
       socket.on('new_message', (data) {
         debugPrint('📨 Received new_message event');
 
@@ -234,13 +212,18 @@ class SocketIoService {
 
             final message = GroupMessage.fromJson(data);
 
-            // ✅ CRITICAL: Check if message already exists in cache
+            // ✅ Log who sent the message
+            debugPrint(
+              '📩 Message from user ${message.senderId}: "${message.content}" (ID: ${message.id})',
+            );
+
+            // ✅ Check if message already exists in cache
             if (_messageIds[groupId]?.contains(message.id) == true) {
               debugPrint('🔄 Duplicate message ${message.id} ignored');
               return;
             }
 
-            // ✅ NEW: Check by content hash (for messages without IDs or duplicate IDs)
+            // ✅ Check by content hash
             final contentHash = _generateContentHash(message);
             if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
               debugPrint('🔄 Duplicate message by content hash, skipping');
@@ -283,14 +266,12 @@ class SocketIoService {
 
       socket.on('connected', (data) {
         debugPrint('🔌 Connected event received: $data');
-        // Handle connection event
         if (data is Map && data['status'] == 'success') {
           debugPrint('✅ WebSocket connection successful');
           debugPrint('📌 Assigned SID: ${data['sid']}');
         }
       });
 
-      // ======== CONNECT ========
       socket.connect();
     } catch (e) {
       debugPrint('❌ Socket.IO setup failed: $e');
@@ -306,17 +287,14 @@ class SocketIoService {
       return false;
     }
 
-    // If already connected, return immediately
     if (socket.connected) {
       return true;
     }
 
-    // Use existing completer or create new one
     if (_connectionCompleters[groupId] == null) {
       _connectionCompleters[groupId] = Completer<bool>();
     }
 
-    // Set up timeout
     final completer = _connectionCompleters[groupId]!;
     final timer = Timer(Duration(seconds: timeoutSeconds), () {
       if (!completer.isCompleted) {
@@ -341,7 +319,6 @@ class SocketIoService {
     final socket = _sockets[groupId];
     if (socket == null || !socket.connected) return;
 
-    // Listen for updated members list
     socket.on('members_updated', (data) {
       try {
         if (data is Map && data['groupId'] == groupId) {
@@ -354,19 +331,17 @@ class SocketIoService {
       }
     });
 
-    // Individual user join
     socket.on('user_joined', (data) {
       try {
         if (data is Map && data['groupId'] == groupId) {
           debugPrint('👤 User joined group $groupId: $data');
-          _requestMemberList(groupId); // always refresh members
+          _requestMemberList(groupId);
         }
       } catch (e) {
         debugPrint('❌ Error handling user_joined: $e');
       }
     });
 
-    // Individual user leave
     socket.on('user_left', (data) {
       try {
         if (data is Map && data['groupId'] == groupId) {
@@ -378,7 +353,6 @@ class SocketIoService {
       }
     });
 
-    // Request initial members
     _requestMemberList(groupId);
   }
 
@@ -393,12 +367,8 @@ class SocketIoService {
 
   void _handleMemberUpdates(int groupId, List<dynamic> members) {
     try {
-      // Update cache
       _memberCache[groupId] = members;
-
-      // Push to stream
       _memberControllers[groupId]?.add(members);
-
       debugPrint('👥 Members updated for group $groupId: ${members.length}');
     } catch (e) {
       debugPrint('❌ Error handling member updates: $e');
@@ -410,7 +380,6 @@ class SocketIoService {
   // MESSAGE HANDLING - FULLY FIXED
   // ================================
 
-  /// ✅ Generate a unique content hash for deduplication
   String _generateContentHash(GroupMessage message) {
     return '${message.senderId}:${message.content}:${message.createdAt.millisecondsSinceEpoch ~/ 10000}';
   }
@@ -434,7 +403,7 @@ class SocketIoService {
         return;
       }
 
-      // ✅ NEW: Deduplication check by content hash
+      // ✅ Deduplication check by content hash
       final contentHash = _generateContentHash(message);
       if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
         debugPrint('🔄 Duplicate message by content hash, skipping');
@@ -456,12 +425,12 @@ class SocketIoService {
       _messageIds[groupId]?.add(message.id);
       _messageContentHashes[groupId]?.add(contentHash);
 
-      // ✅ Push to stream - ONLY if the controller exists and is not closed
+      // ✅ Push to stream
       final controller = _messageControllers[groupId];
       if (controller != null && !controller.isClosed) {
         controller.add(updatedMessages);
         debugPrint(
-          '💬 New message delivered to group $groupId: ${message.content}',
+          '💬 New message delivered to group $groupId: ${message.content} (from user ${message.senderId})',
         );
       } else {
         debugPrint(
@@ -474,7 +443,15 @@ class SocketIoService {
     }
   }
 
+  // ✅ FIXED: Allow messages with ID 0 temporarily (for mobile)
   bool _isValidMessage(GroupMessage message) {
+    // ✅ Allow messages with ID 0 (they'll be updated on refresh)
+    if (message.id == null || message.id == 0) {
+      return message.content.isNotEmpty &&
+          message.senderId != null &&
+          message.senderId != 0 &&
+          message.createdAt != null;
+    }
     return message.id != null &&
         message.id != 0 &&
         message.content.isNotEmpty &&
@@ -487,13 +464,10 @@ class SocketIoService {
   // CACHE MANAGEMENT
   // ================================
 
-  /// ✅ Set initial messages from HTTP load
   void setInitialMessages(int groupId, List<GroupMessage> messages) {
-    // Initialize ID set if not exists
     final messageIds = _messageIds[groupId] ?? <int>{};
     final contentHashes = _messageContentHashes[groupId] ?? <String>{};
 
-    // Store message IDs and content hashes for deduplication
     for (final msg in messages) {
       messageIds.add(msg.id);
       contentHashes.add(_generateContentHash(msg));
@@ -501,24 +475,19 @@ class SocketIoService {
     _messageIds[groupId] = messageIds;
     _messageContentHashes[groupId] = contentHashes;
 
-    // Cache messages
     _messageCache[groupId] = List.from(messages);
-
-    // Sort by timestamp
     _messageCache[groupId]?.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
     debugPrint(
       '📦 Set initial ${messages.length} messages for group $groupId (${messageIds.length} IDs, ${contentHashes.length} hashes tracked)',
     );
 
-    // Push to stream if controller exists
     final controller = _messageControllers[groupId];
     if (controller != null && !controller.isClosed) {
       controller.add(_messageCache[groupId]!);
     }
   }
 
-  /// ✅ Get cached messages
   List<GroupMessage>? getCachedMessages(int groupId) {
     return _messageCache[groupId];
   }
@@ -533,7 +502,6 @@ class SocketIoService {
         '📖 Message $messageId read by user $userId in group $groupId',
       );
 
-      // Update local cache to mark message as read
       final messages = _messageCache[groupId];
       if (messages != null) {
         final messageIndex = messages.indexWhere((m) => m.id == messageId);
@@ -565,7 +533,6 @@ class SocketIoService {
         if (!updated.contains(userId)) {
           updated.add(userId);
 
-          // Auto-remove after 3 seconds if still typing
           Timer(const Duration(seconds: 3), () {
             if (_typingUsers[groupId]?.contains(userId) == true) {
               _updateTyping(groupId, userId, false);
@@ -593,10 +560,8 @@ class SocketIoService {
     _typingUsers[groupId]?.clear();
     _typingControllers[groupId]?.add([]);
 
-    // Reset connection completer
     _connectionCompleters.remove(groupId);
 
-    // Schedule reconnection if needed
     if (_connectionAttempts[groupId]! < Config.maxConnectionRetries) {
       _scheduleReconnection(groupId);
     }
@@ -605,7 +570,6 @@ class SocketIoService {
   void _handleConnectionError(int groupId, String error) {
     _connectionAttempts[groupId] = (_connectionAttempts[groupId] ?? 0) + 1;
 
-    // Complete connection promise with failure
     if (_connectionCompleters[groupId] != null &&
         !_connectionCompleters[groupId]!.isCompleted) {
       _connectionCompleters[groupId]!.complete(false);
@@ -643,18 +607,14 @@ class SocketIoService {
   // PUBLIC METHODS
   // ================================
 
-  // =================== SEND MESSAGE ===================
-
   Future<void> sendMessage(
     int groupId,
     Map<String, dynamic> messageData,
   ) async {
     final socket = _sockets[groupId];
     if (socket == null)
-      // ignore: curly_braces_in_flow_control_structures
       throw Exception('Socket not initialized for group $groupId');
 
-    // Wait for connection
     if (!socket.connected) {
       final connected = await waitForConnection(groupId);
       if (!connected)
@@ -695,7 +655,6 @@ class SocketIoService {
       return;
     }
 
-    // Emit the correct event based on typing state
     final event = isTyping ? 'user_typing' : 'user_stop_typing';
     socket.emit(event, {
       'userId': userId,
@@ -726,7 +685,6 @@ class SocketIoService {
     }
   }
 
-  // ✅ ADDED: Connection debug method
   void debugConnectionStatus(int groupId) {
     final socket = _sockets[groupId];
     debugPrint('🔍 Socket.IO Debug for group $groupId:');
@@ -742,7 +700,6 @@ class SocketIoService {
     debugPrint('   - Username: ${user?['username']}');
   }
 
-  // ✅ ADDED: Member utility methods
   List<dynamic> getCachedMembers(int groupId) {
     return _memberCache[groupId] ?? [];
   }
@@ -750,10 +707,6 @@ class SocketIoService {
   int getMemberCount(int groupId) {
     return _memberCache[groupId]?.length ?? 0;
   }
-
-  // ================================
-  // CONNECTION STATUS & UTILITIES
-  // ================================
 
   bool isConnected(int groupId) {
     return _sockets[groupId]?.connected ?? false;
@@ -775,7 +728,6 @@ class SocketIoService {
     _connectionCompleters.remove(groupId);
   }
 
-  // ✅ ADDED: Member cleanup
   void disposeGroupMembers(int groupId) {
     _memberControllers[groupId]?.close();
     _memberControllers.remove(groupId);
@@ -785,7 +737,6 @@ class SocketIoService {
   void disposeGroup(int groupId) {
     debugPrint('🔌 Disposing Socket.IO for group $groupId');
 
-    // Leave group
     final user = AuthService().currentUser;
     final userId = user?['id'];
 
@@ -798,7 +749,6 @@ class SocketIoService {
 
     _cleanupGroupConnection(groupId);
 
-    // Clean up resources
     _sockets.remove(groupId);
     _messageControllers[groupId]?.close();
     _typingControllers[groupId]?.close();
@@ -813,7 +763,7 @@ class SocketIoService {
     _connectionCompleters.remove(groupId);
     _messageCache.remove(groupId);
     _messageIds.remove(groupId);
-    _messageContentHashes.remove(groupId); // ✅ Clean up content hashes
+    _messageContentHashes.remove(groupId);
   }
 
   void disposeAll() {
@@ -825,7 +775,7 @@ class SocketIoService {
 
     _messageCache.clear();
     _messageIds.clear();
-    _messageContentHashes.clear(); // ✅ Clear content hashes
+    _messageContentHashes.clear();
     _memberCache.clear();
     _isServiceInitialized = false;
   }
