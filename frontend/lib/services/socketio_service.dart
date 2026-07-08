@@ -20,6 +20,8 @@ class SocketIoService {
   // ================================
 
   final Map<int, List<GroupMessage>> _messageCache = {};
+  final Map<int, Set<int>> _messageIds =
+      {}; // ✅ TRACK MESSAGE IDs FOR DEDUPLICATION
   final Map<int, List<dynamic>> _memberCache = {};
   final Map<int, io.Socket> _sockets = {};
   final Map<int, StreamController<List<GroupMessage>>> _messageControllers = {};
@@ -64,6 +66,21 @@ class SocketIoService {
     if (!_messageControllers.containsKey(groupId)) {
       _messageControllers[groupId] =
           StreamController<List<GroupMessage>>.broadcast();
+
+      // ✅ Initialize message ID set for deduplication
+      _messageIds[groupId] = <int>{};
+
+      // ✅ Load cached messages first if available
+      if (_messageCache.containsKey(groupId)) {
+        final cached = _messageCache[groupId]!;
+        if (cached.isNotEmpty) {
+          debugPrint(
+            '📦 Delivering ${cached.length} cached messages for group $groupId',
+          );
+          _messageControllers[groupId]!.add(cached);
+        }
+      }
+
       _connectToGroup(groupId);
     }
     return _messageControllers[groupId]!.stream;
@@ -152,6 +169,10 @@ class SocketIoService {
       // ======== CONNECTION EVENTS ========
       socket.onConnect((_) {
         debugPrint('✅ Socket.IO Connected for group $groupId');
+
+        // ✅ Reset message IDs on reconnect to prevent stale cache
+        _messageIds[groupId] = <int>{};
+
         if (!_connectionCompleters[groupId]!.isCompleted) {
           _connectionCompleters[groupId]!.complete(true);
         }
@@ -189,14 +210,33 @@ class SocketIoService {
         _connectToGroupMembers(groupId); // Init members stream
       });
 
+      // ✅ FIXED: new_message handler with deduplication
       socket.on('new_message', (data) {
         debugPrint('📨 Received new_message event');
 
         try {
           if (data is Map<String, dynamic>) {
+            // ✅ Check if this is a historical message
+            final isHistorical =
+                data['historical'] == true || data['is_historical'] == true;
+
+            if (isHistorical) {
+              debugPrint(
+                '📜 Historical message received - already loaded via HTTP, skipping',
+              );
+              return;
+            }
+
             final message = GroupMessage.fromJson(data);
+
+            // ✅ CRITICAL: Check if message already exists in cache
+            if (_messageIds[groupId]?.contains(message.id) == true) {
+              debugPrint('🔄 Duplicate message ${message.id} ignored');
+              return;
+            }
+
             debugPrint(
-              '✅ Parsed message - ID: ${message.id}, Sender: ${message.senderId}, Content: ${message.content}',
+              '✅ Parsed new message - ID: ${message.id}, Sender: ${message.senderId}, Content: ${message.content}',
             );
             _handleIncomingMessage(groupId, message);
           } else {
@@ -353,13 +393,14 @@ class SocketIoService {
       _logError('member_updates', e, groupId: groupId);
     }
   }
+
   // ================================
-  // MESSAGE HANDLING
+  // MESSAGE HANDLING - FIXED
   // ================================
 
   void _handleIncomingMessage(int groupId, GroupMessage message) {
     try {
-      // ✅ FIXED: Improved message validation
+      // ✅ Validate message
       if (!_isValidMessage(message)) {
         debugPrint('⚠️ Invalid message received, ignoring: ${message.id}');
         debugPrint(
@@ -368,31 +409,40 @@ class SocketIoService {
         return;
       }
 
-      // Get current messages from cache
-      final currentMessages = _messageCache[groupId] ?? [];
-
-      // Check for duplicates
-      if (currentMessages.any((m) => m.id == message.id)) {
-        debugPrint('⚠️ Duplicate message received: ${message.id}');
+      // ✅ CRITICAL: Deduplication check
+      if (_messageIds[groupId]?.contains(message.id) == true) {
+        debugPrint(
+          '🔄 Duplicate message ${message.id} already exists, skipping',
+        );
         return;
       }
 
-      // Append the new message
+      // Get current messages from cache
+      final currentMessages = _messageCache[groupId] ?? [];
+
+      // ✅ Add to cache
       final updatedMessages = List<GroupMessage>.from(currentMessages)
         ..add(message);
 
-      // Update cache (limit size for memory management)
-      if (updatedMessages.length > 1000) {
-        updatedMessages.removeRange(0, 200); // Keep last 800 messages
-      }
+      // Sort by timestamp
+      updatedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+      // Update cache
       _messageCache[groupId] = updatedMessages;
+      _messageIds[groupId]?.add(message.id);
 
-      // Push to stream
-      _messageControllers[groupId]?.add(updatedMessages);
-
-      debugPrint(
-        '💬 Message received for group $groupId: ${message.content} (${message.createdAt})',
-      );
+      // ✅ Push to stream - ONLY if the controller exists and is not closed
+      final controller = _messageControllers[groupId];
+      if (controller != null && !controller.isClosed) {
+        controller.add(updatedMessages);
+        debugPrint(
+          '💬 New message delivered to group $groupId: ${message.content}',
+        );
+      } else {
+        debugPrint(
+          '⚠️ Message controller for group $groupId is closed, skipping delivery',
+        );
+      }
     } catch (e) {
       debugPrint('❌ Error handling incoming message: $e');
       _logError('message_handling', e, groupId: groupId);
@@ -400,13 +450,49 @@ class SocketIoService {
   }
 
   bool _isValidMessage(GroupMessage message) {
-    // ✅ FIXED: More flexible validation
     return message.id != null &&
         message.id != 0 &&
         message.content.isNotEmpty &&
         message.senderId != null &&
         message.senderId != 0 &&
         message.createdAt != null;
+  }
+
+  // ================================
+  // CACHE MANAGEMENT - NEW
+  // ================================
+
+  /// ✅ Set initial messages from HTTP load
+  void setInitialMessages(int groupId, List<GroupMessage> messages) {
+    // Initialize ID set if not exists
+    final messageIds = _messageIds[groupId] ?? <int>{};
+
+    // Store message IDs for deduplication
+    for (final msg in messages) {
+      messageIds.add(msg.id);
+    }
+    _messageIds[groupId] = messageIds;
+
+    // Cache messages
+    _messageCache[groupId] = List.from(messages);
+
+    // Sort by timestamp
+    _messageCache[groupId]?.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    debugPrint(
+      '📦 Set initial ${messages.length} messages for group $groupId (${messageIds.length} IDs tracked)',
+    );
+
+    // Push to stream if controller exists
+    final controller = _messageControllers[groupId];
+    if (controller != null && !controller.isClosed) {
+      controller.add(_messageCache[groupId]!);
+    }
+  }
+
+  /// ✅ Get cached messages
+  List<GroupMessage>? getCachedMessages(int groupId) {
+    return _messageCache[groupId];
   }
 
   // ================================
@@ -697,6 +783,8 @@ class SocketIoService {
     _reconnectionTimers.remove(groupId);
     _memberCache.remove(groupId);
     _connectionCompleters.remove(groupId);
+    _messageCache.remove(groupId);
+    _messageIds.remove(groupId); // ✅ Clean up IDs too
   }
 
   void disposeAll() {
@@ -707,6 +795,7 @@ class SocketIoService {
     }
 
     _messageCache.clear();
+    _messageIds.clear(); // ✅ Clear IDs
     _memberCache.clear();
     _isServiceInitialized = false;
   }
