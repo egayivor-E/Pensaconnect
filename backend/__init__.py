@@ -51,7 +51,7 @@ def _set_csp_headers(app: Flask):
             f"style-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
             f"img-src 'self' data:; "
             f"font-src 'self' https://cdn.jsdelivr.net; "
-            f"connect-src 'self' https://pensaconnect-pjz9.onrender.com https://pensaconnect-pjz9.onrender.com; "
+            f"connect-src 'self' https://pensaconnect-pjz9.onrender.com https://pensaconnect-pjz9.onrender.com https://pensaconnect-1.onrender.com; "
             f"object-src 'none'; "
             f"base-uri 'self'; "
             f"form-action 'self'; "
@@ -195,7 +195,10 @@ def _register_websocket_events(socketio_instance):
         safe_emit("left", {"groupId": group_id}, room=request.sid)
         logger.info(f"⚠️ User {request.sid} left room {room}")
 
-    # ---------------- Messaging - FIXED: NO DATABASE SAVE ----------------
+    # ================================================================
+    # ✅ FIXED: WebSocket send_message - ONLY BROADCASTS, NO DATABASE SAVE
+    # The HTTP POST /group-chats/$groupId/messages handles saving
+    # ================================================================
     @socketio_instance.on("send_message")
     def handle_send_message(data):
         """
@@ -337,7 +340,7 @@ def create_app(config_name: Optional[str] = None) -> Flask:
         # Production: explicit allowed origins only
         ALLOWED_ORIGINS = [
             "https://pensaconnect-pjz9.onrender.com",  # Backend URL
-            "https://pensaconnect-1.onrender.com",     # ✅ Frontend URL - ADDED THIS
+            "https://pensaconnect-1.onrender.com",     # ✅ Frontend URL - ADDED
             "https://pensaconnect.onrender.com",       # Main domain
         ]
         print(f"🔒 Production CORS origins: {ALLOWED_ORIGINS}")
