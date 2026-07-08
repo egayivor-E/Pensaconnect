@@ -36,7 +36,7 @@ class SocketIoService {
   final Map<int, Completer<bool>> _connectionCompleters = {};
   bool _isServiceInitialized = false;
   
-  // ✅ Cache for user data to avoid repeated loading
+  // ✅ Cache for user data
   Map<String, dynamic>? _cachedUser;
   int? _cachedUserId;
 
@@ -52,7 +52,7 @@ class SocketIoService {
         throw Exception('WebSocket URL not configured');
       }
 
-      // ✅ CRITICAL: Load user data during initialization
+      // ✅ Load user data during initialization
       await _loadUserData();
 
       debugPrint(
@@ -66,29 +66,58 @@ class SocketIoService {
     }
   }
 
-  // ✅ Load user data with retry
-  Future<void> _loadUserData({int retries = 3}) async {
+  // ✅ Load user data with retry - UPDATED to use new auth service
+  Future<void> _loadUserData({int retries = 5}) async {
     for (int i = 0; i < retries; i++) {
       try {
         final authService = AuthService();
         
-        // Check if user is already loaded
+        // ✅ First check if user is already in memory
         if (authService.currentUser != null) {
           _cachedUser = authService.currentUser;
           _cachedUserId = authService.userId;
+          
+          // ✅ If userId is null, try to get it from storage
+          if (_cachedUserId == null || _cachedUserId == 0) {
+            _cachedUserId = await authService.getUserIdFromStorage();
+          }
+          
           debugPrint('✅ User data already loaded: ID=$_cachedUserId');
           return;
         }
         
-        // Try to load from storage
+        // ✅ Try to load from storage
         debugPrint('🔄 Attempting to load user data (attempt ${i + 1}/$retries)...');
         await authService.refreshUser();
         
         if (authService.currentUser != null) {
           _cachedUser = authService.currentUser;
           _cachedUserId = authService.userId;
+          
+          // ✅ If userId is still null, try storage
+          if (_cachedUserId == null || _cachedUserId == 0) {
+            _cachedUserId = await authService.getUserIdFromStorage();
+          }
+          
           debugPrint('✅ User data loaded successfully: ID=$_cachedUserId');
           return;
+        }
+        
+        // ✅ If currentUser is null but we have a token, try to get user ID from storage
+        final token = await authService.getToken();
+        if (token != null && token.isNotEmpty) {
+          final userIdFromStorage = await authService.getUserIdFromStorage();
+          if (userIdFromStorage != null && userIdFromStorage > 0) {
+            _cachedUserId = userIdFromStorage;
+            debugPrint('✅ Found user ID in storage: $_cachedUserId');
+            
+            // ✅ Try to fetch full user data from API
+            await authService.fetchUserFromApi();
+            if (authService.currentUser != null) {
+              _cachedUser = authService.currentUser;
+            }
+            return;
+          }
         }
         
         // Wait before retry
@@ -106,9 +135,12 @@ class SocketIoService {
 
   // ✅ Get current user ID with caching and auto-load
   Future<int?> _getUserId() async {
+    // Return cached ID if available
     if (_cachedUserId != null && _cachedUserId! > 0) {
       return _cachedUserId;
     }
+    
+    // Try to load fresh
     await _loadUserData();
     return _cachedUserId;
   }
@@ -661,6 +693,11 @@ class SocketIoService {
       await authService.refreshUser();
       userId = authService.userId;
       
+      // ✅ If still null, try storage
+      if (userId == null || userId == 0) {
+        userId = await authService.getUserIdFromStorage();
+      }
+      
       if (userId != null && userId > 0) {
         _cachedUserId = userId;
         _cachedUser = authService.currentUser;
@@ -671,6 +708,7 @@ class SocketIoService {
       debugPrint('🔍 SEND MESSAGE DEBUG:');
       debugPrint('   - User ID: $userId');
       debugPrint('   - Cached User: $_cachedUser');
+      debugPrint('   - AuthService User ID: ${AuthService().userId}');
       throw Exception('User not authenticated - ID is null or 0');
     }
 
@@ -696,13 +734,22 @@ class SocketIoService {
       return;
     }
 
-    final userId = _cachedUserId;
+    // ✅ Try to get user ID from cache, or from storage
+    int? userId = _cachedUserId;
     
     if (userId == null || userId == 0) {
-      debugPrint('⚠️ User ID not available for typing indicator');
-      debugPrint('   - Cached User ID: $userId');
-      debugPrint('   - AuthService User ID: ${AuthService().userId}');
-      return;
+      // Try to get from auth service
+      final authService = AuthService();
+      userId = authService.userId;
+      
+      // If still null, try storage
+      if (userId == null || userId == 0) {
+        // We'll try async, but for sync method we'll use what we have
+        debugPrint('⚠️ User ID not available for typing indicator');
+        debugPrint('   - Cached User ID: $userId');
+        debugPrint('   - AuthService User ID: ${authService.userId}');
+        return;
+      }
     }
 
     final event = isTyping ? 'user_typing' : 'user_stop_typing';
