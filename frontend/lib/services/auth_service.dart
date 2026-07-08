@@ -62,8 +62,25 @@ class AuthService {
         // Save user data
         _currentUser = data['data']['user'];
 
+        // ✅ CRITICAL: Save user data to SharedPreferences with verification
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_userKey, json.encode(_currentUser));
+        final userJson = json.encode(_currentUser);
+        await prefs.setString(_userKey, userJson);
+        
+        // ✅ VERIFY: Check if it was saved
+        final savedUser = prefs.getString(_userKey);
+        developer.log(
+          "🔍 Login: User saved to storage = ${savedUser != null}",
+          name: "AuthService",
+        );
+        developer.log(
+          "🔍 Login: User ID = ${_currentUser?['id']}",
+          name: "AuthService",
+        );
+        developer.log(
+          "🔍 Login: User data length = ${userJson.length}",
+          name: "AuthService",
+        );
 
         // Save tokens to SECURE storage
         if (data['data']['access_token'] != null) {
@@ -389,25 +406,54 @@ class AuthService {
     }
   }
 
-  /// Load current user from storage on app start
+  /// ✅ FIXED: Load current user from storage with better debugging
   Future<void> _loadCurrentUser() async {
     try {
+      developer.log("🔍 _loadCurrentUser: Starting...", name: "AuthService");
+      
       final prefs = await SharedPreferences.getInstance();
+      
+      // ✅ DEBUG: Check all stored keys
+      final allKeys = prefs.getKeys();
+      developer.log("🔍 All SharedPreferences keys: $allKeys", name: "AuthService");
+      
       final userJson = prefs.getString(_userKey);
-
+      
+      developer.log(
+        "🔍 _loadCurrentUser: userJson exists = ${userJson != null}",
+        name: "AuthService",
+      );
+      developer.log(
+        "🔍 _loadCurrentUser: userJson length = ${userJson?.length ?? 0}",
+        name: "AuthService",
+      );
+      
       if (userJson != null && userJson.isNotEmpty) {
+        developer.log("🔍 _loadCurrentUser: userJson preview = ${userJson.substring(0, userJson.length > 100 ? 100 : userJson.length)}...", name: "AuthService");
+        
         try {
           _currentUser = json.decode(userJson) as Map<String, dynamic>;
 
           developer.log(
-            "✅ Loaded user from storage: ID=${userId}, Username=${username}",
+            "✅ Loaded user from storage: ID=${_currentUser?['id']}, Username=${_currentUser?['username']}",
             name: "AuthService",
           );
           
           // ✅ Check if user ID is valid
-          if (userId == null || userId == 0) {
+          final id = _currentUser?['id'];
+          developer.log(
+            "🔍 User ID from storage: $id (type: ${id.runtimeType})",
+            name: "AuthService",
+          );
+          
+          if (id == null) {
             developer.log(
-              "⚠️ Loaded user has invalid ID: $_currentUser",
+              "⚠️ User ID is null in stored data! Full data: $_currentUser",
+              name: "AuthService",
+            );
+          } else if (id == 0) {
+            developer.log(
+              "⚠️ User ID is 0 in stored data! Full data: $_currentUser",
               name: "AuthService",
             );
           }
@@ -433,6 +479,10 @@ class AuthService {
             "❌ Error decoding user JSON: $e",
             name: "AuthService",
           );
+          developer.log(
+            "❌ JSON string: $userJson",
+            name: "AuthService",
+          );
           _currentUser = null;
         }
       } else {
@@ -446,10 +496,60 @@ class AuthService {
     }
   }
 
-  /// ✅ IMPROVED: Debug method to check authentication state
+  /// ✅ FIXED: Force refresh user data from storage with retry
+  Future<void> refreshUser({int retries = 3}) async {
+    developer.log("🔄 Refreshing user data...", name: "AuthService");
+    
+    for (int i = 0; i < retries; i++) {
+      await _loadCurrentUser();
+      
+      if (_currentUser != null && userId != null && userId != 0) {
+        developer.log(
+          "✅ User refreshed successfully: ID=$userId",
+          name: "AuthService",
+        );
+        return;
+      }
+      
+      if (i < retries - 1) {
+        developer.log(
+          "⏳ User not loaded, retrying (${i + 1}/$retries)...",
+          name: "AuthService",
+        );
+        await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
+      }
+    }
+    
+    developer.log(
+      "⚠️ Failed to refresh user after $retries attempts",
+      name: "AuthService",
+    );
+  }
+
+  /// Update current user data
+  Future<void> updateUser(Map<String, dynamic> newData) async {
+    if (_currentUser == null) {
+      developer.log("❌ Cannot update: No user loaded", name: "AuthService");
+      return;
+    }
+
+    try {
+      _currentUser!.addAll(newData);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_userKey, json.encode(_currentUser));
+
+      developer.log("✅ User data updated: ${newData.keys}", name: "AuthService");
+      developer.log("   - Updated user ID: $userId", name: "AuthService");
+    } catch (e) {
+      developer.log("❌ Error updating user data: $e", name: "AuthService");
+    }
+  }
+
+  /// ✅ FIXED: Debug method to check authentication state
   Future<void> debugAuthState() async {
     developer.log("🔍 AUTH STATE DEBUG", name: "AuthService");
-    developer.log("═" * 40, name: "AuthService");
+    developer.log("═" * 50, name: "AuthService");
     
     developer.log("📋 USER INFO:", name: "AuthService");
     developer.log("   - Current User: $_currentUser", name: "AuthService");
@@ -475,11 +575,26 @@ class AuthService {
 
     developer.log("💾 STORAGE CHECK:", name: "AuthService");
     final prefs = await SharedPreferences.getInstance();
+    
+    // ✅ Check all storage keys
+    final allKeys = prefs.getKeys();
+    developer.log("   - All SharedPreferences keys: $allKeys", name: "AuthService");
+    
     final spToken = prefs.getString(_tokenKey);
     developer.log("   - SharedPreferences token: ${spToken != null}", name: "AuthService");
     
     final spUser = prefs.getString(_userKey);
     developer.log("   - SharedPreferences user: ${spUser != null}", name: "AuthService");
+    if (spUser != null) {
+      developer.log("   - User data length: ${spUser.length}", name: "AuthService");
+      try {
+        final userData = json.decode(spUser);
+        developer.log("   - User data keys: ${(userData as Map).keys}", name: "AuthService");
+        developer.log("   - User ID in storage: ${userData['id']}", name: "AuthService");
+      } catch (e) {
+        developer.log("   - ❌ Failed to parse user data: $e", name: "AuthService");
+      }
+    }
 
     final ssToken = await _secureStorage.read(key: _tokenKey);
     developer.log("   - Secure Storage token: ${ssToken != null}", name: "AuthService");
@@ -487,34 +602,8 @@ class AuthService {
     final ssRefresh = await _secureStorage.read(key: _refreshTokenKey);
     developer.log("   - Secure Storage refresh: ${ssRefresh != null}", name: "AuthService");
 
-    developer.log("═" * 40, name: "AuthService");
+    developer.log("═" * 50, name: "AuthService");
     developer.log("🔍 END AUTH DEBUG", name: "AuthService");
-  }
-
-  /// Force refresh user data from storage
-  Future<void> refreshUser() async {
-    developer.log("🔄 Refreshing user data...", name: "AuthService");
-    await _loadCurrentUser();
-  }
-
-  /// Update current user data
-  Future<void> updateUser(Map<String, dynamic> newData) async {
-    if (_currentUser == null) {
-      developer.log("❌ Cannot update: No user loaded", name: "AuthService");
-      return;
-    }
-
-    try {
-      _currentUser!.addAll(newData);
-
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_userKey, json.encode(_currentUser));
-
-      developer.log("✅ User data updated: ${newData.keys}", name: "AuthService");
-      developer.log("   - Updated user ID: $userId", name: "AuthService");
-    } catch (e) {
-      developer.log("❌ Error updating user data: $e", name: "AuthService");
-    }
   }
 
   /// ✅ ADDED: Clear user data (for testing/debug)
@@ -533,5 +622,28 @@ class AuthService {
     await ApiService.clearTokens();
     
     developer.log("✅ User data cleared", name: "AuthService");
+  }
+
+  /// ✅ ADDED: Force reload user from API
+  Future<Map<String, dynamic>?> fetchUserFromApi() async {
+    try {
+      developer.log("🔄 Fetching user from API...", name: "AuthService");
+      final response = await ApiService.get('auth/me');
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final user = data['data']?['user'] ?? data['user'] ?? data;
+        
+        if (user != null && user['id'] != null) {
+          await updateUser(user);
+          developer.log("✅ User fetched from API: ID=${user['id']}", name: "AuthService");
+          return user;
+        }
+      }
+      return null;
+    } catch (e) {
+      developer.log("❌ Error fetching user from API: $e", name: "AuthService");
+      return null;
+    }
   }
 }
