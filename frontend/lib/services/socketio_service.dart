@@ -193,13 +193,11 @@ class SocketIoService {
         _connectToGroupMembers(groupId);
       });
 
-      // ✅ FIXED: new_message handler - processes ALL messages from ANY user
       socket.on('new_message', (data) {
         debugPrint('📨 Received new_message event');
 
         try {
           if (data is Map<String, dynamic>) {
-            // ✅ Check if this is a historical message
             final isHistorical =
                 data['historical'] == true || data['is_historical'] == true;
 
@@ -212,18 +210,15 @@ class SocketIoService {
 
             final message = GroupMessage.fromJson(data);
 
-            // ✅ Log who sent the message
             debugPrint(
               '📩 Message from user ${message.senderId}: "${message.content}" (ID: ${message.id})',
             );
 
-            // ✅ Check if message already exists in cache
             if (_messageIds[groupId]?.contains(message.id) == true) {
               debugPrint('🔄 Duplicate message ${message.id} ignored');
               return;
             }
 
-            // ✅ Check by content hash
             final contentHash = _generateContentHash(message);
             if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
               debugPrint('🔄 Duplicate message by content hash, skipping');
@@ -279,7 +274,6 @@ class SocketIoService {
     }
   }
 
-  // ✅ ADDED: Wait for connection method
   Future<bool> waitForConnection(int groupId, {int timeoutSeconds = 10}) async {
     final socket = _sockets[groupId];
     if (socket == null) {
@@ -314,7 +308,6 @@ class SocketIoService {
     }
   }
 
-  // ✅ ADDED: Member connection management
   void _connectToGroupMembers(int groupId) {
     final socket = _sockets[groupId];
     if (socket == null || !socket.connected) return;
@@ -356,7 +349,6 @@ class SocketIoService {
     _requestMemberList(groupId);
   }
 
-  // ✅ ADDED: Member list management
   void _requestMemberList(int groupId) {
     final socket = _sockets[groupId];
     if (socket != null && socket.connected) {
@@ -377,7 +369,7 @@ class SocketIoService {
   }
 
   // ================================
-  // MESSAGE HANDLING - FULLY FIXED
+  // MESSAGE HANDLING
   // ================================
 
   String _generateContentHash(GroupMessage message) {
@@ -386,55 +378,35 @@ class SocketIoService {
 
   void _handleIncomingMessage(int groupId, GroupMessage message) {
     try {
-      // ✅ Validate message
       if (!_isValidMessage(message)) {
         debugPrint('⚠️ Invalid message received, ignoring: ${message.id}');
-        debugPrint(
-          '⚠️ Message details: content="${message.content}", senderId=${message.senderId}, createdAt=${message.createdAt}',
-        );
         return;
       }
 
-      // ✅ CRITICAL: Deduplication check by ID
       if (_messageIds[groupId]?.contains(message.id) == true) {
-        debugPrint(
-          '🔄 Duplicate message ${message.id} already exists, skipping',
-        );
+        debugPrint('🔄 Duplicate message ${message.id} already exists, skipping');
         return;
       }
 
-      // ✅ Deduplication check by content hash
       final contentHash = _generateContentHash(message);
       if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
         debugPrint('🔄 Duplicate message by content hash, skipping');
         return;
       }
 
-      // Get current messages from cache
       final currentMessages = _messageCache[groupId] ?? [];
-
-      // ✅ Add to cache
-      final updatedMessages = List<GroupMessage>.from(currentMessages)
-        ..add(message);
-
-      // Sort by timestamp
+      final updatedMessages = List<GroupMessage>.from(currentMessages)..add(message);
       updatedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
-      // Update cache
       _messageCache[groupId] = updatedMessages;
       _messageIds[groupId]?.add(message.id);
       _messageContentHashes[groupId]?.add(contentHash);
 
-      // ✅ Push to stream
       final controller = _messageControllers[groupId];
       if (controller != null && !controller.isClosed) {
         controller.add(updatedMessages);
         debugPrint(
           '💬 New message delivered to group $groupId: ${message.content} (from user ${message.senderId})',
-        );
-      } else {
-        debugPrint(
-          '⚠️ Message controller for group $groupId is closed, skipping delivery',
         );
       }
     } catch (e) {
@@ -443,9 +415,7 @@ class SocketIoService {
     }
   }
 
-  // ✅ FIXED: Allow messages with ID 0 temporarily (for mobile)
   bool _isValidMessage(GroupMessage message) {
-    // ✅ Allow messages with ID 0 (they'll be updated on refresh)
     if (message.id == null || message.id == 0) {
       return message.content.isNotEmpty &&
           message.senderId != null &&
@@ -498,17 +468,13 @@ class SocketIoService {
 
   void _handleMessageRead(int groupId, int messageId, int userId) {
     try {
-      debugPrint(
-        '📖 Message $messageId read by user $userId in group $groupId',
-      );
-
+      debugPrint('📖 Message $messageId read by user $userId in group $groupId');
       final messages = _messageCache[groupId];
       if (messages != null) {
         final messageIndex = messages.indexWhere((m) => m.id == messageId);
         if (messageIndex != -1) {
           final message = messages[messageIndex];
           final updatedReadBy = List<dynamic>.from(message.readBy);
-
           if (!updatedReadBy.contains(userId)) {
             updatedReadBy.add(userId);
             debugPrint('✅ User $userId read message $messageId');
@@ -532,7 +498,6 @@ class SocketIoService {
       if (isTyping) {
         if (!updated.contains(userId)) {
           updated.add(userId);
-
           Timer(const Duration(seconds: 3), () {
             if (_typingUsers[groupId]?.contains(userId) == true) {
               _updateTyping(groupId, userId, false);
@@ -545,7 +510,6 @@ class SocketIoService {
 
       _typingUsers[groupId] = updated;
       _typingControllers[groupId]?.add(updated);
-
       debugPrint('💬 Typing update for group $groupId: $updated');
     } catch (e) {
       debugPrint('❌ Error updating typing indicator: $e');
@@ -559,7 +523,6 @@ class SocketIoService {
   void _handleDisconnection(int groupId) {
     _typingUsers[groupId]?.clear();
     _typingControllers[groupId]?.add([]);
-
     _connectionCompleters.remove(groupId);
 
     if (_connectionAttempts[groupId]! < Config.maxConnectionRetries) {
@@ -585,7 +548,6 @@ class SocketIoService {
 
   void _scheduleReconnection(int groupId) {
     _reconnectionTimers[groupId]?.cancel();
-
     _reconnectionTimers[groupId] = Timer(
       Duration(seconds: Config.connectionRetryDelay),
       () {
@@ -604,7 +566,7 @@ class SocketIoService {
   }
 
   // ================================
-  // PUBLIC METHODS
+  // PUBLIC METHODS - FIXED WITH PROPER USER ID
   // ================================
 
   Future<void> sendMessage(
@@ -621,21 +583,54 @@ class SocketIoService {
         throw Exception('Socket connection timeout for group $groupId');
     }
 
+    // ✅ FIXED: Get user from AuthService
     final user = AuthService().currentUser;
     final userId = user?['id'];
-    if (userId == null) throw Exception('User not authenticated');
+    
+    // ✅ If user is null, try to get from AuthProvider
+    if (userId == null) {
+      try {
+        final authProvider = AuthProvider();
+        final currentUser = authProvider.currentUser;
+        if (currentUser != null) {
+          final userData = currentUser.toJson();
+          final enhancedMessage = Map<String, dynamic>.from(messageData)
+            ..addAll({
+              'senderId': userData['id'],
+              'sentAt': DateTime.now().toIso8601String(),
+              'clientId': 'flutter_${DateTime.now().millisecondsSinceEpoch}',
+              'sender': {
+                'id': userData['id'],
+                'username': userData['username'] ?? 'unknown',
+                'full_name': userData['full_name'] ?? 'Unknown User',
+                'profile_picture': userData['profile_picture'],
+              }
+            });
+          socket.emit('send_message', enhancedMessage);
+          debugPrint('📤 Sent message to group $groupId with user ID: ${userData['id']}');
+          return;
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not get user from AuthProvider: $e');
+      }
+      throw Exception('User not authenticated - cannot send message');
+    }
 
     final enhancedMessage = Map<String, dynamic>.from(messageData)
       ..addAll({
         'senderId': userId,
         'sentAt': DateTime.now().toIso8601String(),
         'clientId': 'flutter_${DateTime.now().millisecondsSinceEpoch}',
+        'sender': {
+          'id': userId,
+          'username': user?['username'] ?? 'unknown',
+          'full_name': user?['full_name'] ?? 'Unknown User',
+          'profile_picture': user?['profile_picture'],
+        }
       });
 
     socket.emit('send_message', enhancedMessage);
-    debugPrint(
-      '📤 Sent message to group $groupId: ${enhancedMessage['content']}',
-    );
+    debugPrint('📤 Sent message to group $groupId with user ID: $userId');
   }
 
   void sendTyping(int groupId, bool isTyping) {
@@ -643,14 +638,33 @@ class SocketIoService {
 
     final socket = _sockets[groupId];
     if (socket == null || !socket.connected) {
-      debugPrint(
-        '⏳ Socket not connected, skipping typing indicator for group $groupId',
-      );
+      debugPrint('⏳ Socket not connected, skipping typing indicator for group $groupId');
       return;
     }
 
-    final userId = AuthService().currentUser?['id'] ?? 0;
-    if (userId == 0) {
+    // ✅ FIXED: Get user from AuthService
+    final user = AuthService().currentUser;
+    final userId = user?['id'];
+    
+    // ✅ If user is null, try AuthProvider
+    if (userId == null) {
+      try {
+        final authProvider = AuthProvider();
+        final currentUser = authProvider.currentUser;
+        if (currentUser != null) {
+          final userData = currentUser.toJson();
+          final event = isTyping ? 'user_typing' : 'user_stop_typing';
+          socket.emit(event, {
+            'userId': userData['id'],
+            'groupId': groupId,
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+          debugPrint('💬 Sent typing event [$event] for user ${userData['id']} in group $groupId');
+          return;
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not get user from AuthProvider: $e');
+      }
       debugPrint('⚠️ User ID not available for typing indicator');
       return;
     }
@@ -662,16 +676,17 @@ class SocketIoService {
       'timestamp': DateTime.now().toIso8601String(),
     });
 
-    debugPrint(
-      '💬 Sent typing event [$event] for user $userId in group $groupId',
-    );
+    debugPrint('💬 Sent typing event [$event] for user $userId in group $groupId');
   }
 
   void markRead(int groupId, int messageId) {
     final socket = _sockets[groupId];
     if (socket != null && socket.connected) {
-      final userId = AuthService().currentUser?['id'] ?? 0;
-      if (userId == 0) {
+      // ✅ FIXED: Get user from AuthService
+      final user = AuthService().currentUser;
+      final userId = user?['id'];
+      
+      if (userId == null) {
         debugPrint('⚠️ User ID not available for mark read');
         return;
       }
@@ -695,9 +710,25 @@ class SocketIoService {
     debugPrint('   - WebSocket URL: ${Config.websocketUrl}');
     debugPrint('   - Live Chat Enabled: ${Config.enableLiveChat}');
 
+    // ✅ FIXED: Get user from AuthService
     final user = AuthService().currentUser;
-    debugPrint('   - User ID: ${user?['id']}');
-    debugPrint('   - Username: ${user?['username']}');
+    if (user != null) {
+      debugPrint('   - User ID: ${user['id']}');
+      debugPrint('   - Username: ${user['username']}');
+    } else {
+      debugPrint('   - User ID: NOT FOUND - Authentication issue!');
+      // ✅ Try AuthProvider as fallback
+      try {
+        final authProvider = AuthProvider();
+        final currentUser = authProvider.currentUser;
+        if (currentUser != null) {
+          debugPrint('   - AuthProvider User ID: ${currentUser.id}');
+          debugPrint('   - AuthProvider Username: ${currentUser.username}');
+        }
+      } catch (e) {
+        debugPrint('   - AuthProvider error: $e');
+      }
+    }
   }
 
   List<dynamic> getCachedMembers(int groupId) {
