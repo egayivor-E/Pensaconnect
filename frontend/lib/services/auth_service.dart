@@ -8,7 +8,8 @@ class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal() {
-    _loadCurrentUser();
+    // ✅ Don't load immediately - load on demand
+    // _loadCurrentUser(); // REMOVE this line
   }
 
   Map<String, dynamic>? _currentUser;
@@ -59,7 +60,7 @@ class AuthService {
       );
 
       if (data['status'] == 'success' && data['data']?['user'] != null) {
-        // Save user data
+        // ✅ Save user data
         _currentUser = data['data']['user'];
 
         // ✅ CRITICAL: Save user data to SharedPreferences with verification
@@ -81,6 +82,9 @@ class AuthService {
           "🔍 Login: User data length = ${userJson.length}",
           name: "AuthService",
         );
+        
+        // ✅ Force flush SharedPreferences
+        await prefs.reload();
 
         // Save tokens to SECURE storage
         if (data['data']['access_token'] != null) {
@@ -98,19 +102,22 @@ class AuthService {
         );
         developer.log("✅ Tokens saved to ApiService", name: "AuthService");
 
-        // Verify user is properly set
+        // ✅ Verify user is properly set
         developer.log(
           "✅ User set in AuthService: ID=${userId}, Username=${username}",
           name: "AuthService",
         );
         
-        // ✅ ADDED: Verify user ID is valid
+        // ✅ Verify user ID is valid
         if (userId == null || userId == 0) {
           developer.log(
             "⚠️ WARNING: User ID is null or 0! User data: $_currentUser",
             name: "AuthService",
           );
         }
+        
+        // ✅ DEBUG: Check if user is actually saved
+        await debugAuthState();
       } else {
         developer.log(
           "❌ Login failed or missing user data",
@@ -429,7 +436,7 @@ class AuthService {
       );
       
       if (userJson != null && userJson.isNotEmpty) {
-        developer.log("🔍 _loadCurrentUser: userJson preview = ${userJson.substring(0, userJson.length > 100 ? 100 : userJson.length)}...", name: "AuthService");
+        developer.log("🔍 _loadCurrentUser: userJson = $userJson", name: "AuthService");
         
         try {
           _currentUser = json.decode(userJson) as Map<String, dynamic>;
@@ -604,6 +611,12 @@ class AuthService {
 
     developer.log("═" * 50, name: "AuthService");
     developer.log("🔍 END AUTH DEBUG", name: "AuthService");
+  }
+
+  /// ✅ FIXED: Force refresh user data from storage
+  Future<void> refreshUser() async {
+    developer.log("🔄 Refreshing user data...", name: "AuthService");
+    await _loadCurrentUser();
   }
 
   /// ✅ ADDED: Clear user data (for testing/debug)
