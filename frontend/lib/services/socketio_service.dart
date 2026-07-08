@@ -22,6 +22,8 @@ class SocketIoService {
   final Map<int, List<GroupMessage>> _messageCache = {};
   final Map<int, Set<int>> _messageIds =
       {}; // ✅ TRACK MESSAGE IDs FOR DEDUPLICATION
+  final Map<int, Set<String>> _messageContentHashes =
+      {}; // ✅ ADDED: Content-based deduplication
   final Map<int, List<dynamic>> _memberCache = {};
   final Map<int, io.Socket> _sockets = {};
   final Map<int, StreamController<List<GroupMessage>>> _messageControllers = {};
@@ -69,6 +71,8 @@ class SocketIoService {
 
       // ✅ Initialize message ID set for deduplication
       _messageIds[groupId] = <int>{};
+      _messageContentHashes[groupId] =
+          <String>{}; // ✅ Initialize content hashes
 
       // ✅ Load cached messages first if available
       if (_messageCache.containsKey(groupId)) {
@@ -172,6 +176,7 @@ class SocketIoService {
 
         // ✅ Reset message IDs on reconnect to prevent stale cache
         _messageIds[groupId] = <int>{};
+        _messageContentHashes[groupId] = <String>{}; // ✅ Reset content hashes
 
         if (!_connectionCompleters[groupId]!.isCompleted) {
           _connectionCompleters[groupId]!.complete(true);
@@ -210,7 +215,7 @@ class SocketIoService {
         _connectToGroupMembers(groupId); // Init members stream
       });
 
-      // ✅ FIXED: new_message handler with deduplication
+      // ✅ FIXED: new_message handler with enhanced deduplication
       socket.on('new_message', (data) {
         debugPrint('📨 Received new_message event');
 
@@ -232,6 +237,13 @@ class SocketIoService {
             // ✅ CRITICAL: Check if message already exists in cache
             if (_messageIds[groupId]?.contains(message.id) == true) {
               debugPrint('🔄 Duplicate message ${message.id} ignored');
+              return;
+            }
+
+            // ✅ NEW: Check by content hash (for messages without IDs or duplicate IDs)
+            final contentHash = _generateContentHash(message);
+            if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
+              debugPrint('🔄 Duplicate message by content hash, skipping');
               return;
             }
 
@@ -395,8 +407,13 @@ class SocketIoService {
   }
 
   // ================================
-  // MESSAGE HANDLING - FIXED
+  // MESSAGE HANDLING - FULLY FIXED
   // ================================
+
+  /// ✅ Generate a unique content hash for deduplication
+  String _generateContentHash(GroupMessage message) {
+    return '${message.senderId}:${message.content}:${message.createdAt.millisecondsSinceEpoch ~/ 10000}';
+  }
 
   void _handleIncomingMessage(int groupId, GroupMessage message) {
     try {
@@ -409,11 +426,18 @@ class SocketIoService {
         return;
       }
 
-      // ✅ CRITICAL: Deduplication check
+      // ✅ CRITICAL: Deduplication check by ID
       if (_messageIds[groupId]?.contains(message.id) == true) {
         debugPrint(
           '🔄 Duplicate message ${message.id} already exists, skipping',
         );
+        return;
+      }
+
+      // ✅ NEW: Deduplication check by content hash
+      final contentHash = _generateContentHash(message);
+      if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
+        debugPrint('🔄 Duplicate message by content hash, skipping');
         return;
       }
 
@@ -430,6 +454,7 @@ class SocketIoService {
       // Update cache
       _messageCache[groupId] = updatedMessages;
       _messageIds[groupId]?.add(message.id);
+      _messageContentHashes[groupId]?.add(contentHash);
 
       // ✅ Push to stream - ONLY if the controller exists and is not closed
       final controller = _messageControllers[groupId];
@@ -459,19 +484,22 @@ class SocketIoService {
   }
 
   // ================================
-  // CACHE MANAGEMENT - NEW
+  // CACHE MANAGEMENT
   // ================================
 
   /// ✅ Set initial messages from HTTP load
   void setInitialMessages(int groupId, List<GroupMessage> messages) {
     // Initialize ID set if not exists
     final messageIds = _messageIds[groupId] ?? <int>{};
+    final contentHashes = _messageContentHashes[groupId] ?? <String>{};
 
-    // Store message IDs for deduplication
+    // Store message IDs and content hashes for deduplication
     for (final msg in messages) {
       messageIds.add(msg.id);
+      contentHashes.add(_generateContentHash(msg));
     }
     _messageIds[groupId] = messageIds;
+    _messageContentHashes[groupId] = contentHashes;
 
     // Cache messages
     _messageCache[groupId] = List.from(messages);
@@ -480,7 +508,7 @@ class SocketIoService {
     _messageCache[groupId]?.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
     debugPrint(
-      '📦 Set initial ${messages.length} messages for group $groupId (${messageIds.length} IDs tracked)',
+      '📦 Set initial ${messages.length} messages for group $groupId (${messageIds.length} IDs, ${contentHashes.length} hashes tracked)',
     );
 
     // Push to stream if controller exists
@@ -784,7 +812,8 @@ class SocketIoService {
     _memberCache.remove(groupId);
     _connectionCompleters.remove(groupId);
     _messageCache.remove(groupId);
-    _messageIds.remove(groupId); // ✅ Clean up IDs too
+    _messageIds.remove(groupId);
+    _messageContentHashes.remove(groupId); // ✅ Clean up content hashes
   }
 
   void disposeAll() {
@@ -795,7 +824,8 @@ class SocketIoService {
     }
 
     _messageCache.clear();
-    _messageIds.clear(); // ✅ Clear IDs
+    _messageIds.clear();
+    _messageContentHashes.clear(); // ✅ Clear content hashes
     _memberCache.clear();
     _isServiceInitialized = false;
   }
