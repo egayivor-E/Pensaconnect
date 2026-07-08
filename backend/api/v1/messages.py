@@ -84,69 +84,77 @@ def get_group_messages(group_id):
         logger.error(f"Error retrieving messages for group {group_id}: {str(e)}")
         return error_response(f"Failed to retrieve messages: {str(e)}", 500)
 
-@messages_bp.route("/<group_id>", methods=["POST"])
-@jwt_required()
-def send_group_message(group_id):
-    """Send a message to a specific group"""
-    try:
-        # ✅ CONVERT GROUP_ID TO INTEGER
-        try:
-            group_id_int = int(group_id)
-        except ValueError:
-            return error_response("Invalid group ID format", 400)
-            
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        
-        content = data.get("content", "").strip()
-        message_type = data.get("message_type", "text")
 
-        if not content:
-            return error_response("Message content cannot be empty")
-        
-        # Validate content length
-        if len(content) > 1000:
-            return error_response("Message too long. Maximum 1000 characters allowed.")
-        
-        # Verify group exists and user has access
-        group = GroupChat.query.get(group_id_int)  # ✅ USE INTEGER
-        if not group:
-            return error_response("Group not found", 404)
-        
-        # Create the message
-        message = GroupMessage(
-            group_chat_id=group_id_int,  # ✅ USE INTEGER
-            sender_id=user_id,
-            content=content,
-            message_type=message_type,
-            attachments=data.get('attachments', []),
-            read_by=[user_id],
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-            is_active=True
-        )
-        
-        db.session.add(message)
-        db.session.commit()
-        
-        # Format response with sender information
-        message_data = message.to_dict()
-        sender = User.query.get(user_id)
-        if sender:
-            message_data['sender'] = {
-                'id': sender.id,
-                'username': sender.username,
-                'full_name': getattr(sender, 'full_name', sender.username),
-                'profile_picture': getattr(sender, 'profile_picture', None)
-            }
-        
-        logger.info(f"User {user_id} sent message to group {group_id_int}: {content[:50]}...")
-        return success_response(message_data, "Message sent successfully", 201)
-        
-    except Exception as e:
-        logger.error(f"Error sending message to group {group_id}: {str(e)}")
-        db.session.rollback()
-        return error_response(f"Failed to send message: {str(e)}", 500)
+# ================================================================
+# 🚫 COMMENTED OUT - DUPLICATE MESSAGE SAVING ROUTE
+# This was causing duplicate messages because it saves to the database
+# while group_chats_bp also saves messages. Keeping only group_chats_bp.
+# ================================================================
+
+# @messages_bp.route("/<group_id>", methods=["POST"])
+# @jwt_required()
+# def send_group_message(group_id):
+#     """Send a message to a specific group"""
+#     try:
+#         # ✅ CONVERT GROUP_ID TO INTEGER
+#         try:
+#             group_id_int = int(group_id)
+#         except ValueError:
+#             return error_response("Invalid group ID format", 400)
+#             
+#         user_id = get_jwt_identity()
+#         data = request.get_json()
+#         
+#         content = data.get("content", "").strip()
+#         message_type = data.get("message_type", "text")
+# 
+#         if not content:
+#             return error_response("Message content cannot be empty")
+#         
+#         # Validate content length
+#         if len(content) > 1000:
+#             return error_response("Message too long. Maximum 1000 characters allowed.")
+#         
+#         # Verify group exists and user has access
+#         group = GroupChat.query.get(group_id_int)  # ✅ USE INTEGER
+#         if not group:
+#             return error_response("Group not found", 404)
+#         
+#         # Create the message
+#         message = GroupMessage(
+#             group_chat_id=group_id_int,  # ✅ USE INTEGER
+#             sender_id=user_id,
+#             content=content,
+#             message_type=message_type,
+#             attachments=data.get('attachments', []),
+#             read_by=[user_id],
+#             created_at=datetime.now(timezone.utc),
+#             updated_at=datetime.now(timezone.utc),
+#             is_active=True
+#         )
+#         
+#         db.session.add(message)
+#         db.session.commit()
+#         
+#         # Format response with sender information
+#         message_data = message.to_dict()
+#         sender = User.query.get(user_id)
+#         if sender:
+#             message_data['sender'] = {
+#                 'id': sender.id,
+#                 'username': sender.username,
+#                 'full_name': getattr(sender, 'full_name', sender.username),
+#                 'profile_picture': getattr(sender, 'profile_picture', None)
+#             }
+#         
+#         logger.info(f"User {user_id} sent message to group {group_id_int}: {content[:50]}...")
+#         return success_response(message_data, "Message sent successfully", 201)
+#         
+#     except Exception as e:
+#         logger.error(f"Error sending message to group {group_id}: {str(e)}")
+#         db.session.rollback()
+#         return error_response(f"Failed to send message: {str(e)}", 500)
+
 
 # --- Group Members ---
 @messages_bp.route("/<group_id>/members", methods=["GET"])
@@ -191,6 +199,7 @@ def get_group_members(group_id):
         logger.error(f"Error retrieving members for group {group_id}: {str(e)}")
         return error_response(f"Failed to retrieve group members: {str(e)}", 500)
 
+
 # --- Message Actions ---
 @messages_bp.route("/<message_id>/read", methods=["POST"])
 @jwt_required()
@@ -224,6 +233,7 @@ def mark_message_read(message_id):
         logger.error(f"Error marking message {message_id} as read: {str(e)}")
         db.session.rollback()
         return error_response(f"Failed to mark message as read: {str(e)}", 500)
+
 
 # --- Group Statistics ---
 @messages_bp.route("/<group_id>/stats", methods=["GET"])
