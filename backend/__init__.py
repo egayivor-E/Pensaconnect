@@ -51,7 +51,7 @@ def _set_csp_headers(app: Flask):
             f"style-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
             f"img-src 'self' data:; "
             f"font-src 'self' https://cdn.jsdelivr.net; "
-            f"connect-src 'self'; "
+            f"connect-src 'self' https://pensaconnect-pjz9.onrender.com https://pensaconnect-pjz9.onrender.com; "
             f"object-src 'none'; "
             f"base-uri 'self'; "
             f"form-action 'self'; "
@@ -329,80 +329,71 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     # ✅ Configure API docs BEFORE creating Api instance
     _configure_api_docs(app)
     
-    # ✅ FIXED CORS CONFIGURATION - Properly configured for production
+    # ============ CORS CONFIGURATION - FIXED ============
     # Determine allowed origins based on environment
-    if config_name == 'production' or config_name == 'render' or os.getenv('FLASK_ENV') == 'production':
-        # Production: restricted origins
-        allowed_origins = [
-            "https://pensaconnect-pjz9.onrender.com",
-            "https://pensaconnect-1.onrender.com",
-            "https://pensaconnect.onrender.com",
-            "http://localhost:*",
-            "http://127.0.0.1:*",
+    is_production = config_name in ['production', 'render'] or os.getenv('FLASK_ENV') == 'production'
+    
+    if is_production:
+        # Production: explicit allowed origins only
+        ALLOWED_ORIGINS = [
+            "https://pensaconnect-pjz9.onrender.com",  # Backend URL
+            "https://pensaconnect-1.onrender.com",     # ✅ Frontend URL - ADDED THIS
+            "https://pensaconnect.onrender.com",       # Main domain
         ]
-        print(f"🔒 Production CORS origins: {allowed_origins}")
+        print(f"🔒 Production CORS origins: {ALLOWED_ORIGINS}")
     else:
-        # Development: allow localhost for testing
-        allowed_origins = [
-            "http://localhost:58672",
+        # Development: allow localhost with any port
+        ALLOWED_ORIGINS = [
             "http://localhost:3000",
             "http://localhost:5000",
+            "http://localhost:58672",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5000",
             "http://127.0.0.1:58672",
             "http://0.0.0.0:5000",
             "http://0.0.0.0:58672",
-            "http://localhost:*",
-            "https://pensaconnect-pjz9.onrender.com",
-            "https://pensaconnect-1.onrender.com",
         ]
-        print(f"🔓 Development CORS origins: {allowed_origins}")
-
-    # ✅ Apply CORS to all routes
+        print("🔓 Development CORS mode enabled")
+    
+    # SINGLE CORS configuration
     CORS(app,
         resources={
             r"/api/*": {
-                "origins": allowed_origins,
+                "origins": ALLOWED_ORIGINS,
                 "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-                "supports_credentials": True,
                 "expose_headers": ["Content-Type", "Authorization"],
-                "max_age": 3600,
+                "supports_credentials": True,
+                "max_age": 3600
             },
             r"/auth/*": {
-                "origins": allowed_origins,
+                "origins": ALLOWED_ORIGINS,
                 "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                 "allow_headers": ["Content-Type", "Authorization"],
                 "supports_credentials": True,
-                "expose_headers": ["Content-Type", "Authorization"],
             },
             r"/uploads/*": {
-                "origins": allowed_origins,
+                "origins": ALLOWED_ORIGINS,
                 "methods": ["GET", "OPTIONS"],
                 "allow_headers": ["Content-Type"],
-                "expose_headers": ["Content-Type"]
             },
-            r"/*": {
-                "origins": allowed_origins,
-                "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-                "allow_headers": ["Content-Type", "Authorization"],
-                "supports_credentials": True,
-            }
-        })
+        }
+    )
     
-    # ✅ WEBSOCKET SETUP with same CORS origins
+    # ============ WEBSOCKET SETUP ============
     global socketio
+    
     socketio = SocketIO(
         app,
-        cors_allowed_origins=allowed_origins,
-        logger=(config_name != 'production' and config_name != 'render'),
-        engineio_logger=(config_name != 'production' and config_name != 'render'),
+        cors_allowed_origins=ALLOWED_ORIGINS if is_production else "*",
+        logger=not is_production,
+        engineio_logger=not is_production,
         async_mode='gevent',
         ping_timeout=60,
         ping_interval=25,
         max_http_buffer_size=1000000
     )
-    
+
     # ✅ Register WebSocket events IMMEDIATELY after SocketIO creation
     _register_websocket_events(socketio)
     
@@ -433,16 +424,6 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     def log_request_info():
         logger.info(f"Incoming request: {request.method} {request.path}")
         logger.info(f"Origin: {request.headers.get('Origin')}")
-
-    @app.after_request
-    def after_request(response):
-        origin = request.headers.get('Origin')
-        if origin:
-            response.headers.add('Access-Control-Allow-Origin', origin)
-            response.headers.add('Access-Control-Allow-Credentials', 'true')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-            response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,PATCH,OPTIONS')
-        return response
 
     # ✅ WebSocket health check
     @app.route("/ws-health")
@@ -528,6 +509,12 @@ def _configure_app(app: Flask, config_name: Optional[str]):
     
     app.config.from_pyfile("config.py", silent=True)
     app.config.from_prefixed_env()
+    app.config['ADMIN_EMAIL'] = os.getenv('ADMIN_EMAIL')
+    app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
+    app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+    app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True').lower() in ['true', 'on', '1']
+    app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
+    app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
 
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["ENV"] = config_name
