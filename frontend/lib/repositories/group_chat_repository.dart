@@ -8,18 +8,18 @@ import '../services/api_service.dart';
 import '../repositories/auth_repository.dart';
 import '../models/group_member_model.dart';
 import '../models/group_message_model.dart';
-import '../models/bible_models.dart'; // ADD THIS IMPORT
+import '../models/bible_models.dart';
 
 class GroupChatRepository {
-  // ignore: unused_field
   final Dio _dio;
   final AuthRepository authRepo;
-  final SocketIoService _socketService = SocketIoService(); // ✅ CHANGE THIS
+  final SocketIoService _socketService; // ✅ CHANGED: Injected, not created
 
-  GroupChatRepository(this._dio, this.authRepo);
+  // ✅ CHANGED: Constructor now accepts SocketIoService
+  GroupChatRepository(this._dio, this.authRepo, this._socketService);
 
   Stream<List<GroupMessage>> watchMessages(int groupId) {
-    return _socketService.watchMessages(groupId); // ✅ USE SOCKET.IO
+    return _socketService.watchMessages(groupId);
   }
 
   /// Fetch all groups the user belongs to
@@ -88,12 +88,15 @@ class GroupChatRepository {
           messagesList = [];
         }
 
-        debugPrint(
-          "✅ Loaded ${messagesList.length} messages for group $groupId",
-        );
-        return messagesList
+        final messages = messagesList
             .map<GroupMessage>((jsonItem) => GroupMessage.fromJson(jsonItem))
             .toList();
+
+        // ✅ ADDED: Store messages in socket service cache to prevent duplicate WebSocket messages
+        _socketService.setInitialMessages(groupId, messages);
+
+        debugPrint("✅ Loaded ${messages.length} messages for group $groupId");
+        return messages;
       } else {
         debugPrint("❌ Failed to load messages: ${response.statusCode}");
         throw Exception('Failed to load messages: ${response.statusCode}');
@@ -203,7 +206,6 @@ class GroupChatRepository {
     }
   }
 
-  /// Send a message to a group
   /// Send a message to a group
   Future<GroupMessage> sendMessage({
     required int groupId,
@@ -347,7 +349,7 @@ class GroupChatRepository {
   }
 
   String _getBaseUrl() {
-    return 'wss://pensaconnect.onrender.com/api/v1';
+    return 'https://pensaconnect.onrender.com/api/v1';
   }
 
   Future<Map<String, String>> _getHeaders() async {
