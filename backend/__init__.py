@@ -329,36 +329,47 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     # ✅ Configure API docs BEFORE creating Api instance
     _configure_api_docs(app)
     
-        # ✅ SIMPLE CORS configuration
-    # ✅ FIXED CORS CONFIGURATION
+    # ✅ FIXED CORS CONFIGURATION - Properly configured for production
     # Determine allowed origins based on environment
     if config_name == 'production' or config_name == 'render' or os.getenv('FLASK_ENV') == 'production':
         # Production: restricted origins
         allowed_origins = [
-            "https://pensaconnect-pjz9.onrender.com",  # Your Render backend URL
-            "http://localhost:*",                  # For local testing
-            "http://127.0.0.1:*", 
-            "https://pensaconnect-1.onrender.com ",
-            # For testing   # GitHub Pages
-            # Add your production domains when you have them
+            "https://pensaconnect-pjz9.onrender.com",
+            "https://pensaconnect-1.onrender.com",
+            "https://pensaconnect.onrender.com",
+            "http://localhost:*",
+            "http://127.0.0.1:*",
         ]
         print(f"🔒 Production CORS origins: {allowed_origins}")
     else:
         # Development: allow localhost for testing
         allowed_origins = [
-            "http://localhost:58672",            
+            "http://localhost:58672",
             "http://localhost:3000",
+            "http://localhost:5000",
             "http://127.0.0.1:3000",
+            "http://127.0.0.1:5000",
             "http://127.0.0.1:58672",
+            "http://0.0.0.0:5000",
             "http://0.0.0.0:58672",
+            "http://localhost:*",
+            "https://pensaconnect-pjz9.onrender.com",
             "https://pensaconnect-1.onrender.com",
-            
         ]
         print(f"🔓 Development CORS origins: {allowed_origins}")
 
+    # ✅ Apply CORS to all routes
     CORS(app,
         resources={
             r"/api/*": {
+                "origins": allowed_origins,
+                "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                "supports_credentials": True,
+                "expose_headers": ["Content-Type", "Authorization"],
+                "max_age": 3600,
+            },
+            r"/auth/*": {
                 "origins": allowed_origins,
                 "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
                 "allow_headers": ["Content-Type", "Authorization"],
@@ -366,21 +377,26 @@ def create_app(config_name: Optional[str] = None) -> Flask:
                 "expose_headers": ["Content-Type", "Authorization"],
             },
             r"/uploads/*": {
-                "origins": allowed_origins,  # NOT "*"
+                "origins": allowed_origins,
                 "methods": ["GET", "OPTIONS"],
                 "allow_headers": ["Content-Type"],
                 "expose_headers": ["Content-Type"]
             },
+            r"/*": {
+                "origins": allowed_origins,
+                "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization"],
+                "supports_credentials": True,
+            }
         })
-        # ✅ WEBSOCKET SETUP - MUST BE BEFORE OTHER EXTENSIONS
     
-    # ✅ FIXED WEBSOCKET SETUP
+    # ✅ WEBSOCKET SETUP with same CORS origins
     global socketio
     socketio = SocketIO(
         app,
-        cors_allowed_origins=allowed_origins,  # ✅ Use the same allowed origins
-        logger=(config_name != 'production' and config_name != 'render'),  # Disable in production
-        engineio_logger=(config_name != 'production' and config_name != 'render'),  # Disable in production
+        cors_allowed_origins=allowed_origins,
+        logger=(config_name != 'production' and config_name != 'render'),
+        engineio_logger=(config_name != 'production' and config_name != 'render'),
         async_mode='gevent',
         ping_timeout=60,
         ping_interval=25,
@@ -417,6 +433,16 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     def log_request_info():
         logger.info(f"Incoming request: {request.method} {request.path}")
         logger.info(f"Origin: {request.headers.get('Origin')}")
+
+    @app.after_request
+    def after_request(response):
+        origin = request.headers.get('Origin')
+        if origin:
+            response.headers.add('Access-Control-Allow-Origin', origin)
+            response.headers.add('Access-Control-Allow-Credentials', 'true')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+            response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,PATCH,OPTIONS')
+        return response
 
     # ✅ WebSocket health check
     @app.route("/ws-health")
@@ -490,10 +516,10 @@ def _configure_app(app: Flask, config_name: Optional[str]):
         "staging": StagingConfig,
         "testing": TestingConfig,
         "development": DevelopmentConfig,
-        "render": RenderConfig,  # ✅ Added RenderConfig
+        "render": RenderConfig,
     }
     
-    config_class = config_map.get(config_name, DevelopmentConfig)  # ✅ Define config_class
+    config_class = config_map.get(config_name, DevelopmentConfig)
     app.config.from_object(config_class)
     
     # ✅ Initialize RenderConfig if needed (AFTER defining config_class)
@@ -505,6 +531,7 @@ def _configure_app(app: Flask, config_name: Optional[str]):
 
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["ENV"] = config_name
+    
 def _configure_api_docs(app: Flask):
     """Configure OpenAPI / Swagger / Redoc docs - MUST be called before Api() creation"""
     app.config.update(
