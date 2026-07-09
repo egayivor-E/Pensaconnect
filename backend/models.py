@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 import enum
 import re
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
+from flask import current_app
 from sqlalchemy import Column, ForeignKey, Index, Numeric, Float
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy.dialects.postgresql import TSVECTOR, ARRAY
