@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:pensaconnect/services/auth_service.dart'; // ✅ ADDED
+import 'package:pensaconnect/services/auth_service.dart';
 
 import '../repositories/group_chat_repository.dart';
 import '../models/group_message_model.dart';
@@ -39,8 +39,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   Timer? _typingTimer;
   StreamSubscription<List<GroupMessage>>? _messageSubscription;
   
-  // ✅ ADDED: Current user ID cache
+  // ✅ FIXED: Current user ID with proper initialization
   int? _currentUserId;
+  bool _authReady = false;
 
   @override
   void initState() {
@@ -53,27 +54,11 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     _groupRepo = context.read<GroupChatRepository>();
     _socketService = context.read<SocketIoService>();
 
-    // ✅ Get current user ID from AuthService directly
-    final authService = AuthService();
-    _currentUserId = authService.userId;
+    // ✅ FIXED: Get current user ID from AuthService with proper async handling
+    await _loadCurrentUser();
     
-    debugPrint('👤 GroupChatDetail: Current User ID = $_currentUserId');
-    
-    if (_currentUserId == null || _currentUserId == 0) {
-      debugPrint('⚠️ Warning: User ID is null or 0! Trying to refresh...');
-      await authService.refreshUser();
-      _currentUserId = authService.userId;
-      debugPrint('🔄 After refresh: User ID = $_currentUserId');
-    }
-
     // ✅ Initialize socket service
-    try {
-      await _socketService.initialize();
-      debugPrint('✅ SocketIoService initialized');
-      _socketService.debugConnectionStatus(widget.groupId);
-    } catch (e) {
-      debugPrint('❌ SocketIoService init error: $e');
-    }
+    await _initializeSocketService();
 
     // ✅ Start listening BEFORE loading messages
     _setupRealtimeListener();
@@ -88,20 +73,69 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     _setupTypingDetection();
   }
 
+  // ✅ FIXED: Separate method to load current user
+  Future<void> _loadCurrentUser() async {
+    try {
+      final authService = AuthService();
+      
+      // Wait for auth to be initialized
+      await authService.waitForInitialization();
+      
+      // Get user ID
+      _currentUserId = await authService.getUserId();
+      
+      debugPrint('👤 GroupChatDetail: Current User ID = $_currentUserId');
+      
+      if (_currentUserId == null || _currentUserId == 0) {
+        debugPrint('⚠️ Warning: User ID is null or 0! Trying to refresh...');
+        await authService.refreshUser(retries: 3);
+        _currentUserId = await authService.getUserId();
+        debugPrint('🔄 After refresh: User ID = $_currentUserId');
+      }
+      
+      _authReady = _currentUserId != null && _currentUserId! > 0;
+      
+      if (!_authReady) {
+        debugPrint('❌ Failed to get valid user ID after refresh');
+      }
+      
+      // ✅ Debug auth state
+      await authService.debugAuthState();
+      
+    } catch (e) {
+      debugPrint('❌ Error loading current user: $e');
+      _authReady = false;
+    }
+  }
+
+  // ✅ FIXED: Separate method for socket initialization
+  Future<void> _initializeSocketService() async {
+    try {
+      await _socketService.initialize();
+      debugPrint('✅ SocketIoService initialized');
+      _socketService.debugConnectionStatus(widget.groupId);
+    } catch (e) {
+      debugPrint('❌ SocketIoService init error: $e');
+    }
+  }
+
   void _joinSocketRoom() {
     try {
       debugPrint('🚀 Joining WebSocket room for group ${widget.groupId}');
 
-      if (_currentUserId == null || _currentUserId == 0) {
-        debugPrint('⚠️ Cannot join room: No user ID available');
+      if (!_authReady) {
+        debugPrint('⚠️ Cannot join room: User not authenticated');
         return;
       }
 
-      _socketService.debugConnectionStatus(widget.groupId);
-
+      // ✅ Join room with user ID
+      _socketService.joinGroupRoom(widget.groupId, _currentUserId!);
+      
       setState(() {
         _isConnected = _socketService.isConnected(widget.groupId);
       });
+      
+      debugPrint('✅ Joined room: isConnected=$_isConnected');
     } catch (e) {
       debugPrint('⚠️ Error joining socket room: $e');
     }
@@ -183,7 +217,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     _controller.addListener(() {
       _typingTimer?.cancel();
 
-      if (_currentUserId != null && _currentUserId! > 0) {
+      if (_authReady) {
         _socketService.sendTyping(widget.groupId, true);
       } else {
         debugPrint('⚠️ Skipping typing indicator: No user ID');
@@ -196,7 +230,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
       }
 
       _typingTimer = Timer(const Duration(seconds: 2), () {
-        if (_currentUserId != null && _currentUserId! > 0) {
+        if (_authReady) {
           _socketService.sendTyping(widget.groupId, false);
         }
         if (mounted) {
@@ -208,29 +242,38 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     });
   }
 
+  // ✅ FIXED: Send message with proper auth check
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
 
-    if (_currentUserId == null || _currentUserId == 0) {
-      debugPrint('❌ Cannot send message: User ID not available');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please login to send messages'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+    // ✅ Re-check auth before sending
+    if (!_authReady) {
+      debugPrint('❌ Cannot send message: User not authenticated');
+      
+      // Try to refresh one more time
+      await _loadCurrentUser();
+      
+      if (!_authReady) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please login to send messages'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
       }
-      return;
     }
 
     setState(() => _sending = true);
 
     try {
+      // Stop typing indicator
       _typingTimer?.cancel();
-      if (_currentUserId != null && _currentUserId! > 0) {
+      if (_authReady) {
         _socketService.sendTyping(widget.groupId, false);
       }
 
@@ -238,6 +281,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
       await _groupRepo.sendMessage(
         groupId: widget.groupId,
         content: text,
+        userId: _currentUserId, // ✅ Pass user ID explicitly
       );
 
       _controller.clear();
@@ -278,7 +322,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     });
   }
 
-  // ✅ FIXED: Use _currentUserId instead of auth provider
+  // ✅ FIXED: Use _authReady and _currentUserId
   Widget _buildMessageBubble(GroupMessage message) {
     final isMe = message.senderId == _currentUserId;
 
