@@ -159,7 +159,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final themeProvider = context.watch<ThemeProvider>();
-    final isDarkMode = themeProvider.themeMode == ThemeMode.dark;
+    // ✅ FIX: use isDarkMode(context) instead of `themeMode == ThemeMode.dark`
+    // so the switch shows the correct state even when themeMode is
+    // ThemeMode.system and the device itself is in dark mode.
+    final isDarkMode = themeProvider.isDarkMode(context);
 
     // Platform detection
     final isMobile = MediaQuery.of(context).size.width < 600;
