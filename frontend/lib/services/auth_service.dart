@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
@@ -5,24 +6,149 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 
-class AuthService {
+class AuthService extends ChangeNotifier {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal();
 
+  // ==================== STATE ====================
   Map<String, dynamic>? _currentUser;
+  bool _isInitialized = false;
+  bool _isLoading = false;
+  String? _lastError;
+  
+  // ==================== GETTERS ====================
   Map<String, dynamic>? get currentUser => _currentUser;
+  bool get isInitialized => _isInitialized;
+  bool get isLoading => _isLoading;
+  String? get lastError => _lastError;
+  
+  /// Get user ID synchronously (checks memory first)
+  int? get userId {
+    if (_currentUser != null) {
+      final id = _currentUser!['id'];
+      if (id is int) return id;
+      if (id is String) return int.tryParse(id);
+      if (id is double) return id.toInt();
+    }
+    return null;
+  }
+  
+  /// Get username synchronously
+  String? get username {
+    if (_currentUser == null) return null;
+    try {
+      return _currentUser!['username'] as String?;
+    } catch (e) {
+      return null;
+    }
+  }
+  
+  /// Get full name synchronously
+  String? get fullName {
+    if (_currentUser == null) return null;
+    try {
+      return _currentUser!['full_name'] as String? ?? 
+             _currentUser!['fullName'] as String?;
+    } catch (e) {
+      return null;
+    }
+  }
+  
+  /// Get email synchronously
+  String? get email {
+    if (_currentUser == null) return null;
+    try {
+      return _currentUser!['email'] as String?;
+    } catch (e) {
+      return null;
+    }
+  }
+  
+  /// Get profile picture synchronously
+  String? get profilePicture {
+    if (_currentUser == null) return null;
+    try {
+      return _currentUser!['profile_picture'] as String? ??
+             _currentUser!['profilePicture'] as String? ??
+             _currentUser!['avatar'] as String?;
+    } catch (e) {
+      return null;
+    }
+  }
+  
+  /// Check if user has a specific role
+  bool hasRole(String role) {
+    if (_currentUser == null) return false;
+    try {
+      final roles = _currentUser!['roles'] as List? ?? [];
+      return roles.contains(role);
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  /// Check if user is admin
+  bool get isAdmin => hasRole('admin') || hasRole('ADMIN');
+  
+  /// Check if user is authenticated
+  Future<bool> isAuthenticated() async {
+    final token = await getToken();
+    final userId = await getUserIdFromStorage();
+    final hasUser = _currentUser != null;
+    
+    developer.log(
+      "🔐 Auth check: token=${token != null}, userId=$userId, user=$hasUser",
+      name: "AuthService",
+    );
+    
+    return token != null && token.isNotEmpty && userId != null && userId > 0;
+  }
 
+  // ==================== STORAGE KEYS ====================
   static const _userKey = 'current_user';
   static const _userIdKey = 'user_id';
   static const _tokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
 
-  // ✅ Web-safe SecureStorage with proper Android options
+  // ==================== STORAGE ====================
   static const _secureStorage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
+  // ==================== INITIALIZATION ====================
+  /// Initialize the auth service - MUST be called at app startup
+  Future<void> initialize() async {
+    if (_isInitialized) {
+      developer.log("ℹ️ AuthService already initialized", name: "AuthService");
+      return;
+    }
+    
+    _isLoading = true;
+    _lastError = null;
+    notifyListeners();
+    
+    try {
+      developer.log("🚀 Initializing AuthService...", name: "AuthService");
+      await _loadCurrentUser();
+      _isInitialized = true;
+      
+      developer.log(
+        "✅ AuthService initialized: User ID = $userId, User = ${_currentUser != null}",
+        name: "AuthService",
+      );
+      
+      await debugAuthState();
+    } catch (e) {
+      _lastError = e.toString();
+      developer.log("❌ AuthService initialization error: $e", name: "AuthService");
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // ==================== AUTH METHODS ====================
   /// Register a new user
   Future<Map<String, dynamic>> register(
     String username,
@@ -46,6 +172,10 @@ class AuthService {
 
   /// Login with proper, safe storage (cross-platform)
   Future<Map<String, dynamic>> login(String identifier, String password) async {
+    _isLoading = true;
+    _lastError = null;
+    notifyListeners();
+    
     try {
       final payload = {"identifier": identifier, "password": password};
 
@@ -68,193 +198,53 @@ class AuthService {
         final refreshToken = data['data']['refresh_token'];
         final userId = userData['id'].toString();
 
+        // Set in memory
         _currentUser = userData;
 
-        // ✅ 1. Save sensitive tokens to Secure Storage (Safe on Mobile & Web)
-        await _secureStorage.write(key: _tokenKey, value: accessToken);
-        await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
-        await _secureStorage.write(key: _userIdKey, value: userId);
-
-        // ✅ 2. Save non-sensitive metadata to SharedPreferences
-        //    (Automatically uses localStorage on Web!)
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(_userKey, json.encode(userData));
-        await prefs.setString(_userIdKey, userId);
-        await prefs.reload();
-
-        // ✅ 3. Configure API client
+        // Save to all storage locations
+        await _saveUserData(userData, accessToken, refreshToken, userId);
+        
+        // Configure API client
         await ApiService.setTokens(accessToken, refreshToken);
 
         developer.log(
           "✅ Login successful: User ID=$userId, Username=${userData['username']}",
           name: "AuthService",
         );
-
-        // ✅ Debug verification
+        
+        _isInitialized = true;
+        notifyListeners();
+        
         await debugAuthState();
       } else {
+        _lastError = "Login failed: ${data['message'] ?? 'Unknown error'}";
         developer.log(
-          "❌ Login failed or missing user data",
+          "❌ Login failed: ${_lastError}",
           name: "AuthService",
         );
       }
 
       return data;
     } catch (e, stackTrace) {
+      _lastError = e.toString();
       developer.log("❌ Login error: $e\n$stackTrace", name: "AuthService");
       rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
-  }
-
-  /// Get user ID from storage (async)
-  Future<int?> getUserIdFromStorage() async {
-    try {
-      // 1. Try secure storage first
-      String? userId = await _secureStorage.read(key: _userIdKey);
-      if (userId != null && userId.isNotEmpty) {
-        return int.tryParse(userId);
-      }
-
-      // 2. Try SharedPreferences as fallback
-      final prefs = await SharedPreferences.getInstance();
-      userId = prefs.getString(_userIdKey);
-      if (userId != null && userId.isNotEmpty) {
-        return int.tryParse(userId);
-      }
-
-      return null;
-    } catch (e) {
-      developer.log("❌ Error getting user ID from storage: $e", name: "AuthService");
-      return null;
-    }
-  }
-
-  /// Get saved access token
-  Future<String?> getToken() async {
-    try {
-      // 1. Try secure storage first
-      String? token = await _secureStorage.read(key: _tokenKey);
-      if (token != null && token.isNotEmpty) {
-        return token;
-      }
-
-      // 2. Try SharedPreferences as fallback
-      final prefs = await SharedPreferences.getInstance();
-      token = prefs.getString(_tokenKey);
-      return token;
-    } catch (e) {
-      developer.log("❌ Error retrieving token: $e", name: "AuthService");
-      return null;
-    }
-  }
-
-  /// Get refresh token
-  Future<String?> getRefreshToken() async {
-    try {
-      String? token = await _secureStorage.read(key: _refreshTokenKey);
-      if (token != null && token.isNotEmpty) {
-        return token;
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      token = prefs.getString(_refreshTokenKey);
-      return token;
-    } catch (e) {
-      developer.log("❌ Error retrieving refresh token: $e", name: "AuthService");
-      return null;
-    }
-  }
-
-  /// Check if user is authenticated
-  Future<bool> isAuthenticated() async {
-    final token = await getToken();
-    final userId = await getUserIdFromStorage();
-    final hasUser = _currentUser != null;
-
-    developer.log(
-      "🔐 Auth check: token=${token != null}, userId=$userId, user=$hasUser",
-      name: "AuthService",
-    );
-
-    return token != null && token.isNotEmpty && userId != null && userId > 0;
-  }
-
-  /// Get current user ID (sync - memory only)
-  int? get userId {
-    if (_currentUser != null) {
-      final id = _currentUser!['id'];
-      if (id is int) return id;
-      if (id is String) return int.tryParse(id);
-      if (id is double) return id.toInt();
-    }
-    return null;
-  }
-
-  /// Get current username
-  String? get username {
-    if (_currentUser == null) return null;
-    try {
-      return _currentUser!['username'] as String?;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /// Get current full name
-  String? get fullName {
-    if (_currentUser == null) return null;
-    try {
-      return _currentUser!['full_name'] as String? ?? 
-             _currentUser!['fullName'] as String?;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /// Get user email
-  String? get email {
-    if (_currentUser == null) return null;
-    try {
-      return _currentUser!['email'] as String?;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /// Get profile picture
-  String? get profilePicture {
-    if (_currentUser == null) return null;
-    try {
-      return _currentUser!['profile_picture'] as String? ??
-             _currentUser!['profilePicture'] as String? ??
-             _currentUser!['avatar'] as String?;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /// Check if user has a specific role
-  bool hasRole(String role) {
-    if (_currentUser == null) return false;
-    try {
-      final roles = _currentUser!['roles'] as List? ?? [];
-      return roles.contains(role);
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /// Check if user is admin
-  bool get isAdmin {
-    return hasRole('admin') || hasRole('ADMIN');
   }
 
   /// Logout
   Future<void> logout() async {
+    _isLoading = true;
+    notifyListeners();
+    
     try {
       developer.log("🔄 Starting logout process...", name: "AuthService");
 
       _currentUser = null;
+      _isInitialized = false;
 
       // Clear SharedPreferences
       final prefs = await SharedPreferences.getInstance();
@@ -271,9 +261,80 @@ class AuthService {
       // Clear ApiService
       await ApiService.clearTokens();
 
+      notifyListeners();
       developer.log("✅ Logout completed", name: "AuthService");
     } catch (e) {
       developer.log("❌ Error during logout: $e", name: "AuthService");
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Refresh user data
+  Future<void> refreshUser({int retries = 5}) async {
+    developer.log("🔄 Refreshing user data...", name: "AuthService");
+
+    for (int i = 0; i < retries; i++) {
+      await _loadCurrentUser();
+      
+      // Also try to fetch from API if storage is empty
+      if (_currentUser == null) {
+        await fetchUserFromApi();
+      }
+
+      final userId = await getUserIdFromStorage();
+      final hasValidUser = _currentUser != null || (userId != null && userId > 0);
+
+      if (hasValidUser) {
+        developer.log(
+          "✅ User refreshed: ID=$userId",
+          name: "AuthService",
+        );
+        _isInitialized = true;
+        notifyListeners();
+        return;
+      }
+
+      if (i < retries - 1) {
+        developer.log(
+          "⏳ Retrying (${i + 1}/$retries)...",
+          name: "AuthService",
+        );
+        await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
+      }
+    }
+
+    developer.log(
+      "⚠️ Failed to refresh user after $retries attempts",
+      name: "AuthService",
+    );
+  }
+
+  // ==================== USER DATA MANAGEMENT ====================
+  /// Save user data to all storage locations
+  Future<void> _saveUserData(
+    Map<String, dynamic> userData,
+    String accessToken,
+    String refreshToken,
+    String userId,
+  ) async {
+    try {
+      // Save to Secure Storage
+      await _secureStorage.write(key: _tokenKey, value: accessToken);
+      await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
+      await _secureStorage.write(key: _userIdKey, value: userId);
+
+      // Save to SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_userKey, json.encode(userData));
+      await prefs.setString(_userIdKey, userId);
+      await prefs.reload();
+
+      developer.log("✅ User data saved to all storage locations", name: "AuthService");
+    } catch (e) {
+      developer.log("❌ Error saving user data: $e", name: "AuthService");
+      rethrow;
     }
   }
 
@@ -306,6 +367,9 @@ class AuthService {
             await ApiService.setTokens(token, refreshToken);
             developer.log("✅ Tokens loaded into ApiService", name: "AuthService");
           }
+          
+          _isInitialized = true;
+          notifyListeners();
         } catch (e) {
           developer.log("❌ Error decoding user JSON: $e", name: "AuthService");
           _currentUser = null;
@@ -318,36 +382,129 @@ class AuthService {
     }
   }
 
-  /// Force refresh user data
-  Future<void> refreshUser({int retries = 5}) async {
-    developer.log("🔄 Refreshing user data...", name: "AuthService");
-
-    for (int i = 0; i < retries; i++) {
-      await _loadCurrentUser();
-
-      final userId = await getUserIdFromStorage();
-
-      if (_currentUser != null || (userId != null && userId > 0)) {
-        developer.log(
-          "✅ User refreshed: ID=$userId",
-          name: "AuthService",
-        );
-        return;
+  /// Get user ID from storage (async)
+  Future<int?> getUserIdFromStorage() async {
+    try {
+      // 1. Check memory first (fastest)
+      if (_currentUser != null) {
+        final id = _currentUser!['id'];
+        if (id is int) return id;
+        if (id is String) return int.tryParse(id);
+        if (id is double) return id.toInt();
       }
 
-      if (i < retries - 1) {
-        developer.log(
-          "⏳ Retrying (${i + 1}/$retries)...",
-          name: "AuthService",
-        );
-        await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
+      // 2. Try secure storage
+      String? userId = await _secureStorage.read(key: _userIdKey);
+      if (userId != null && userId.isNotEmpty) {
+        return int.tryParse(userId);
       }
+
+      // 3. Try SharedPreferences as fallback
+      final prefs = await SharedPreferences.getInstance();
+      userId = prefs.getString(_userIdKey);
+      if (userId != null && userId.isNotEmpty) {
+        return int.tryParse(userId);
+      }
+
+      return null;
+    } catch (e) {
+      developer.log("❌ Error getting user ID from storage: $e", name: "AuthService");
+      return null;
     }
+  }
 
-    developer.log(
-      "⚠️ Failed to refresh user after $retries attempts",
-      name: "AuthService",
-    );
+  /// Get user ID asynchronously (comprehensive)
+  Future<int?> getUserId() async {
+    // Check memory first
+    if (_currentUser != null) {
+      final id = _currentUser!['id'];
+      if (id is int) return id;
+      if (id is String) return int.tryParse(id);
+      if (id is double) return id.toInt();
+    }
+    
+    // Fall back to storage
+    return await getUserIdFromStorage();
+  }
+
+  /// Get saved access token
+  Future<String?> getToken() async {
+    try {
+      // Try secure storage first
+      String? token = await _secureStorage.read(key: _tokenKey);
+      if (token != null && token.isNotEmpty) {
+        return token;
+      }
+
+      // Try SharedPreferences as fallback
+      final prefs = await SharedPreferences.getInstance();
+      token = prefs.getString(_tokenKey);
+      return token;
+    } catch (e) {
+      developer.log("❌ Error retrieving token: $e", name: "AuthService");
+      return null;
+    }
+  }
+
+  /// Get refresh token
+  Future<String?> getRefreshToken() async {
+    try {
+      String? token = await _secureStorage.read(key: _refreshTokenKey);
+      if (token != null && token.isNotEmpty) {
+        return token;
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      token = prefs.getString(_refreshTokenKey);
+      return token;
+    } catch (e) {
+      developer.log("❌ Error retrieving refresh token: $e", name: "AuthService");
+      return null;
+    }
+  }
+
+  /// Fetch user from API
+  Future<Map<String, dynamic>?> fetchUserFromApi() async {
+    try {
+      developer.log("🔄 Fetching user from API...", name: "AuthService");
+
+      final response = await ApiService.get('auth/me');
+
+      developer.log(
+        "🔍 fetchUserFromApi: Status code = ${response.statusCode}",
+        name: "AuthService",
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final user = data['data']?['user'] ?? data['user'] ?? data;
+
+        if (user != null && user['id'] != null) {
+          _currentUser = user;
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_userKey, json.encode(user));
+          await prefs.setString(_userIdKey, user['id'].toString());
+          await prefs.reload();
+
+          // Also save to secure storage
+          await _secureStorage.write(key: _userIdKey, value: user['id'].toString());
+
+          developer.log(
+            "✅ User fetched from API: ID=${user['id']}",
+            name: "AuthService",
+          );
+          
+          _isInitialized = true;
+          notifyListeners();
+          return user;
+        }
+      }
+      return null;
+    } catch (e) {
+      developer.log("❌ Error fetching user from API: $e", name: "AuthService");
+      return null;
+    }
   }
 
   /// Update current user data
@@ -365,11 +522,66 @@ class AuthService {
       await prefs.reload();
 
       developer.log("✅ User data updated: ${newData.keys}", name: "AuthService");
+      notifyListeners();
     } catch (e) {
       developer.log("❌ Error updating user data: $e", name: "AuthService");
     }
   }
 
+  /// Clear user data (for testing/debug)
+  Future<void> clearUserData() async {
+    developer.log("🧹 Clearing user data...", name: "AuthService");
+    _currentUser = null;
+    _isInitialized = false;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_userKey);
+    await prefs.remove(_userIdKey);
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_refreshTokenKey);
+
+    await _secureStorage.delete(key: _tokenKey);
+    await _secureStorage.delete(key: _refreshTokenKey);
+    await _secureStorage.delete(key: _userIdKey);
+
+    await ApiService.clearTokens();
+
+    notifyListeners();
+    developer.log("✅ User data cleared", name: "AuthService");
+  }
+
+  // ==================== WAIT FOR INITIALIZATION ====================
+  /// Wait for AuthService to be initialized
+  Future<void> waitForInitialization({Duration timeout = const Duration(seconds: 10)}) async {
+    if (_isInitialized) return;
+    
+    final completer = Completer<void>();
+    bool resolved = false;
+    
+    void listener() {
+      if (_isInitialized && !resolved) {
+        resolved = true;
+        completer.complete();
+      }
+    }
+    
+    addListener(listener);
+    
+    try {
+      await completer.future.timeout(timeout, onTimeout: () {
+        if (!resolved) {
+          resolved = true;
+          developer.log("⏰ Timeout waiting for AuthService initialization", name: "AuthService");
+          // Try to initialize
+          initialize();
+        }
+      });
+    } finally {
+      removeListener(listener);
+    }
+  }
+
+  // ==================== DEBUG ====================
   /// Debug method to check authentication state
   Future<void> debugAuthState() async {
     developer.log("🔍 AUTH STATE DEBUG", name: "AuthService");
@@ -383,6 +595,7 @@ class AuthService {
     developer.log("   - Email: $email", name: "AuthService");
     developer.log("   - Has Valid User ID: ${userId != null && userId! > 0}", name: "AuthService");
     developer.log("   - Is Admin: ${isAdmin}", name: "AuthService");
+    developer.log("   - Is Initialized: $_isInitialized", name: "AuthService");
 
     developer.log("🔑 TOKEN INFO:", name: "AuthService");
     final token = await getToken();
@@ -420,66 +633,5 @@ class AuthService {
 
     developer.log("═" * 50, name: "AuthService");
     developer.log("🔍 END AUTH DEBUG", name: "AuthService");
-  }
-
-  /// Clear user data (for testing/debug)
-  Future<void> clearUserData() async {
-    developer.log("🧹 Clearing user data...", name: "AuthService");
-    _currentUser = null;
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_userKey);
-    await prefs.remove(_userIdKey);
-    await prefs.remove(_tokenKey);
-    await prefs.remove(_refreshTokenKey);
-
-    await _secureStorage.delete(key: _tokenKey);
-    await _secureStorage.delete(key: _refreshTokenKey);
-    await _secureStorage.delete(key: _userIdKey);
-
-    await ApiService.clearTokens();
-
-    developer.log("✅ User data cleared", name: "AuthService");
-  }
-
-  /// Fetch user from API
-  Future<Map<String, dynamic>?> fetchUserFromApi() async {
-    try {
-      developer.log("🔄 Fetching user from API...", name: "AuthService");
-
-      final response = await ApiService.get('auth/me');
-
-      developer.log(
-        "🔍 fetchUserFromApi: Status code = ${response.statusCode}",
-        name: "AuthService",
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final user = data['data']?['user'] ?? data['user'] ?? data;
-
-        if (user != null && user['id'] != null) {
-          _currentUser = user;
-
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(_userKey, json.encode(user));
-          await prefs.setString(_userIdKey, user['id'].toString());
-          await prefs.reload();
-
-          // Also save to secure storage
-          await _secureStorage.write(key: _userIdKey, value: user['id'].toString());
-
-          developer.log(
-            "✅ User fetched from API: ID=${user['id']}",
-            name: "AuthService",
-          );
-          return user;
-        }
-      }
-      return null;
-    } catch (e) {
-      developer.log("❌ Error fetching user from API: $e", name: "AuthService");
-      return null;
-    }
   }
 }
