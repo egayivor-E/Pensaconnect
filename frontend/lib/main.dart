@@ -117,7 +117,7 @@ void main() {
       developer.log("🔄 MAIN: Loading user data...", name: 'main');
       final authService = AuthService();
       await authService.refreshUser();
-      
+
       if (authService.currentUser != null) {
         developer.log(
           "✅ MAIN: User loaded - ID=${authService.userId}, Username=${authService.username}",
@@ -146,9 +146,36 @@ void main() {
 
       developer.log("🔐 MAIN: Auth state - Auto-login: $autoLoggedIn", name: 'main');
 
+      // ✅ FIX: Sync AuthService with AuthProvider after auto-login.
+      // AuthProvider.tryAutoLogin() reads the token via ApiService and
+      // fetches the profile into AuthProvider.currentUser — but it never
+      // writes to AuthService's storage keys, so AuthService.currentUser /
+      // getUserId() stayed null even after a successful auto-login. This is
+      // what caused "GroupChatDetail: Current User ID = null" downstream.
+      if (authProvider.isAuthenticated &&
+          authProvider.currentUser != null &&
+          authService.currentUser == null) {
+        developer.log(
+          "🔄 MAIN: Syncing AuthService with AuthProvider (post auto-login)",
+          name: 'main',
+        );
+        await authService.setUserFromExternal({
+          'id': authProvider.currentUser!.id,
+          'username': authProvider.currentUser!.username,
+          'roles': authProvider.currentUser!.roles,
+        });
+        developer.log(
+          "✅ MAIN: AuthService synced - ID=${authService.userId}, Username=${authService.username}",
+          name: 'main',
+        );
+      }
+
       runApp(
         MultiProvider(
           providers: [
+            // Provide AuthService so widgets can use context.read<AuthService>()
+            // as an alternative to the AuthService() singleton constructor.
+            ChangeNotifierProvider<AuthService>.value(value: authService),
             ChangeNotifierProvider.value(value: authProvider),
             Provider<AuthRepository>(create: (_) => AuthRepository()),
             ChangeNotifierProvider(create: (_) => ThemeProvider()),
@@ -187,7 +214,7 @@ void main() {
         error: e,
         stackTrace: stackTrace,
       );
-      
+
       runApp(
         MaterialApp(
           home: Scaffold(
