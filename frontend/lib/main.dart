@@ -59,9 +59,6 @@ import 'providers/auth_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/auth_service.dart';
 
-// ✅ FIX: Web-compatible import for flutter_secure_storage
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
 class Routes {
   static const splash = '/splash';
   static const login = '/login';
@@ -116,31 +113,18 @@ void main() {
       await ApiService.init();
       developer.log("✅ MAIN: ApiService.init() completed", name: 'main');
 
-      // ✅ FIX: Properly initialize AuthService
-      developer.log("🔄 MAIN: Initializing AuthService...", name: 'main');
+      // Load user data
+      developer.log("🔄 MAIN: Loading user data...", name: 'main');
       final authService = AuthService();
+      await authService.refreshUser();
       
-      // IMPORTANT: Initialize the auth service properly
-      await authService.initialize();
-      
-      // Verify user is loaded
       if (authService.currentUser != null) {
         developer.log(
           "✅ MAIN: User loaded - ID=${authService.userId}, Username=${authService.username}",
           name: 'main'
         );
       } else {
-        developer.log("⚠️ MAIN: No user found - trying to refresh...", name: 'main');
-        await authService.refreshUser(retries: 3);
-        
-        if (authService.currentUser != null) {
-          developer.log(
-            "✅ MAIN: User refreshed - ID=${authService.userId}, Username=${authService.username}",
-            name: 'main'
-          );
-        } else {
-          developer.log("⚠️ MAIN: No user found after refresh", name: 'main');
-        }
+        developer.log("⚠️ MAIN: No user found", name: 'main');
       }
 
       // Initialize Socket.IO Service
@@ -156,65 +140,27 @@ void main() {
       // Debug token status
       await ApiService.debugTokenStatus();
 
-      // ✅ FIX: Create auth provider with proper initialization
+      // Create auth provider
       final authProvider = AuthProvider();
-      
-      // Check if we should auto-login
       final autoLoggedIn = await authProvider.tryAutoLogin();
-      
-      // Sync auth provider with auth service
-      if (authService.currentUser != null && !authProvider.isAuthenticated) {
-        developer.log("🔄 MAIN: Syncing AuthProvider with AuthService", name: 'main');
-        await authProvider.login(
-          authService.currentUser!['email'] ?? '',
-          '', // Password not needed for sync
-          token: await authService.getToken(),
-          refreshToken: await authService.getRefreshToken(),
-        );
-      }
 
-      developer.log("🔐 MAIN: Auth state - Auto-login: $autoLoggedIn, IsAuthenticated: ${authProvider.isAuthenticated}", name: 'main');
+      developer.log("🔐 MAIN: Auth state - Auto-login: $autoLoggedIn", name: 'main');
 
-      // ✅ FIX: Run app with all providers
       runApp(
         MultiProvider(
           providers: [
-            // Provide auth service globally
-            Provider<AuthService>.value(value: authService),
-            
-            // Auth provider
             ChangeNotifierProvider.value(value: authProvider),
-            
-            // Repositories
             Provider<AuthRepository>(create: (_) => AuthRepository()),
-            
-            // Theme provider
             ChangeNotifierProvider(create: (_) => ThemeProvider()),
-            
-            // Prayer repository
             ChangeNotifierProvider(create: (_) => PrayerRepository()),
-            
-            // Testimony repository
             Provider<TestimonyRepository>(create: (_) => TestimonyRepository()),
-            
-            // Threads provider
             ChangeNotifierProvider(create: (_) => ThreadsProvider()),
-            
-            // Worship providers
             ChangeNotifierProvider(create: (_) => SongProvider()),
             ChangeNotifierProvider(create: (_) => PlayerProvider()),
             ChangeNotifierProvider(create: (_) => DownloadProvider()),
-            
-            // Dio
             Provider<Dio>(create: (_) => Dio()),
-            
-            // Forum repository
             Provider<ForumRepository>(create: (_) => ForumRepository()),
-            
-            // Socket service
-            Provider<SocketIoService>.value(value: socketService),
-            
-            // Group chat repository with dependencies
+            Provider<SocketIoService>(create: (_) => socketService),
             ProxyProvider3<Dio, AuthRepository, SocketIoService, GroupChatRepository>(
               update: (_, dio, auth, socket, __) => GroupChatRepository(
                 dio,
@@ -222,8 +168,6 @@ void main() {
                 socket,
               ),
             ),
-            
-            // Profile view model
             ChangeNotifierProvider(
               create: (context) => ProfileViewModel(
                 authRepo: context.read<AuthRepository>(),
@@ -236,12 +180,6 @@ void main() {
           child: MyApp(autoLoggedIn: autoLoggedIn),
         ),
       );
-      
-      // ✅ FIX: Debug final auth state
-      await Future.delayed(const Duration(milliseconds: 500));
-      developer.log("🔍 FINAL AUTH STATE CHECK:", name: 'main');
-      await authService.debugAuthState();
-      
     } catch (e, stackTrace) {
       developer.log(
         '❌ FATAL: App initialization failed: $e',
@@ -250,7 +188,6 @@ void main() {
         stackTrace: stackTrace,
       );
       
-      // Show error screen
       runApp(
         MaterialApp(
           home: Scaffold(
@@ -436,25 +373,16 @@ class MyApp extends StatelessWidget {
       ],
       redirect: (BuildContext context, GoRouterState state) {
         final authProvider = context.read<AuthProvider>();
-        final authService = context.read<AuthService>();
-        final isAuthenticated = authProvider.isAuthenticated || authService.currentUser != null;
+        final isAuthenticated = authProvider.isAuthenticated;
         final location = state.uri.toString();
 
         final publicRoutes = [Routes.splash, Routes.login, Routes.register];
         final isPublicRoute = publicRoutes.contains(location);
 
-        // ✅ FIX: Log redirect decisions
-        developer.log(
-          "🔄 Redirect check: isAuthenticated=$isAuthenticated, location=$location, isPublicRoute=$isPublicRoute",
-          name: 'MyApp',
-        );
-
         if (!isAuthenticated && !isPublicRoute) {
-          developer.log("🔀 Redirecting to login (not authenticated)", name: 'MyApp');
           return Routes.login;
         }
         if (isAuthenticated && isPublicRoute && location != Routes.home) {
-          developer.log("🔀 Redirecting to home (already authenticated)", name: 'MyApp');
           return Routes.home;
         }
         return null;
