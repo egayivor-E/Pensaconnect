@@ -35,17 +35,30 @@ class SocketIoService {
   final Map<int, Timer> _reconnectionTimers = {};
   final Map<int, Completer<bool>> _connectionCompleters = {};
   bool _isServiceInitialized = false;
-  
+
   // ✅ Cache for user data
   Map<String, dynamic>? _cachedUser;
   int? _cachedUserId;
+
+  // ✅ NEW: listen for AuthService changes (login, logout, account switch)
+  // so the cache above can never silently go stale relative to who's
+  // actually logged in. Without this, switching accounts mid-session (as
+  // seen in production logs — user 1 then user 3 in the same run) left
+  // the socket service emitting events under the OLD user's ID forever,
+  // because the cache only refreshed when empty, never when merely wrong.
+  VoidCallback? _authListener;
 
   // ================================
   // INITIALIZATION
   // ================================
 
   Future<void> initialize() async {
-    if (_isServiceInitialized) return;
+    if (_isServiceInitialized) {
+      // Still make sure we're listening and in sync even on repeated calls.
+      _ensureAuthListener();
+      _syncCacheWithAuthService();
+      return;
+    }
 
     try {
       if (Config.websocketUrl.isEmpty) {
@@ -54,6 +67,10 @@ class SocketIoService {
 
       // ✅ Load user data during initialization
       await _loadUserData();
+
+      // ✅ Subscribe to AuthService so future login/logout/account-switch
+      // events immediately invalidate/refresh our cache.
+      _ensureAuthListener();
 
       debugPrint(
         '🚀 SocketIoService initialized with URL: ${Config.websocketUrl}',
@@ -66,43 +83,86 @@ class SocketIoService {
     }
   }
 
+  /// ✅ NEW: attach a listener to AuthService (idempotent — safe to call
+  /// multiple times) that keeps our cache honest whenever AuthService's
+  /// user changes, without waiting for the next _loadUserData() retry loop.
+  void _ensureAuthListener() {
+    if (_authListener != null) return;
+
+    final authService = AuthService();
+    _authListener = () {
+      final liveId = authService.userId;
+      if (liveId != _cachedUserId) {
+        debugPrint(
+          '🔄 SocketService: AuthService user changed ($_cachedUserId → $liveId), syncing cache',
+        );
+        _cachedUserId = liveId;
+        _cachedUser = authService.currentUser;
+      }
+    };
+    authService.addListener(_authListener!);
+  }
+
+  /// ✅ NEW: cheap synchronous reconciliation — call this before any
+  /// action that depends on the current user, so a cached-but-stale ID
+  /// (e.g. after switching accounts) never gets used silently.
+  void _syncCacheWithAuthService() {
+    final authService = AuthService();
+    final liveId = authService.userId;
+    if (liveId != null && liveId > 0 && liveId != _cachedUserId) {
+      debugPrint(
+        '🔄 SocketService: syncing stale cache ($_cachedUserId → $liveId)',
+      );
+      _cachedUserId = liveId;
+      _cachedUser = authService.currentUser;
+    }
+  }
+
   // ✅ Load user data with retry - UPDATED to use new auth service
   Future<void> _loadUserData({int retries = 5}) async {
+    // ✅ Cheap live check first — avoids unnecessary retry loops when
+    // AuthService already has a (possibly different) valid user.
+    _syncCacheWithAuthService();
+    if (_cachedUserId != null && _cachedUserId! > 0) {
+      debugPrint('✅ User data already loaded: ID=$_cachedUserId');
+      return;
+    }
+
     for (int i = 0; i < retries; i++) {
       try {
         final authService = AuthService();
-        
+
         // ✅ First check if user is already in memory
         if (authService.currentUser != null) {
           _cachedUser = authService.currentUser;
           _cachedUserId = authService.userId;
-          
+
           // ✅ If userId is null, try to get it from storage
           if (_cachedUserId == null || _cachedUserId == 0) {
             _cachedUserId = await authService.getUserIdFromStorage();
           }
-          
+
           debugPrint('✅ User data already loaded: ID=$_cachedUserId');
           return;
         }
-        
+
         // ✅ Try to load from storage
         debugPrint('🔄 Attempting to load user data (attempt ${i + 1}/$retries)...');
         await authService.refreshUser();
-        
+
         if (authService.currentUser != null) {
           _cachedUser = authService.currentUser;
           _cachedUserId = authService.userId;
-          
+
           // ✅ If userId is still null, try storage
           if (_cachedUserId == null || _cachedUserId == 0) {
             _cachedUserId = await authService.getUserIdFromStorage();
           }
-          
+
           debugPrint('✅ User data loaded successfully: ID=$_cachedUserId');
           return;
         }
-        
+
         // ✅ If currentUser is null but we have a token, try to get user ID from storage
         final token = await authService.getToken();
         if (token != null && token.isNotEmpty) {
@@ -110,7 +170,7 @@ class SocketIoService {
           if (userIdFromStorage != null && userIdFromStorage > 0) {
             _cachedUserId = userIdFromStorage;
             debugPrint('✅ Found user ID in storage: $_cachedUserId');
-            
+
             // ✅ Try to fetch full user data from API
             await authService.fetchUserFromApi();
             if (authService.currentUser != null) {
@@ -119,7 +179,7 @@ class SocketIoService {
             return;
           }
         }
-        
+
         // Wait before retry
         if (i < retries - 1) {
           await Future.delayed(Duration(milliseconds: 500 * (i + 1)));
@@ -129,17 +189,21 @@ class SocketIoService {
         if (i == retries - 1) rethrow;
       }
     }
-    
+
     debugPrint('⚠️ No user data found after $retries attempts');
   }
 
   // ✅ Get current user ID with caching and auto-load
   Future<int?> _getUserId() async {
+    // ✅ Reconcile with AuthService first — cheap, and prevents ever
+    // returning a cached ID for the wrong (previously logged-in) user.
+    _syncCacheWithAuthService();
+
     // Return cached ID if available
     if (_cachedUserId != null && _cachedUserId! > 0) {
       return _cachedUserId;
     }
-    
+
     // Try to load fresh
     await _loadUserData();
     return _cachedUserId;
@@ -147,6 +211,7 @@ class SocketIoService {
 
   // ✅ Get current user with caching
   Future<Map<String, dynamic>?> _getUser() async {
+    _syncCacheWithAuthService();
     if (_cachedUser != null) {
       return _cachedUser;
     }
@@ -213,17 +278,17 @@ class SocketIoService {
 
     try {
       debugPrint('🔌 Connecting Socket.IO for group $groupId...');
-      
-      // ✅ CRITICAL: Ensure user data is loaded before connecting
+
+      // ✅ CRITICAL: Ensure user data is loaded (and not stale) before connecting
       await _loadUserData();
-      
+
       debugPrint('👤 Socket: User ID=${_cachedUserId}, Username=${_cachedUser?['username']}');
-      
+
       if (_cachedUserId == null || _cachedUserId == 0) {
         debugPrint('⚠️ WARNING: No valid user ID found! Socket may not work properly.');
         debugPrint('🔄 Attempting one more time to load user...');
         await _loadUserData(retries: 5);
-        
+
         if (_cachedUserId == null || _cachedUserId == 0) {
           debugPrint('❌ Failed to load user after multiple attempts.');
         }
@@ -251,7 +316,7 @@ class SocketIoService {
           .build();
 
       final socket = io.io(Config.websocketUrl, options);
-      
+
       if (token != null && token.isNotEmpty) {
         socket.io.options?['query'] = {'token': token};
         debugPrint('🔑 Auth token attached for Socket.IO');
@@ -270,7 +335,12 @@ class SocketIoService {
         if (!_connectionCompleters[groupId]!.isCompleted) {
           _connectionCompleters[groupId]!.complete(true);
         }
-        
+
+        // ✅ Reconcile one more time right before emitting join_group —
+        // closes the window between _loadUserData() above and the actual
+        // connect callback firing (which can be delayed by network RTT).
+        _syncCacheWithAuthService();
+
         socket.emit('join_group', {
           'groupId': groupId,
           'userId': _cachedUserId,
@@ -315,7 +385,7 @@ class SocketIoService {
 
         try {
           Map<String, dynamic> messageData;
-          
+
           if (data is Map<String, dynamic>) {
             messageData = data;
           } else if (data is String) {
@@ -330,21 +400,21 @@ class SocketIoService {
             return;
           }
 
-          final isHistorical = messageData['historical'] == true || 
+          final isHistorical = messageData['historical'] == true ||
                                messageData['is_historical'] == true;
 
           if (isHistorical) {
             debugPrint('📜 Historical message received - skipping');
             return;
           }
-          
+
           final message = GroupMessage.fromJson(messageData);
-          
+
           if (message.senderId == 0) {
             debugPrint('⚠️ Message parsed with senderId=0!');
-            final altSenderId = messageData['userId'] ?? 
-                                messageData['user_id'] ?? 
-                                messageData['senderId'] ?? 
+            final altSenderId = messageData['userId'] ??
+                                messageData['user_id'] ??
+                                messageData['senderId'] ??
                                 messageData['sender_id'];
             if (altSenderId != null) {
               debugPrint('🔄 Found alternative sender ID: $altSenderId');
@@ -363,7 +433,7 @@ class SocketIoService {
           }
 
           _handleIncomingMessage(groupId, message);
-          
+
         } catch (e, stackTrace) {
           debugPrint('❌ Failed to parse message: $e');
           debugPrint('❌ Stack trace: $stackTrace');
@@ -686,24 +756,24 @@ class SocketIoService {
     }
 
     int? userId = await _getUserId();
-    
+
     if (userId == null || userId == 0) {
       debugPrint('🔄 User ID not cached, trying direct auth service...');
       final authService = AuthService();
       await authService.refreshUser();
       userId = authService.userId;
-      
+
       // ✅ If still null, try storage
       if (userId == null || userId == 0) {
         userId = await authService.getUserIdFromStorage();
       }
-      
+
       if (userId != null && userId > 0) {
         _cachedUserId = userId;
         _cachedUser = authService.currentUser;
       }
     }
-    
+
     if (userId == null || userId == 0) {
       debugPrint('🔍 SEND MESSAGE DEBUG:');
       debugPrint('   - User ID: $userId');
@@ -734,17 +804,19 @@ class SocketIoService {
       return;
     }
 
-    // ✅ Try to get user ID from cache, or from storage
+    // ✅ Reconcile with AuthService first (sync, cheap) — this was
+    // previously only consulted as a fallback when the cache was empty,
+    // so a stale-but-nonzero cached ID from a PREVIOUS account never got
+    // corrected here. Now it's always checked.
+    _syncCacheWithAuthService();
+
     int? userId = _cachedUserId;
-    
+
     if (userId == null || userId == 0) {
-      // Try to get from auth service
       final authService = AuthService();
       userId = authService.userId;
-      
-      // If still null, try storage
+
       if (userId == null || userId == 0) {
-        // We'll try async, but for sync method we'll use what we have
         debugPrint('⚠️ User ID not available for typing indicator');
         debugPrint('   - Cached User ID: $userId');
         debugPrint('   - AuthService User ID: ${authService.userId}');
@@ -765,8 +837,10 @@ class SocketIoService {
   void markRead(int groupId, int messageId) {
     final socket = _sockets[groupId];
     if (socket != null && socket.connected) {
+      // ✅ Reconcile before use, same reasoning as sendTyping above.
+      _syncCacheWithAuthService();
       final userId = _cachedUserId;
-      
+
       if (userId == null || userId == 0) {
         debugPrint('⚠️ User ID not available for mark read');
         return;
@@ -784,7 +858,7 @@ class SocketIoService {
   void debugConnectionStatus(int groupId) {
     final socket = _sockets[groupId];
     final authService = AuthService();
-    
+
     debugPrint('🔍 Socket.IO Debug for group $groupId:');
     debugPrint('   - Socket exists: ${socket != null}');
     debugPrint('   - Connected: ${socket?.connected ?? false}');
@@ -804,10 +878,12 @@ class SocketIoService {
   }
 
   int? getCurrentUserId() {
+    _syncCacheWithAuthService();
     return _cachedUserId;
   }
 
   Map<String, dynamic>? getCurrentUser() {
+    _syncCacheWithAuthService();
     return _cachedUser;
   }
 
@@ -881,6 +957,13 @@ class SocketIoService {
 
     for (final groupId in _sockets.keys.toList()) {
       disposeGroup(groupId);
+    }
+
+    // ✅ Detach the AuthService listener so we don't leak it or react to
+    // auth changes after the service has been fully torn down.
+    if (_authListener != null) {
+      AuthService().removeListener(_authListener!);
+      _authListener = null;
     }
 
     _messageCache.clear();
