@@ -4,7 +4,7 @@ import 'package:flutter_vector_icons/flutter_vector_icons.dart'
     show FontAwesome;
 import 'package:go_router/go_router.dart';
 import 'package:pensaconnect/services/api_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pensaconnect/services/auth_service.dart';
 
 import '../config/config.dart';
 import '../widgets/app_drawer.dart';
@@ -25,35 +25,68 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  User? _currentUser; // ✅ Store full user object instead of just name
+  User? _currentUser;
   List<Activity> _activities = [];
   bool _loading = true;
+
+  // ✅ FIX: track which user's data is currently loaded, and listen for
+  // AuthService changes so this screen stays in sync across login/logout
+  // even if it isn't recreated (e.g. it's still mounted underneath a
+  // pushed route when the auth state changes).
+  int? _loadedForUserId;
+  late final VoidCallback _authListener;
 
   @override
   void initState() {
     super.initState();
+    _authListener = _onAuthChanged;
+    AuthService().addListener(_authListener);
     _loadData();
   }
 
+  void _onAuthChanged() {
+    if (!mounted) return;
+    final newUserId = AuthService().userId;
+
+    // Only reload if the logged-in user actually changed (covers both
+    // "logged out" -> null and "different user logged in" -> new id).
+    if (newUserId != _loadedForUserId) {
+      debugPrint('🔄 HomeScreen: auth changed ($_loadedForUserId → $newUserId), reloading');
+      _loadData();
+    }
+  }
+
   Future<void> _loadData() async {
+    if (!mounted) return;
+    setState(() => _loading = true);
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('auth_token');
+      // ✅ FIX: use the actual token source (ApiService/secure storage),
+      // not SharedPreferences['auth_token'] — nothing ever wrote a token
+      // there, so `token` was always null and getCurrentUser() never ran
+      // with real credentials.
+      final token = await ApiService.getToken();
+      final loggedInUserId = AuthService().userId;
 
       User? user;
-      if (token != null) {
-        user = await UserRepository().getCurrentUser(token);
-      }
+      List<Activity> activities = [];
 
-      final activities = await ActivityRepository().fetchRecentActivities(
-        limit: 20,
-      );
+      if (token != null && loggedInUserId != null) {
+        // Fetch user + activities together; only proceed with activities
+        // if we're actually authenticated, so we don't fire a request
+        // that's guaranteed to 401 (e.g. right after a logout).
+        user = await UserRepository().getCurrentUser(token);
+        activities = await ActivityRepository().fetchRecentActivities(limit: 20);
+      } else {
+        debugPrint('⚠️ HomeScreen: no valid session, skipping activity fetch');
+      }
 
       if (!mounted) return;
       setState(() {
-        _currentUser = user; // ✅ Store full user object
+        _currentUser = user;
         _activities = activities;
         _loading = false;
+        _loadedForUserId = loggedInUserId;
       });
     } catch (e) {
       debugPrint("❌ Error in _loadData: $e");
@@ -62,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _currentUser = null;
         _activities = [];
         _loading = false;
+        _loadedForUserId = AuthService().userId;
       });
     }
   }
@@ -82,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    AuthService().removeListener(_authListener);
     _searchController.dispose();
     super.dispose();
   }
@@ -104,10 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: Theme.of(context).colorScheme.primaryContainer,
       backgroundImage: _currentUser!.profilePicture != null
           ? NetworkImage(
-              _currentUser!.getProfilePictureUrl(
-                Config
-                    .baseUrl, // ← Use Config.baseUrl instead of ApiService.baseUrl
-              ),
+              _currentUser!.getProfilePictureUrl(Config.baseUrl),
             )
           : null,
       onBackgroundImageError: (exception, stackTrace) {
@@ -228,8 +260,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () {},
             tooltip: 'Notifications',
           ),
-
-          // ✅ PROFILE AVATAR - Now uses actual user data
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
             child: GestureDetector(
@@ -260,7 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                "Welcome back, ${_currentUser?.username ?? "Friend"}!", // ✅ Use actual user data
+                                "Welcome back, ${_currentUser?.username ?? "Friend"}!",
                                 style: theme.textTheme.headlineMedium?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -277,7 +307,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
-                        // Responsive Grid with proper column counts
                         SliverGrid(
                           gridDelegate:
                               SliverGridDelegateWithFixedCrossAxisCount(
