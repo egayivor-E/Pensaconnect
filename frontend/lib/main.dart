@@ -59,6 +59,9 @@ import 'providers/auth_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/auth_service.dart';
 
+// ✅ FIX: Web-compatible import for flutter_secure_storage
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
 class Routes {
   static const splash = '/splash';
   static const login = '/login';
