@@ -33,13 +33,10 @@ class Activity {
       authorAvatarUrl != null && authorAvatarUrl!.isNotEmpty;
 
   factory Activity.fromJson(Map<String, dynamic> json) {
-    // Author info is expected to arrive nested, e.g.:
-    // { "title": "...", "user": { "username": "...", "profile_picture_url": "..." } }
-    // Falls back gracefully if the backend hasn't added this yet, so this
-    // change is safe to ship ahead of the backend update.
-    final Map<String, dynamic>? author =
-        json['user'] as Map<String, dynamic>? ??
-        json['author'] as Map<String, dynamic>?;
+    // Matches Activity.to_dict(include_user=True) on the backend:
+    // { ..., "user": { "id", "username", "fullName", "profilePicture" } }
+    // Falls back gracefully if "user" is absent (e.g. older cached data).
+    final Map<String, dynamic>? author = json['user'] as Map<String, dynamic>?;
 
     return Activity(
       title: json['title'] ?? 'Untitled',
@@ -47,11 +44,10 @@ class Activity {
       icon: _mapIcon(json['icon']),
       color: _mapColor(json['color']),
       createdAt:
-          DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+          DateTime.tryParse(json['created_at']?.toString() ?? json['createdAt']?.toString() ?? '') ??
           DateTime.now(),
-      authorName: author?['username'] as String? ?? author?['name'] as String?,
-      authorAvatarUrl: author?['profile_picture_url'] as String? ??
-          author?['avatar_url'] as String?,
+      authorName: author?['fullName'] as String? ?? author?['username'] as String?,
+      authorAvatarUrl: author?['profilePicture'] as String?,
     );
   }
 
@@ -64,8 +60,8 @@ class Activity {
       'created_at': createdAt.toIso8601String(),
       if (authorName != null)
         'user': {
-          'username': authorName,
-          if (authorAvatarUrl != null) 'profile_picture_url': authorAvatarUrl,
+          'fullName': authorName,
+          if (authorAvatarUrl != null) 'profilePicture': authorAvatarUrl,
         },
     };
   }
