@@ -40,6 +40,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   final Map<int, bool> _isCommentsVisible = {};
   final Map<int, bool> _isCommentsLoading = {};
 
+  // ✅ NEW: transient double-tap heart-burst state, keyed by post id
+  final Map<int, bool> _showHeartBurst = {};
+
   // global loading / error / retry
   bool _isLoadingPosts = true;
   bool _isFetching = false;
@@ -53,6 +56,47 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   StreamSubscription? _postSubscription;
   StreamSubscription? _commentSubscription;
 
+  // ✅ NEW: scroll control + "new post" banner, so a live post doesn't just
+  // silently insert or flash a forgettable SnackBar — it becomes a real,
+  // tappable "someone just posted" moment, the same pattern Twitter/X uses
+  // for new tweets. This is the single biggest engagement lever for a
+  // real-time forum: it makes the app feel alive *while you're in it*.
+  final ScrollController _scrollController = ScrollController();
+  bool _showNewPostBanner = false;
+  ForumPost? _latestNewPost;
+  Timer? _bannerTimer;
+
+  // ✅ NEW: a small fixed palette (harmonizes with the app's purple theme)
+  // used to give every author a consistent, distinct avatar color derived
+  // from their name. This directly fixes "every avatar looks identical" —
+  // no backend change needed, and it's honest (not fabricated data, just
+  // a deterministic color pick).
+  static const List<Color> _avatarPalette = [
+    Color(0xFF7C4DFF), // purple
+    Color(0xFF26A69A), // teal
+    Color(0xFFFF7043), // orange
+    Color(0xFF42A5F5), // blue
+    Color(0xFFEC407A), // pink
+    Color(0xFF66BB6A), // green
+    Color(0xFF5C6BC0), // indigo
+    Color(0xFFFFA726), // amber
+  ];
+
+  Color _colorForName(String name) {
+    if (name.isEmpty) return _avatarPalette.first;
+    final hash = name.codeUnits.fold<int>(0, (a, b) => a + b);
+    return _avatarPalette[hash % _avatarPalette.length];
+  }
+
+  String _initialsFor(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -65,6 +109,8 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     _pollingTimer?.cancel();
     _postSubscription?.cancel();
     _commentSubscription?.cancel();
+    _bannerTimer?.cancel();
+    _scrollController.dispose();
 
     // dispose controllers
     for (final c in _commentControllers.values) {
@@ -218,6 +264,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     _isCommentsVisible.putIfAbsent(postId, () => false);
     _isCommentsLoading.putIfAbsent(postId, () => false);
     _commentsMap.putIfAbsent(postId, () => <ForumComment>[]);
+    _showHeartBurst.putIfAbsent(postId, () => false);
   }
 
   Future<void> _fetchCommentsForPost(int postId, {bool silent = false}) async {
@@ -309,7 +356,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     try {
       final repo = context.read<ForumRepository>();
       await repo.addComment(
-        threadId: widget.threadId, // ✅ Added this line
+        threadId: widget.threadId,
         postId: postId,
         content: text,
         attachments: attachments,
@@ -323,9 +370,11 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Comment posted'),
-            backgroundColor: Colors.green,
+          SnackBar(
+            content: const Text('Comment posted'),
+            backgroundColor: Colors.green[600],
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
@@ -363,7 +412,6 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     try {
       final repo = context.read<ForumRepository>();
       await repo.toggleLike(post.id);
-      // optionally refresh that post from server in a more advanced setup
     } catch (e) {
       debugPrint('Toggle like failed: $e');
       if (mounted) {
@@ -378,51 +426,102 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     }
   }
 
+  // ✅ NEW: double-tap-to-like — a pattern this audience already knows
+  // instinctively from Instagram/TikTok. Only *likes* (never unlikes) on
+  // double-tap, matching that convention, and shows a brief heart burst
+  // regardless, so tapping something you already liked still feels good.
+  void _onPostDoubleTap(int index) {
+    final post = _posts[index];
+    if (!post.likedByMe) {
+      _toggleLikeOnPost(index);
+    }
+    setState(() => _showHeartBurst[post.id] = true);
+    Future.delayed(const Duration(milliseconds: 650), () {
+      if (mounted) setState(() => _showHeartBurst[post.id] = false);
+    });
+  }
+
   // ---------------------------
   // Event bus handlers
   // ---------------------------
   void _onExternalNewPost(ForumPost post) {
     if (!mounted) return;
-    // Only add if thread matches (event already checks) and not duplicate
     if (!_posts.any((p) => p.id == post.id)) {
       setState(() {
         _posts.insert(0, post);
         _ensurePerPostState(post.id);
       });
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('New post by ${post.authorName}'),
-        backgroundColor: Colors.green,
-      ),
-    );
+
+    // ✅ Real-time "new post" banner instead of a SnackBar — tappable,
+    // shows who posted, and scrolls you to it.
+    _bannerTimer?.cancel();
+    setState(() {
+      _latestNewPost = post;
+      _showNewPostBanner = true;
+    });
+    _bannerTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) setState(() => _showNewPostBanner = false);
+    });
   }
 
   void _onExternalNewComment(int postId, ForumComment comment) async {
     if (!mounted) return;
-    // If comments are loaded for that post, insert; else refetch when visible
     if (_commentsMap.containsKey(postId) && _commentsMap[postId] != null) {
       setState(() {
         _commentsMap[postId]?.insert(0, comment);
       });
     } else {
-      // nothing loaded yet; fetch later when user opens, but also attempt a silent refresh
       await _fetchCommentsForPost(postId, silent: true);
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('New comment from ${comment.authorName}'),
-        backgroundColor: Colors.green,
+        content: Text('💬 New comment from ${comment.authorName}'),
+        backgroundColor: Colors.green[600],
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
 
-    // update posts counts (best-effort)
     _fetchPosts(silent: true);
+  }
+
+  void _dismissBannerAndScrollTop() {
+    setState(() => _showNewPostBanner = false);
+    _bannerTimer?.cancel();
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   // ---------------------------
   // UI building
   // ---------------------------
+  Widget _buildAvatar(String? avatarUrl, String name, {double radius = 20}) {
+    final color = _colorForName(name);
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: color,
+      backgroundImage: avatarUrl != null
+          ? NetworkImage(UserRepository.getProfilePictureUrl(avatarUrl))
+          : null,
+      child: avatarUrl == null
+          ? Text(
+              _initialsFor(name),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: radius * 0.7,
+              ),
+            )
+          : null,
+    );
+  }
+
   Widget _buildPostCard(ForumPost post, int index) {
     _ensurePerPostState(post.id);
 
@@ -432,41 +531,50 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     final controller = _commentControllers[post.id]!;
     final attachments = _commentAttachments[post.id] ?? [];
     final isPosting = _isPostingCommentForPost[post.id] ?? false;
+    final authorColor = _colorForName(post.authorName);
+
+    // ✅ Real-data-driven popularity badge — no fabricated numbers, just a
+    // visual reward for posts that are genuinely getting traction.
+    final isPopular = post.likeCount >= 10 || post.commentsCount >= 5;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: authorColor.withOpacity(0.15)),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // header
             Row(
               children: [
-                CircleAvatar(
-                  backgroundImage: post.authorAvatar != null
-                      ? NetworkImage(
-                          UserRepository.getProfilePictureUrl(
-                            post.authorAvatar,
-                          ), // ← FIXED!
-                        )
-                      : null,
-                  child: post.authorAvatar == null
-                      ? Text(
-                          post.authorName.isNotEmpty
-                              ? post.authorName[0].toUpperCase()
-                              : '?',
-                        )
-                      : null,
-                ),
+                _buildAvatar(post.authorAvatar, post.authorName),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        post.authorName,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              post.authorName,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: authorColor,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (isPopular) ...[
+                            const SizedBox(width: 6),
+                            const Text('🔥', style: TextStyle(fontSize: 13)),
+                          ],
+                        ],
                       ),
                       if (post.createdAt != null)
                         Text(
@@ -479,73 +587,141 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                     ],
                   ),
                 ),
-                // optional overflow actions could go here
               ],
             ),
 
             const SizedBox(height: 12),
 
-            // content
-            Text(
-              post.content,
-              style: const TextStyle(fontSize: 16, height: 1.4),
-            ),
-
-            if (post.attachments.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: post.attachments.map((a) {
-                  return GestureDetector(
-                    onTap: () {
-                      debugPrint('Open attachment ${a.url}');
-                      // TODO: open preview route or modal
-                    },
-                    child: Image.network(
-                      a.url,
-                      width: 90,
-                      height: 90,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        width: 90,
-                        height: 90,
-                        color: Colors.grey[300],
-                        child: const Icon(Icons.broken_image),
+            // content — double-tap to like, with heart burst overlay
+            GestureDetector(
+              onDoubleTap: () => _onPostDoubleTap(index),
+              behavior: HitTestBehavior.opaque,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        post.content,
+                        style: const TextStyle(fontSize: 16, height: 1.4),
+                      ),
+                      if (post.attachments.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(0),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: post.attachments.map((a) {
+                              return GestureDetector(
+                                onTap: () {
+                                  debugPrint('Open attachment ${a.url}');
+                                },
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.network(
+                                    a.url,
+                                    width: 96,
+                                    height: 96,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 96,
+                                      height: 96,
+                                      color: Colors.grey[300],
+                                      child: const Icon(Icons.broken_image),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  // ✅ Heart burst — classic double-tap delight moment
+                  AnimatedOpacity(
+                    opacity: (_showHeartBurst[post.id] ?? false) ? 1 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: AnimatedScale(
+                      scale: (_showHeartBurst[post.id] ?? false) ? 1.0 : 0.5,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.elasticOut,
+                      child: const Icon(
+                        Icons.favorite,
+                        color: Colors.redAccent,
+                        size: 84,
+                        shadows: [Shadow(color: Colors.black26, blurRadius: 12)],
                       ),
                     ),
-                  );
-                }).toList(),
+                  ),
+                ],
               ),
-            ],
+            ),
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
 
-            // engagement row
+            // engagement row — pill-shaped, colored when active
             Row(
               children: [
-                IconButton(
-                  icon: Icon(
-                    post.likedByMe ? Icons.favorite : Icons.favorite_border,
-                    color: post.likedByMe ? Colors.red : Colors.grey,
-                  ),
-                  onPressed: () => _toggleLikeOnPost(index),
-                ),
-                Text('${post.likeCount}'),
-                const SizedBox(width: 12),
                 InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _toggleLikeOnPost(index),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: post.likedByMe
+                          ? Colors.red.withOpacity(0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        AnimatedScale(
+                          scale: post.likedByMe ? 1.15 : 1.0,
+                          duration: const Duration(milliseconds: 200),
+                          child: Icon(
+                            post.likedByMe ? Icons.favorite : Icons.favorite_border,
+                            color: post.likedByMe ? Colors.redAccent : Colors.grey,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${post.likeCount}',
+                          style: TextStyle(
+                            color: post.likedByMe ? Colors.redAccent : Colors.grey[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  borderRadius: BorderRadius.circular(20),
                   onTap: () => _toggleCommentsForPost(post.id),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.comment_outlined, size: 20),
-                      const SizedBox(width: 4),
-                      Text('${post.commentsCount}'),
-                      const SizedBox(width: 8),
-                      Icon(
-                        isVisible ? Icons.expand_less : Icons.expand_more,
-                        size: 18,
-                      ),
-                    ],
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.chat_bubble_outline, size: 18, color: Colors.grey),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${post.commentsCount}',
+                          style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          isVisible ? Icons.expand_less : Icons.expand_more,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -563,12 +739,17 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                       child: Center(child: CircularProgressIndicator()),
                     )
                   else if (comments.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Center(
-                        child: Text(
-                          'No comments yet. Be the first to comment!',
-                        ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Column(
+                        children: [
+                          Icon(Icons.mode_comment_outlined, color: Colors.grey[400], size: 28),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'No comments yet. Be the first to comment!',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
                       ),
                     )
                   else
@@ -647,12 +828,17 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                       Expanded(
                         child: TextField(
                           controller: controller,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             hintText: 'Write a comment...',
-                            border: OutlineInputBorder(),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              borderSide: BorderSide.none,
+                            ),
+                            filled: true,
+                            fillColor: Colors.grey.withOpacity(0.08),
                             isDense: true,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 12,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
                               vertical: 10,
                             ),
                           ),
@@ -690,24 +876,17 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   Widget _buildCommentItem(ForumComment comment) {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6),
+      elevation: 0,
+      color: Colors.grey.withOpacity(0.06),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: ListTile(
-        leading: CircleAvatar(
-          backgroundImage: comment.authorAvatar != null
-              ? NetworkImage(
-                  UserRepository.getProfilePictureUrl(comment.authorAvatar),
-                )
-              : null,
-          child: comment.authorAvatar == null
-              ? Text(
-                  comment.authorName.isNotEmpty
-                      ? comment.authorName[0].toUpperCase()
-                      : '?',
-                )
-              : null,
-        ),
+        leading: _buildAvatar(comment.authorAvatar, comment.authorName, radius: 16),
         title: Text(
           comment.authorName,
-          style: const TextStyle(fontWeight: FontWeight.bold),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: _colorForName(comment.authorName),
+          ),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -721,16 +900,19 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                   spacing: 8,
                   runSpacing: 8,
                   children: comment.attachments.map((a) {
-                    return Image.network(
-                      a.url,
-                      width: 56,
-                      height: 56,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.network(
+                        a.url,
                         width: 56,
                         height: 56,
-                        color: Colors.grey[300],
-                        child: const Icon(Icons.broken_image),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 56,
+                          height: 56,
+                          color: Colors.grey[300],
+                          child: const Icon(Icons.broken_image),
+                        ),
                       ),
                     );
                   }).toList(),
@@ -799,6 +981,43 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     );
   }
 
+  Widget _buildEmptyPostsBody() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.forum_outlined, size: 80, color: Colors.grey[400]),
+            const SizedBox(height: 20),
+            const Text('No Posts Yet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            const Text(
+              'Be the first to start a discussion in this thread!',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () async {
+                final created = await context.push(
+                  '/threads/${widget.threadId}/new-post',
+                  extra: {
+                    'threadId': widget.threadId,
+                    'threadTitle': widget.threadTitle,
+                  },
+                );
+                if (created == true) _fetchPosts();
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Start the discussion'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ---------------------------
   // Build
   // ---------------------------
@@ -820,7 +1039,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
               '/threads/${widget.threadId}/new-post',
               extra: {
                 'threadId': widget.threadId,
-                'threadTitle': widget.threadTitle, // pass this
+                'threadTitle': widget.threadTitle,
               },
             );
             if (created == true) {
@@ -831,41 +1050,77 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
           label: const Text('New Post'),
         ),
       ),
-      body: _isLoadingPosts
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null
-          ? _buildErrorBody()
-          : _posts.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.forum_outlined,
-                      size: 80,
-                      color: Colors.grey[400],
-                    ),
-                    const SizedBox(height: 20),
-                    const Text('No Posts Yet', style: TextStyle(fontSize: 18)),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Be the first to start a discussion in this thread!',
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+      body: Stack(
+        children: [
+          _isLoadingPosts
+              ? const Center(child: CircularProgressIndicator())
+              : _errorMessage != null
+              ? _buildErrorBody()
+              : _posts.isEmpty
+              ? RefreshIndicator(
+                  onRefresh: _fetchPosts,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.7,
+                        child: _buildEmptyPostsBody(),
+                      ),
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _fetchPosts,
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _posts.length,
+                    itemBuilder: (context, i) => _buildPostCard(_posts[i], i),
+                  ),
+                ),
+
+          // ✅ "New post" live banner
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            top: _showNewPostBanner ? 12 : -80,
+            left: 16,
+            right: 16,
+            child: Material(
+              color: Colors.transparent,
+              child: GestureDetector(
+                onTap: _dismissBannerAndScrollTop,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    borderRadius: BorderRadius.circular(30),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4)),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.arrow_upward, color: Colors.white, size: 18),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _latestNewPost != null
+                              ? 'New post from ${_latestNewPost!.authorName}'
+                              : 'New post',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            )
-          : RefreshIndicator(
-              onRefresh: _fetchPosts,
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _posts.length,
-                itemBuilder: (context, i) => _buildPostCard(_posts[i], i),
-              ),
             ),
+          ),
+        ],
+      ),
     );
   }
 }
