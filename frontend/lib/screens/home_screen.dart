@@ -242,20 +242,43 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: activity.color.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(activity.icon, color: activity.color, size: 22),
-              ),
+              // Prefer a real author avatar; fall back to the activity-type
+              // icon circle when no author image is available. Keeps every
+              // card visually anchored to a person, not just an event type.
+              activity.hasAuthorAvatar
+                  ? CircleAvatar(
+                      radius: 22,
+                      backgroundColor: activity.color.withOpacity(0.12),
+                      backgroundImage: NetworkImage(activity.authorAvatarUrl!),
+                      onBackgroundImageError: (exception, stackTrace) {
+                        debugPrint('Activity avatar load error: $exception');
+                      },
+                    )
+                  : Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: activity.color.withOpacity(0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(activity.icon, color: activity.color, size: 22),
+                    ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (activity.authorName != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text(
+                          activity.authorName!,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.55),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
                     Text(
                       activity.title,
                       style: theme.textTheme.titleSmall?.copyWith(
