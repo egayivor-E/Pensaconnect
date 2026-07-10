@@ -445,15 +445,12 @@ class Donation(BaseModel):
 # --- PrayerRequest Model ---
 class PrayerRequest(BaseModel):
     __tablename__ = 'prayer_requests'
-
     title = Column(String(200), nullable=False, index=True)
     content = Column(Text, nullable=False)
     is_anonymous = Column(Boolean, default=False, nullable=False)
     category = Column(String(50), default="General", nullable=False)
-
     status_id = Column(Integer, db.ForeignKey("prayer_statuses.id"), nullable=False)
     status = relationship("PrayerStatus", back_populates="prayer_requests")
-
     prayer_count = Column(Integer, default=0)
     unique_prayers = Column(Integer, default=0)
     answered_at = Column(DateTime(timezone=True))
@@ -463,20 +460,16 @@ class PrayerRequest(BaseModel):
     urgency_level = Column(Integer, default=1)
     suggested_verses = Column(JSON)
     sentiment_analysis = Column(JSON)
-
     user_id = Column(BigInteger, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-
     # Relationships
     user = relationship('User', back_populates='prayer_requests')
     prayers = relationship('Prayer', back_populates='prayer_request', cascade='all, delete-orphan')
     comments = relationship('Comment', back_populates='prayer_request', cascade='all, delete-orphan')
-
     __table_args__ = (
         Index('ix_prayer_requests_status', 'status_id', 'is_active'),
         Index('ix_prayer_requests_public', 'is_public', 'created_at'),
         Index('ix_prayer_requests_urgency', 'urgency_level', 'created_at'),
     )
-
     def to_dict(self, include_prayers=False, current_user_id=None):
         """
         Serialize prayer request to dictionary.
@@ -499,22 +492,19 @@ class PrayerRequest(BaseModel):
             "urgency_level": self.urgency_level,
             "suggested_verses": self.suggested_verses,
             "sentiment_analysis": self.sentiment_analysis,
-            "user_id": self.user_id,
+            "user_id": None if self.is_anonymous else self.user_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "has_prayed": False,  # default
         }
-
         if include_prayers:
             data["prayers"] = [p.to_dict() for p in self.prayers]
-
         # Check if current user has prayed
         if current_user_id:
             data["has_prayed"] = any(p.user_id == current_user_id for p in self.prayers)
-
-        return data    
-
-# --- Prayer Model ---
+        return data
+        
+# --- Prayer Model ---        
 class Prayer(BaseModel):
     __tablename__ = 'prayers'
 
