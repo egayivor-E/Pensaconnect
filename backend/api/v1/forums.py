@@ -17,6 +17,7 @@ from backend.models import (
     ForumCategory,
     ForumLike,
     User,
+    Activity,
 )
 from .utils import success_response, error_response
 
@@ -128,6 +129,28 @@ def create_thread():
     )
     db.session.add(thread)
     db.session.commit()
+
+    # Activity feed logging — matches the pattern used in posts.py/testimonies.py.
+    # Thread creation is the only forum event logged to the feed (see discussion:
+    # individual post replies are deliberately excluded to avoid flooding it).
+    # No anonymity concern here (unlike testimonies/prayers), so no skip-logic
+    # is needed — thread.author_id is always attributable.
+    # Wrapped in its own try/except and committed separately so a logging
+    # failure (bad enum value, DB hiccup) can't roll back or fail the
+    # already-successful thread creation.
+    try:
+        activity = Activity(
+            title=f"{current_user.get_full_name()} started a new discussion",
+            subtitle=(thread.description or thread.title)[:140],
+            icon="forum",
+            color="orange",
+            user_id=current_user.id,
+        )
+        db.session.add(activity)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
     return success_response(thread.to_dict(), 201)
 
 @forums_bp.route("/threads/<int:thread_id>/react", methods=["POST"])
