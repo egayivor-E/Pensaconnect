@@ -8,7 +8,6 @@ import 'package:pensaconnect/services/auth_service.dart';
 
 import '../config/config.dart';
 import '../widgets/app_drawer.dart';
-import '../widgets/feature_card.dart';
 import '../widgets/chat_options_sheet.dart';
 import '../repositories/activity_repository.dart';
 import '../repositories/user_repository.dart';
@@ -100,18 +99,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Kept for potential future grid usages (e.g. a "see all" features page).
   int getCrossAxisCount(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    if (width > 1200) return 4; // Large desktop
-    if (width > 800) return 3; // Desktop/tablet
-    if (width > 600) return 2; // Tablet
-    return 2; // Mobile (2 columns)
+    if (width > 1200) return 4;
+    if (width > 800) return 3;
+    if (width > 600) return 2;
+    return 2;
   }
 
   double getChildAspectRatio(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    if (width > 800) return 1.2; // Wider cards on larger screens
-    return 0.9; // Taller cards on mobile
+    if (width > 800) return 1.2;
+    return 0.9;
   }
 
   @override
@@ -176,13 +176,167 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Compact quick-action chip used in the horizontal row that replaces
+  // the old full-page icon grid. Same feature data, much lower visual
+  // weight so the activity feed can be the star of the screen.
+  Widget _buildQuickAction(BuildContext context, Map<String, dynamic> feature) {
+    final theme = Theme.of(context);
+    final color = feature['color'] as Color;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => GoRouter.of(context).push(feature['route'] as String),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(feature['icon'] as IconData, color: color, size: 26),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: 68,
+              child: Text(
+                feature['title'] as String,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Feed-style card for a single activity item — richer than a plain
+  // ListTile so the "Recent Activity" section reads as living content,
+  // not a settings-style list.
+  Widget _buildActivityCard(BuildContext context, Activity activity) {
+    final theme = Theme.of(context);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: theme.colorScheme.outline.withOpacity(0.15),
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {},
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: activity.color.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(activity.icon, color: activity.color, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      activity.title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      activity.subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.65),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      activity.timeAgo,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Empty state that invites action instead of just announcing absence —
+  // avoids the "nobody uses this app" impression a bare "No recent
+  // activity" text creates.
+  Widget _buildEmptyFeedState(BuildContext context, ThemeData theme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.auto_awesome,
+            size: 36,
+            color: theme.colorScheme.primary.withOpacity(0.6),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            "Your feed is just getting started",
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Join a discussion, post a prayer request, or check today's devotional — activity from your community will show up here.",
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.6),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.tonal(
+            onPressed: () => GoRouter.of(context).push('/forums'),
+            child: const Text("Explore Discussions"),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bool isLargeScreen = MediaQuery.of(context).size.width >= 800;
     final bool isIOS = defaultTargetPlatform == TargetPlatform.iOS;
-    final crossAxisCount = getCrossAxisCount(context);
-    final childAspectRatio = getChildAspectRatio(context);
 
     final features = [
       {
@@ -282,133 +436,105 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: Container(
                     color: theme.colorScheme.surface,
-                    padding: const EdgeInsets.all(16),
-                    child: CustomScrollView(
-                      slivers: [
-                        SliverToBoxAdapter(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                "Welcome back, ${_currentUser?.username ?? "Friend"}!",
-                                style: theme.textTheme.headlineMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                "What would you like to do today?",
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.6),
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                            ],
-                          ),
-                        ),
-                        SliverGrid(
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: crossAxisCount,
-                                crossAxisSpacing: 16,
-                                mainAxisSpacing: 16,
-                                childAspectRatio: childAspectRatio,
-                              ),
-                          delegate: SliverChildBuilderDelegate((
-                            context,
-                            index,
-                          ) {
-                            final feature = filteredFeatures[index];
-                            try {
-                              return FeatureCard(
-                                icon: feature['icon'] as IconData,
-                                title: feature['title'] as String,
-                                color: feature['color'] as Color,
-                                description: feature['description'] as String,
-                                onPressed: () => GoRouter.of(
-                                  context,
-                                ).push(feature['route'] as String),
-                              );
-                            } catch (e) {
-                              debugPrint('Error rendering FeatureCard: $e');
-                              return Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.error_outline,
-                                      color: Colors.grey[600],
-                                      size: 32,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Unable to load',
-                                      style: theme.textTheme.bodyMedium,
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                          }, childCount: filteredFeatures.length),
-                        ),
-                        const SliverToBoxAdapter(child: SizedBox(height: 24)),
-                        SliverToBoxAdapter(
-                          child: Text(
-                            "Recent Activity",
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        const SliverToBoxAdapter(child: SizedBox(height: 16)),
-                        if (filteredActivities.isEmpty)
-                          const SliverToBoxAdapter(
-                            child: Center(child: Text("No recent activity")),
-                          )
-                        else
-                          SliverList(
-                            delegate: SliverChildBuilderDelegate((
-                              context,
-                              index,
-                            ) {
-                              final activity = filteredActivities[index];
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 16),
-                                child: ListTile(
-                                  leading: Container(
-                                    width: 40,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: activity.color.withOpacity(0.1),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Icon(
-                                      activity.icon,
-                                      color: activity.color,
+                    child: RefreshIndicator(
+                      onRefresh: _loadData,
+                      child: CustomScrollView(
+                        slivers: [
+                          // --- Greeting header ---
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                            sliver: SliverToBoxAdapter(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Welcome back, ${_currentUser?.username ?? "Friend"}!",
+                                    style: theme.textTheme.headlineSmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
                                     ),
                                   ),
-                                  title: Text(activity.title),
-                                  subtitle: Text(activity.subtitle),
-                                  trailing: Text(
-                                    activity.timeAgo,
-                                    style: theme.textTheme.bodySmall?.copyWith(
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "Here's what's happening in your community",
+                                    style: theme.textTheme.bodyMedium?.copyWith(
                                       color: theme.colorScheme.onSurface
                                           .withOpacity(0.6),
                                     ),
                                   ),
-                                ),
-                              );
-                            }, childCount: filteredActivities.length),
+                                ],
+                              ),
+                            ),
                           ),
-                        const SliverToBoxAdapter(child: SizedBox(height: 32)),
-                      ],
+
+                          // --- Compact quick-actions row (was the full grid) ---
+                          if (filteredFeatures.isNotEmpty)
+                            SliverPadding(
+                              padding: const EdgeInsets.only(top: 20),
+                              sliver: SliverToBoxAdapter(
+                                child: SizedBox(
+                                  height: 92,
+                                  child: ListView.separated(
+                                    scrollDirection: Axis.horizontal,
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    itemCount: filteredFeatures.length,
+                                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                                    itemBuilder: (context, index) {
+                                      try {
+                                        return _buildQuickAction(
+                                          context,
+                                          filteredFeatures[index],
+                                        );
+                                      } catch (e) {
+                                        debugPrint('Error rendering quick action: $e');
+                                        return const SizedBox(width: 68);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                          // --- Activity feed: now the primary content ---
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                            sliver: SliverToBoxAdapter(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    "Recent Activity",
+                                    style: theme.textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (filteredActivities.isNotEmpty)
+                                    TextButton(
+                                      onPressed: () {},
+                                      child: const Text("See all"),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          SliverPadding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            sliver: filteredActivities.isEmpty
+                                ? SliverToBoxAdapter(
+                                    child: _buildEmptyFeedState(context, theme),
+                                  )
+                                : SliverList(
+                                    delegate: SliverChildBuilderDelegate(
+                                      (context, index) => _buildActivityCard(
+                                        context,
+                                        filteredActivities[index],
+                                      ),
+                                      childCount: filteredActivities.length,
+                                    ),
+                                  ),
+                          ),
+                          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                        ],
+                      ),
                     ),
                   ),
                 ),
