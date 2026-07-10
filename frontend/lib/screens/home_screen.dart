@@ -222,8 +222,22 @@ class _HomeScreenState extends State<HomeScreen> {
   // Feed-style card for a single activity item — richer than a plain
   // ListTile so the "Recent Activity" section reads as living content,
   // not a settings-style list.
+  // Activity author avatars come back as a relative path (same as
+  // User.profile_picture), not a full URL — resolve against Config.baseUrl
+  // the same way _buildProfileAvatar does for the current user.
+  String? _resolveAvatarUrl(String? path) {
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    final base = Config.baseUrl.endsWith('/')
+        ? Config.baseUrl.substring(0, Config.baseUrl.length - 1)
+        : Config.baseUrl;
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    return '$base$normalizedPath';
+  }
+
   Widget _buildActivityCard(BuildContext context, Activity activity) {
     final theme = Theme.of(context);
+    final resolvedAvatarUrl = _resolveAvatarUrl(activity.authorAvatarUrl);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -249,7 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? CircleAvatar(
                       radius: 22,
                       backgroundColor: activity.color.withOpacity(0.12),
-                      backgroundImage: NetworkImage(activity.authorAvatarUrl!),
+                      backgroundImage: NetworkImage(resolvedAvatarUrl!),
                       onBackgroundImageError: (exception, stackTrace) {
                         debugPrint('Activity avatar load error: $exception');
                       },
