@@ -1,21 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart';
 import 'package:timeago/timeago.dart' as timeago;
-
 class Activity {
   final String title;
   final String subtitle;
   final IconData icon;
   final Color color;
   final DateTime createdAt;
-
   // ✅ Optional author identity. Nullable because older/unmigrated backend
   // rows or activity types without a clear actor (e.g. system messages)
   // may not have one — UI falls back to the icon-in-circle treatment
   // when these are null rather than crashing or showing a broken image.
   final String? authorName;
   final String? authorAvatarUrl;
-
   Activity({
     required this.title,
     required this.subtitle,
@@ -25,19 +22,15 @@ class Activity {
     this.authorName,
     this.authorAvatarUrl,
   });
-
   /// Returns a "5m ago" style string
   String get timeAgo => timeago.format(createdAt);
-
   bool get hasAuthorAvatar =>
       authorAvatarUrl != null && authorAvatarUrl!.isNotEmpty;
-
   factory Activity.fromJson(Map<String, dynamic> json) {
     // Matches Activity.to_dict(include_user=True) on the backend:
     // { ..., "user": { "id", "username", "fullName", "profilePicture" } }
     // Falls back gracefully if "user" is absent (e.g. older cached data).
     final Map<String, dynamic>? author = json['user'] as Map<String, dynamic>?;
-
     return Activity(
       title: json['title'] ?? 'Untitled',
       subtitle: json['subtitle'] ?? '',
@@ -50,7 +43,6 @@ class Activity {
       authorAvatarUrl: author?['profilePicture'] as String?,
     );
   }
-
   Map<String, dynamic> toJson() {
     return {
       'title': title,
@@ -65,7 +57,6 @@ class Activity {
         },
     };
   }
-
   /// Maps string from API to Flutter IconData
   static IconData _mapIcon(String? iconName) {
     switch (iconName) {
@@ -75,11 +66,12 @@ class Activity {
         return Icons.event;
       case 'book':
         return FontAwesome.book;
+      case 'forum':
+        return Icons.forum;
       default:
         return Icons.notifications;
     }
   }
-
   /// Maps string from API to Flutter Color
   static Color _mapColor(String? colorName) {
     switch (colorName) {
