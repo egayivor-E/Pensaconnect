@@ -106,6 +106,8 @@ def create_post():
             icon="groups",
             color="orange",
             user_id=user_id,
+            target_type="post",
+            target_id=post.id,
         )
         db.session.add(activity)
         db.session.commit()
