@@ -13,6 +13,13 @@ class Activity {
   // when these are null rather than crashing or showing a broken image.
   final String? authorName;
   final String? authorAvatarUrl;
+  // ✅ What this activity is "about" — e.g. targetType "testimony" +
+  // targetId 42 points at Testimony#42. Nullable because not every
+  // activity has (or needs) a real backing object. Lets the feed deep
+  // link into the actual content and reuse its existing like/comment
+  // endpoints instead of treating the activity log itself as likeable.
+  final String? targetType;
+  final int? targetId;
   Activity({
     required this.title,
     required this.subtitle,
@@ -21,6 +28,8 @@ class Activity {
     required this.createdAt,
     this.authorName,
     this.authorAvatarUrl,
+    this.targetType,
+    this.targetId,
   });
   /// Returns a "5m ago" style string
   String get timeAgo => timeago.format(createdAt);
@@ -41,6 +50,8 @@ class Activity {
           DateTime.now(),
       authorName: author?['fullName'] as String? ?? author?['username'] as String?,
       authorAvatarUrl: author?['profilePicture'] as String?,
+      targetType: json['targetType'] as String?,
+      targetId: (json['targetId'] as num?)?.toInt(),
     );
   }
   Map<String, dynamic> toJson() {
@@ -50,6 +61,8 @@ class Activity {
       'icon': icon.codePoint,
       'color': color.value,
       'created_at': createdAt.toIso8601String(),
+      if (targetType != null) 'targetType': targetType,
+      if (targetId != null) 'targetId': targetId,
       if (authorName != null)
         'user': {
           'fullName': authorName,
