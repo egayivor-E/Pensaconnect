@@ -43,7 +43,6 @@ dependencies:
 
   # Navigation & Connectivity
   go_router: ^16.1.0
-  app_links: ^6.4.1
   connectivity_plus: ^6.1.5
   url_launcher: ^6.3.0
 
