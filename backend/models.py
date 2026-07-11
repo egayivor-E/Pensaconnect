@@ -781,7 +781,17 @@ class Activity(BaseModel):
     icon = Column(String(50), default="notifications")
     color = Column(String(50), default="grey")
     time_ago = Column(String(50), default="just now")
-    
+
+    # ✅ Polymorphic pointer to whatever real object this activity is
+    # "about" (a testimony, forum thread, prayer request, post, or
+    # event). Nullable + no FK constraint on purpose: an Activity is a
+    # lightweight log entry that may outlive the thing it points to
+    # (e.g. the testimony gets deleted), and it can point at any one of
+    # several tables, so a single FK column can't express it. Consumers
+    # must look the row up by (target_type, target_id) and handle a miss.
+    target_type = Column(String(30))
+    target_id = Column(Integer)
+
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     # Relationship with User
@@ -805,6 +815,8 @@ class Activity(BaseModel):
             "isActive": self.is_active,
             "metaData": self.meta_data,
             "userId": self.user_id,
+            "targetType": self.target_type,
+            "targetId": self.target_id,
         }
         if include_user and self.user:
             data["user"] = {
