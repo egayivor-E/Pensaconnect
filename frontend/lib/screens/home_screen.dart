@@ -1,735 +1,818 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter_vector_icons/flutter_vector_icons.dart'
+    show FontAwesome;
+import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:skeletonizer/skeletonizer.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:shimmer/shimmer.dart';
+import 'package:pensaconnect/services/api_service.dart';
+import 'package:pensaconnect/services/auth_service.dart';
 
-void main() {
-  runApp(const SocialFeedApp());
-}
+import '../config/config.dart';
+import '../widgets/app_drawer.dart';
+import '../widgets/chat_options_sheet.dart';
+import '../repositories/activity_repository.dart';
+import '../repositories/user_repository.dart';
+import '../models/activity.dart';
+import '../models/user.dart';
 
-class SocialFeedApp extends StatelessWidget {
-  const SocialFeedApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Polished Social Feed',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.light,
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.dark,
-        ),
-      ),
-      themeMode: ThemeMode.system,
-      home: const SocialFeedScreen(),
-    );
-  }
-}
-
-// ==========================================
-// DOMAIN MODELS & TYPE SAFETY
-// ==========================================
-
-class HomeFeature {
-  final IconData icon;
-  final String title;
-  final String route;
-  final Color color;
-
-  const HomeFeature({
-    required this.icon,
-    required this.title,
-    required this.route,
-    required this.color,
-  });
-}
-
-class Activity {
-  final String id;
-  final String authorId;
-  final String authorName;
-  final String? avatarUrl;
-  final String content;
-  final String targetType;
-  final String targetId;
-  final int likeCount;
-  final bool isLiked;
-
-  const Activity({
-    required this.id,
-    required this.authorId,
-    required this.authorName,
-    this.avatarUrl,
-    required this.content,
-    required this.targetType,
-    required this.targetId,
-    required this.likeCount,
-    required this.isLiked,
-  });
-
-  String get heroTag => 'avatar_${targetType}_$targetId';
-
-  Activity copyWith({
-    String? content,
-    int? likeCount,
-    bool? isLiked,
-  }) {
-    return Activity(
-      id: id,
-      authorId: authorId,
-      authorName: authorName,
-      avatarUrl: avatarUrl,
-      content: content ?? this.content,
-      targetType: targetType,
-      targetId: targetId,
-      likeCount: likeCount ?? this.likeCount,
-      isLiked: isLiked ?? this.isLiked,
-    );
-  }
-}
-
-class UserProfile {
-  final String id;
-  final String name;
-  final String email;
-
-  const UserProfile({
-    required this.id,
-    required this.name,
-    required this.email,
-  });
-}
-
-// ==========================================
-// MAIN SCREEN & STATE MANAGEMENT
-// ==========================================
-
-class SocialFeedScreen extends StatefulWidget {
-  const SocialFeedScreen({super.key});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
 
   @override
-  State<SocialFeedScreen> createState() => _SocialFeedScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _SocialFeedScreenState extends State<SocialFeedScreen> {
-  static const List<HomeFeature> _features = [
-    HomeFeature(
-      icon: Icons.calendar_today,
-      title: 'Events',
-      route: '/events',
-      color: Colors.blue,
-    ),
-    HomeFeature(
-      icon: Icons.group,
-      title: 'Community',
-      route: '/community',
-      color: Colors.teal,
-    ),
-    HomeFeature(
-      icon: Icons.article,
-      title: 'Articles',
-      route: '/articles',
-      color: Colors.orange,
-    ),
-  ];
-
+class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
-  final ValueNotifier<String> _searchQuery = ValueNotifier<String>('');
-  Timer? _debounce; // FIX: debounce search input instead of filtering per keystroke
+  String _searchQuery = '';
+  User? _currentUser;
+  List<Activity> _activities = [];
+  bool _loading = true;
 
-  UserProfile? _currentUser;
-  List<Activity> _allActivities = [];
-  List<Activity> _filteredActivities = [];
+  // ✅ Debounce search input instead of filtering on every keystroke —
+  // filtering itself is cheap here, but this avoids a rebuild per
+  // keystroke on a screen with animated list items, which otherwise
+  // restarts their entrance animation on every character typed.
+  Timer? _searchDebounce;
 
-  bool _isLoading = true;
-  bool _hasError = false; // FIX: surface fetch failures instead of hanging forever
-  final Set<String> _pendingLikes = {};
+  // ✅ Distinguishes "the request actually failed" from "you're logged
+  // out" / "nothing to show yet" — previously both looked identical
+  // (empty feed, no explanation, no way to retry).
+  bool _hasError = false;
+
+  // ✅ FIX: track which user's data is currently loaded, and listen for
+  // AuthService changes so this screen stays in sync across login/logout
+  // even if it isn't recreated (e.g. it's still mounted underneath a
+  // pushed route when the auth state changes).
+  int? _loadedForUserId;
+  late final VoidCallback _authListener;
 
   @override
   void initState() {
     super.initState();
-    _initialLoad();
-    _searchQuery.addListener(_applyFilter);
+    _authListener = _onAuthChanged;
+    AuthService().addListener(_authListener);
+    _loadData();
   }
 
-  Future<void> _initialLoad() async {
+  void _onAuthChanged() {
+    if (!mounted) return;
+    final newUserId = AuthService().userId;
+
+    // Only reload if the logged-in user actually changed (covers both
+    // "logged out" -> null and "different user logged in" -> new id).
+    if (newUserId != _loadedForUserId) {
+      debugPrint('🔄 HomeScreen: auth changed ($_loadedForUserId → $newUserId), reloading');
+      _loadData();
+    }
+  }
+
+  Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() {
-      _isLoading = true;
+      _loading = true;
       _hasError = false;
     });
+
     try {
-      await Future.wait([
-        _loadUserProfile(),
-        _fetchActivities(),
-      ]);
-    } catch (_) {
-      if (mounted) setState(() => _hasError = true);
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
+      // ✅ FIX: use the actual token source (ApiService/secure storage),
+      // not SharedPreferences['auth_token'] — nothing ever wrote a token
+      // there, so `token` was always null and getCurrentUser() never ran
+      // with real credentials.
+      final token = await ApiService.getToken();
+      final loggedInUserId = AuthService().userId;
 
-  Future<void> _loadUserProfile() async {
-    await Future.delayed(const Duration(milliseconds: 600));
-    _currentUser = const UserProfile(
-      id: 'usr_me',
-      name: 'Alex Developer',
-      email: 'alex@example.com',
-    );
-  }
+      User? user;
+      List<Activity> activities = [];
 
-  Future<void> _handleRefresh() async {
-    try {
-      await _fetchActivities();
-    } catch (_) {
-      if (mounted) setState(() => _hasError = true);
-    }
-  }
+      if (token != null && loggedInUserId != null) {
+        // Fetch user + activities together; only proceed with activities
+        // if we're actually authenticated, so we don't fire a request
+        // that's guaranteed to 401 (e.g. right after a logout).
+        user = await UserRepository().getCurrentUser(token);
+        activities = await ActivityRepository().fetchRecentActivities(limit: 20);
+      } else {
+        debugPrint('⚠️ HomeScreen: no valid session, skipping activity fetch');
+      }
 
-  Future<void> _fetchActivities() async {
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    final fetchedData = <Activity>[
-      const Activity(
-        id: 'act_101',
-        authorId: 'usr_552',
-        authorName: 'David K.',
-        avatarUrl:
-            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        content:
-            'Just deployed the new real-time WebSocket messaging service! Performance is up by 40%.',
-        targetType: 'post',
-        targetId: 'post_8891',
-        likeCount: 24,
-        isLiked: false,
-      ),
-      const Activity(
-        id: 'act_102',
-        authorId: 'usr_312',
-        authorName: 'Sarah Jenkins',
-        avatarUrl:
-            'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
-        content:
-            'Anyone attending the Flutter architectural meetup this Saturday? Let’s connect!',
-        targetType: 'event',
-        targetId: 'evt_4022',
-        likeCount: 56,
-        isLiked: true,
-      ),
-      const Activity(
-        id: 'act_103',
-        authorId: 'usr_789',
-        authorName: 'Marcus Chen',
-        avatarUrl:
-            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-        content:
-            'Written a comprehensive guide on moving from Material 2 to Material 3 in large-scale apps.',
-        targetType: 'article',
-        targetId: 'art_9011',
-        likeCount: 112,
-        isLiked: false,
-      ),
-    ];
-
-    if (mounted) {
+      if (!mounted) return;
       setState(() {
-        _allActivities = fetchedData;
-        _filteredActivities = _computeFiltered(_allActivities, _searchQuery.value);
+        _currentUser = user;
+        _activities = activities;
+        _loading = false;
+        _loadedForUserId = loggedInUserId;
+      });
+    } catch (e) {
+      debugPrint("❌ Error in _loadData: $e");
+      if (!mounted) return;
+      setState(() {
+        _currentUser = null;
+        _activities = [];
+        _loading = false;
+        // ✅ This is a genuine failure (network error, server error,
+        // etc.) — not just "nobody's logged in." Surface it distinctly
+        // so the empty-state UI can offer a retry instead of silently
+        // looking like a quiet, empty feed.
+        _hasError = true;
+        _loadedForUserId = AuthService().userId;
       });
     }
   }
 
-  // Pure filter logic, no setState here — callers decide when to rebuild.
-  List<Activity> _computeFiltered(List<Activity> source, String rawQuery) {
-    final query = rawQuery.trim().toLowerCase();
-    if (query.isEmpty) return List.from(source);
-    return source.where((act) {
-      final contentMatch = act.content.toLowerCase().contains(query);
-      final authorMatch = act.authorName.toLowerCase().contains(query);
-      return contentMatch || authorMatch;
-    }).toList();
-  }
-
-  // Triggered by the ValueNotifier listener (debounced search changes).
-  void _applyFilter() {
-    setState(() {
-      _filteredActivities = _computeFiltered(_allActivities, _searchQuery.value);
+  // ✅ Debounced search — updates the query 300ms after the user stops
+  // typing, instead of on every keystroke.
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _searchQuery = value);
     });
   }
 
-  void _onSearchChanged(String text) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
-      _searchQuery.value = text; // triggers _applyFilter via the listener
-    });
+  // Kept for potential future grid usages (e.g. a "see all" features page).
+  int getCrossAxisCount(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    if (width > 1200) return 4;
+    if (width > 800) return 3;
+    if (width > 600) return 2;
+    return 2;
   }
 
-  // FIX: single setState, no nested call into _applyFilter's own setState.
-  Future<void> _handleLike(Activity activity) async {
-    if (_pendingLikes.contains(activity.id)) return;
-
-    setState(() {
-      _pendingLikes.add(activity.id);
-      final index = _allActivities.indexWhere((a) => a.id == activity.id);
-      if (index != -1) {
-        final current = _allActivities[index];
-        _allActivities[index] = current.copyWith(
-          isLiked: !current.isLiked,
-          likeCount:
-              current.isLiked ? current.likeCount - 1 : current.likeCount + 1,
-        );
-        _filteredActivities = _computeFiltered(_allActivities, _searchQuery.value);
-      }
-    });
-
-    try {
-      await Future.delayed(const Duration(milliseconds: 400));
-    } finally {
-      if (mounted) {
-        setState(() => _pendingLikes.remove(activity.id));
-      }
-    }
+  double getChildAspectRatio(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    if (width > 800) return 1.2;
+    return 0.9;
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
+    AuthService().removeListener(_authListener);
+    _searchDebounce?.cancel();
     _searchController.dispose();
-    _searchQuery.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Activity Feed'),
-        actions: [
-          if (_currentUser != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 16.0),
-              child: CircleAvatar(
-                radius: 16,
-                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                child: Text(
-                  _currentUser!.name.isNotEmpty ? _currentUser!.name[0] : '?',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildFeatureBanner(),
-          _buildSearchField(),
-          Expanded(
-            child: _isLoading
-                ? _buildShimmerSkeleton()
-                : _hasError
-                    ? _buildErrorState()
-                    : RefreshIndicator(
-                        onRefresh: _handleRefresh,
-                        child: _filteredActivities.isEmpty
-                            ? _buildAnimatedEmptyState()
-                            : _buildFeedList(),
-                      ),
+  Widget _buildProfileAvatar() {
+    if (_currentUser == null) {
+      return CircleAvatar(
+        radius: 20,
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        child: Icon(
+          Icons.person,
+          color: Theme.of(context).colorScheme.onPrimaryContainer,
+          size: 20,
+        ),
+      );
+    }
+
+    if (_currentUser!.profilePicture == null) {
+      return CircleAvatar(
+        radius: 20,
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        child: Icon(
+          Icons.person,
+          color: Theme.of(context).colorScheme.onPrimaryContainer,
+          size: 20,
+        ),
+      );
+    }
+
+    return ClipOval(
+      child: CachedNetworkImage(
+        imageUrl: _currentUser!.getProfilePictureUrl(Config.baseUrl),
+        width: 40,
+        height: 40,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => CircleAvatar(
+          radius: 20,
+          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        ),
+        errorWidget: (context, url, error) => CircleAvatar(
+          radius: 20,
+          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+          child: Icon(
+            Icons.person,
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+            size: 20,
           ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {},
-        icon: const Icon(Icons.add),
-        label: const Text('New Post'),
-        elevation: 2,
+        ),
       ),
     );
   }
 
-  Widget _buildFeatureBanner() {
-    return SizedBox(
-      height: 50,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemCount: _features.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final feature = _features[index];
-          return ActionChip(
-            avatar: Icon(feature.icon, size: 18, color: feature.color),
-            label: Text(feature.title),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Navigating to ${feature.route}')),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildSearchField() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: ValueListenableBuilder<String>(
-        valueListenable: _searchQuery,
-        builder: (context, value, child) {
-          return TextField(
-            controller: _searchController,
-            onChanged: _onSearchChanged, // FIX: debounced
-            decoration: InputDecoration(
-              hintText: 'Search feed...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchController.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        _debounce?.cancel();
-                        _searchController.clear();
-                        _searchQuery.value = '';
-                      },
-                    )
-                  : null,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              filled: true,
-              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+  Widget _buildSearchField(ThemeData theme) {
+    return StatefulBuilder(
+      // Local StatefulBuilder just to redraw the clear (X) button as text
+      // changes, without tying the whole screen's rebuild to every
+      // keystroke (the actual filter still only updates after debounce).
+      builder: (context, setLocalState) {
+        return TextField(
+          controller: _searchController,
+          onChanged: (value) {
+            setLocalState(() {});
+            _onSearchChanged(value);
+          },
+          decoration: InputDecoration(
+            hintText: 'Search...',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: _searchController.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () {
+                      _searchDebounce?.cancel();
+                      _searchController.clear();
+                      setLocalState(() {});
+                      setState(() => _searchQuery = '');
+                    },
+                  )
+                : null,
+            filled: true,
+            fillColor: theme.colorScheme.surface.withOpacity(0.1),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
             ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildFeedList() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: _filteredActivities.length,
-      physics: const AlwaysScrollableScrollPhysics(),
-      itemBuilder: (context, index) {
-        final activity = _filteredActivities[index];
-        return _ActivityCard(
-          key: ValueKey(activity.id), // FIX: stable identity across reorders
-          activity: activity,
-          isPending: _pendingLikes.contains(activity.id),
-          onLike: () => _handleLike(activity),
-        )
-            .animate()
-            .fadeIn(duration: 300.ms, delay: (50 * index).ms)
-            .slideY(begin: 0.08, end: 0, curve: Curves.easeOutQuad);
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 12,
+              horizontal: 16,
+            ),
+          ),
+        );
       },
     );
   }
 
-  Widget _buildShimmerSkeleton() {
-    return Skeletonizer(
-      enabled: true,
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: 4,
-        itemBuilder: (context, index) {
-          return Card(
-            elevation: 0,
-            margin: const EdgeInsets.only(bottom: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
+  // Compact quick-action chip used in the horizontal row that replaces
+  // the old full-page icon grid. Same feature data, much lower visual
+  // weight so the activity feed can be the star of the screen.
+  Widget _buildQuickAction(BuildContext context, Map<String, dynamic> feature) {
+    final theme = Theme.of(context);
+    final color = feature['color'] as Color;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: () => GoRouter.of(context).push(feature['route'] as String),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(feature['icon'] as IconData, color: color, size: 26),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: 68,
+              child: Text(
+                feature['title'] as String,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Feed-style card for a single activity item — richer than a plain
+  // ListTile so the "Recent Activity" section reads as living content,
+  // not a settings-style list.
+  // Activity author avatars come back as a relative path (same as
+  // User.profile_picture), not a full URL — resolve against Config.baseUrl
+  // the same way _buildProfileAvatar does for the current user.
+  String? _resolveAvatarUrl(String? path) {
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    final base = Config.baseUrl.endsWith('/')
+        ? Config.baseUrl.substring(0, Config.baseUrl.length - 1)
+        : Config.baseUrl;
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    return '$base$normalizedPath';
+  }
+
+  Widget _buildActivityCard(BuildContext context, Activity activity, {Key? key}) {
+    final theme = Theme.of(context);
+    final resolvedAvatarUrl = _resolveAvatarUrl(activity.authorAvatarUrl);
+
+    return Card(
+      key: key,
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: theme.colorScheme.outline.withOpacity(0.15),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Prefer a real author avatar; fall back to the activity-type
+            // icon circle when no author image is available. Keeps every
+            // card visually anchored to a person, not just an event type.
+            activity.hasAuthorAvatar
+                ? ClipOval(
+                    child: CachedNetworkImage(
+                      imageUrl: resolvedAvatarUrl!,
+                      width: 44,
+                      height: 44,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        width: 44,
+                        height: 44,
+                        color: activity.color.withOpacity(0.12),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: activity.color.withOpacity(0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(activity.icon, color: activity.color, size: 22),
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: activity.color.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(activity.icon, color: activity.color, size: 22),
+                  ),
+            const SizedBox(width: 12),
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const CircleAvatar(radius: 20),
-                      const SizedBox(width: 12),
-                      Container(width: 140, height: 16, color: Colors.grey),
-                    ],
+                  if (activity.authorName != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        activity.authorName!,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.55),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  Text(
+                    activity.title,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  const SizedBox(height: 16),
-                  Container(width: double.infinity, height: 14, color: Colors.grey),
+                  const SizedBox(height: 4),
+                  Text(
+                    activity.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.65),
+                    ),
+                  ),
                   const SizedBox(height: 8),
-                  Container(width: 220, height: 14, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  Container(width: 60, height: 20, color: Colors.grey),
+                  Text(
+                    activity.timeAgo,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.45),
+                    ),
+                  ),
                 ],
               ),
             ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildAnimatedEmptyState() {
-    return Center(
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.explore_off_rounded,
-              size: 64,
-              color: Theme.of(context).colorScheme.outline,
-            )
-                .animate(onPlay: (controller) => controller.repeat(reverse: true))
-                .scale(
-                  begin: const Offset(0.95, 0.95),
-                  end: const Offset(1.05, 1.05),
-                  duration: 1500.ms,
-                  curve: Curves.easeInOut,
-                ),
-            const SizedBox(height: 16),
-            Text(
-              'No activities found',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ).animate().fadeIn(duration: 400.ms),
-            const SizedBox(height: 8),
-            Text(
-              'Try adjusting your search terms.',
-              style: TextStyle(color: Theme.of(context).colorScheme.outline),
-            ),
           ],
         ),
       ),
     );
   }
 
-  // NEW: retry UI when initial load fails, instead of an infinite skeleton.
-  Widget _buildErrorState() {
-    return Center(
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.cloud_off_rounded,
-              size: 64,
-              color: Theme.of(context).colorScheme.error,
+  // Empty state that invites action instead of just announcing absence —
+  // avoids the "nobody uses this app" impression a bare "No recent
+  // activity" text creates.
+  Widget _buildEmptyFeedState(BuildContext context, ThemeData theme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.auto_awesome,
+            size: 36,
+            color: theme.colorScheme.primary.withOpacity(0.6),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            "Your feed is just getting started",
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 16),
-            Text(
-              'Couldn’t load your feed',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Join a discussion, post a prayer request, or check today's devotional — activity from your community will show up here.",
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.6),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.tonal(
+            onPressed: () => GoRouter.of(context).push('/forums'),
+            child: const Text("Explore Discussions"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ✅ Shimmer skeleton instead of a bare centered spinner — gives the
+  // person an immediate sense of the page's shape (quick actions row +
+  // a few feed cards) rather than a blank screen with a spinner floating
+  // in the middle of it.
+  Widget _buildLoadingSkeleton(ThemeData theme) {
+    return Shimmer.fromColors(
+      baseColor: theme.colorScheme.onSurface.withOpacity(0.06),
+      highlightColor: theme.colorScheme.onSurface.withOpacity(0.12),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(width: 220, height: 22, color: Colors.white),
+          const SizedBox(height: 8),
+          Container(width: 160, height: 14, color: Colors.white),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 92,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: 6,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (_, __) => Column(
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
                   ),
+                  const SizedBox(height: 6),
+                  Container(width: 44, height: 10, color: Colors.white),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: _initialLoad,
-              child: const Text('Retry'),
+          ),
+          const SizedBox(height: 24),
+          Container(width: 140, height: 20, color: Colors.white),
+          const SizedBox(height: 16),
+          for (int i = 0; i < 3; i++)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              height: 90,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
-}
 
-// ==========================================
-// MATERIAL 3 ACTIVITY CARD COMPONENT
-// ==========================================
-
-class _ActivityCard extends StatefulWidget {
-  final Activity activity;
-  final bool isPending;
-  final VoidCallback onLike;
-
-  const _ActivityCard({
-    super.key,
-    required this.activity,
-    required this.isPending,
-    required this.onLike,
-  });
-
-  @override
-  State<_ActivityCard> createState() => _ActivityCardState();
-}
-
-class _ActivityCardState extends State<_ActivityCard>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _burstController;
-  late final Animation<double> _burstScale;
-
-  @override
-  void initState() {
-    super.initState();
-    // FIX: a proper "burst and settle back to 1.0" heart animation,
-    // instead of a tween that has no way back down.
-    _burstController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 350),
+  // ✅ Real failure state (network/server error) with a retry — separate
+  // from the "no activity yet" empty state, which is a normal condition
+  // rather than a problem.
+  Widget _buildErrorFeedState(BuildContext context, ThemeData theme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.cloud_off_rounded,
+            size: 36,
+            color: theme.colorScheme.error,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            "Couldn't load your feed",
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Check your connection and try again.",
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.6),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.tonal(
+            onPressed: _loadData,
+            child: const Text("Retry"),
+          ),
+        ],
+      ),
     );
-    _burstScale = TweenSequence<double>([
-      TweenSequenceItem(
-        tween: Tween(begin: 1.0, end: 1.3).chain(CurveTween(curve: Curves.easeOut)),
-        weight: 40,
-      ),
-      TweenSequenceItem(
-        tween: Tween(begin: 1.3, end: 1.0).chain(CurveTween(curve: Curves.elasticOut)),
-        weight: 60,
-      ),
-    ]).animate(_burstController);
-  }
-
-  @override
-  void didUpdateWidget(covariant _ActivityCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!oldWidget.activity.isLiked && widget.activity.isLiked) {
-      _burstController.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _burstController.dispose();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final activity = widget.activity;
-    final hasAvatar = (activity.avatarUrl ?? '').isNotEmpty;
+    final bool isLargeScreen = MediaQuery.of(context).size.width >= 800;
+    final bool isIOS = defaultTargetPlatform == TargetPlatform.iOS;
 
-    return Card(
-      elevation: 0,
-      margin: const EdgeInsets.only(bottom: 12),
-      color: theme.colorScheme.surfaceContainerLow,
-      surfaceTintColor: theme.colorScheme.surfaceTint,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    final features = [
+      {
+        'icon': Icons.calendar_today,
+        'title': 'Events',
+        'route': '/events',
+        'color': Colors.blue,
+        'description': 'View upcoming church events',
+      },
+      {
+        'icon': Icons.book,
+        'title': 'Bible Study',
+        'route': '/bible',
+        'color': Colors.green,
+        'description': 'Daily devotionals & study plans',
+      },
+      {
+        'icon': Icons.music_note,
+        'title': 'Praise & Worship',
+        'route': '/worship',
+        'color': Colors.purple,
+        'description': 'Worship songs & playlists',
+      },
+      {
+        'icon': Icons.live_tv,
+        'title': 'Live Stream',
+        'route': '/live',
+        'color': Colors.red,
+        'description': 'Join live services',
+      },
+      {
+        'icon': Icons.forum,
+        'title': 'Discussions',
+        'route': '/forums',
+        'color': Colors.orange,
+        'description': 'Connect with others',
+      },
+      {
+        'icon': FontAwesome.play,
+        'title': 'Prayer Wall',
+        'route': '/prayer-wall',
+        'color': Colors.teal,
+        'description': 'Share prayer requests',
+      },
+    ];
+
+    final filteredFeatures = features
+        .where(
+          (f) => (f['title'] as String).toLowerCase().contains(
+            _searchQuery.toLowerCase(),
+          ),
+        )
+        .toList();
+
+    final filteredActivities = _activities
+        .where(
+          (a) => a.title.toLowerCase().contains(_searchQuery.toLowerCase()),
+        )
+        .toList();
+
+    PreferredSizeWidget? appBar;
+    if (!isIOS) {
+      appBar = AppBar(
+        title: const Text("PensaConnect"),
+        actions: [
+          SizedBox(
+            width: 250,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              child: _buildSearchField(theme),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            // ⚠️ No notifications screen/route exists yet — this used to
+            // silently do nothing on tap, which looks broken. Until a
+            // real destination exists, at least confirm the tap happened.
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Notifications are coming soon'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            tooltip: 'Notifications',
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: GestureDetector(
+              onTap: () => GoRouter.of(context).go('/profile'),
+              child: _buildProfileAvatar(),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Scaffold(
+      appBar: appBar,
+      drawer: isLargeScreen ? null : const AppDrawer(),
+      body: _loading
+          ? _buildLoadingSkeleton(theme)
+          : Row(
               children: [
-                Hero(
-                  tag: activity.heroTag,
-                  child: ClipOval(
-                    child: hasAvatar
-                        ? CachedNetworkImage(
-                            imageUrl: activity.avatarUrl!,
-                            width: 40,
-                            height: 40,
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) => Container(
-                              color: theme.colorScheme.surfaceContainerHighest,
-                              child: const Icon(Icons.person, size: 20),
-                            ),
-                            errorWidget: (context, url, error) => Container(
-                              color: theme.colorScheme.primaryContainer,
-                              child: Icon(
-                                Icons.person,
-                                color: theme.colorScheme.onPrimaryContainer,
+                if (isLargeScreen) const AppDrawer(),
+                Expanded(
+                  child: Container(
+                    color: theme.colorScheme.surface,
+                    child: RefreshIndicator(
+                      onRefresh: _loadData,
+                      child: CustomScrollView(
+                        slivers: [
+                          // --- Greeting header ---
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                            sliver: SliverToBoxAdapter(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Welcome back, ${_currentUser?.username ?? "Friend"}!",
+                                    style: theme.textTheme.headlineSmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "Here's what's happening in your community",
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.6),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          )
-                        : Container(
-                            width: 40,
-                            height: 40,
-                            color: theme.colorScheme.primaryContainer,
-                            child: Icon(
-                              Icons.person,
-                              color: theme.colorScheme.onPrimaryContainer,
+                          ),
+
+                          // --- Compact quick-actions row (was the full grid) ---
+                          if (filteredFeatures.isNotEmpty)
+                            SliverPadding(
+                              padding: const EdgeInsets.only(top: 20),
+                              sliver: SliverToBoxAdapter(
+                                child: SizedBox(
+                                  height: 92,
+                                  child: ListView.separated(
+                                    scrollDirection: Axis.horizontal,
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    itemCount: filteredFeatures.length,
+                                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                                    itemBuilder: (context, index) {
+                                      try {
+                                        return _buildQuickAction(
+                                          context,
+                                          filteredFeatures[index],
+                                        );
+                                      } catch (e) {
+                                        debugPrint('Error rendering quick action: $e');
+                                        return const SizedBox(width: 68);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                          // --- Activity feed: now the primary content ---
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                            sliver: SliverToBoxAdapter(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    "Recent Activity",
+                                    style: theme.textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (filteredActivities.isNotEmpty)
+                                    TextButton(
+                                      // ⚠️ Same as the notifications bell —
+                                      // no "all activity" screen exists yet.
+                                      // Honest feedback beats a dead tap.
+                                      onPressed: () {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'A full activity history is coming soon',
+                                            ),
+                                            behavior: SnackBarBehavior.floating,
+                                          ),
+                                        );
+                                      },
+                                      child: const Text("See all"),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        activity.authorName,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                          SliverPadding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            sliver: _hasError && filteredActivities.isEmpty
+                                ? SliverToBoxAdapter(
+                                    child: _buildErrorFeedState(context, theme),
+                                  )
+                                : filteredActivities.isEmpty
+                                ? SliverToBoxAdapter(
+                                    child: _buildEmptyFeedState(context, theme),
+                                  )
+                                : SliverList(
+                                    delegate: SliverChildBuilderDelegate(
+                                      (context, index) {
+                                        final activity = filteredActivities[index];
+                                        return _buildActivityCard(
+                                          context,
+                                          activity,
+                                          // ✅ Stable-ish key: Activity has
+                                          // no id field from the backend,
+                                          // so derive one from content +
+                                          // timestamp rather than using the
+                                          // volatile list index alone.
+                                          key: ValueKey(
+                                            '${activity.title}_${activity.createdAt.millisecondsSinceEpoch}_$index',
+                                          ),
+                                        )
+                                            .animate()
+                                            .fadeIn(
+                                              duration: 280.ms,
+                                              delay: (40 * index).ms,
+                                            )
+                                            .slideY(
+                                              begin: 0.08,
+                                              end: 0,
+                                              curve: Curves.easeOutQuad,
+                                            );
+                                      },
+                                      childCount: filteredActivities.length,
+                                    ),
+                                  ),
+                          ),
+                          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                        ],
                       ),
-                      Text(
-                        'Posted in ${activity.targetType.toUpperCase()}',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              activity.content,
-              style: theme.textTheme.bodyLarge?.copyWith(height: 1.4),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                AnimatedBuilder(
-                  animation: _burstScale,
-                  builder: (context, child) {
-                    return Transform.scale(
-                      scale: _burstScale.value,
-                      child: child,
-                    );
-                  },
-                  child: Opacity(
-                    // NEW: visible pending state instead of a silent no-op tap
-                    opacity: widget.isPending ? 0.5 : 1.0,
-                    child: IconButton(
-                      icon: widget.isPending
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(
-                              activity.isLiked ? Icons.favorite : Icons.favorite_border,
-                              color: activity.isLiked
-                                  ? Colors.redAccent
-                                  : theme.colorScheme.onSurfaceVariant,
-                            ),
-                      onPressed: widget.isPending ? null : widget.onLike,
                     ),
                   ),
                 ),
-                Text(
-                  '${activity.likeCount}',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
               ],
             ),
-          ],
-        ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          showModalBottomSheet(
+            context: context,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            builder: (context) => const ChatOptionsSheet(),
+          );
+        },
+        backgroundColor: theme.colorScheme.primary,
+        child: const Icon(Icons.chat_bubble, color: Colors.white),
       ),
     );
   }
