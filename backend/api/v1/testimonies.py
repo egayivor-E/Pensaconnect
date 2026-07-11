@@ -47,6 +47,8 @@ def create_testimony():
                 icon="book",
                 color="purple",
                 user_id=user_id,
+                target_type="testimony",
+                target_id=testimony.id,
             )
             db.session.add(activity)
             db.session.commit()
