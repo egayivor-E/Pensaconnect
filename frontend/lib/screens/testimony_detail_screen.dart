@@ -83,7 +83,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Comment added successfully!'),
+            content: const Text('Your encouragement was shared 💛'),
             backgroundColor: Colors.green[600],
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -132,7 +132,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Testimony Detail'),
+        title: const Text('Testimony'),
         leading: BackButton(onPressed: () => context.pop()),
       ),
       body: RefreshIndicator(
@@ -354,12 +354,15 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                       scale: testimony.likedByMe ? 1.15 : 1.0,
                                       duration: const Duration(milliseconds: 200),
                                       child: Icon(
+                                        // ✅ Heart reads as "this moved me,"
+                                        // more fitting for a testimony than
+                                        // a generic thumbs-up.
                                         testimony.likedByMe
-                                            ? Icons.thumb_up
-                                            : Icons.thumb_up_outlined,
+                                            ? Icons.favorite
+                                            : Icons.favorite_border,
                                         size: 20,
                                         color: testimony.likedByMe
-                                            ? theme.colorScheme.primary
+                                            ? Colors.redAccent
                                             : theme.colorScheme.onSurface
                                                   .withOpacity(0.6),
                                       ),
@@ -369,7 +372,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                       '${testimony.likesCount}',
                                       style: TextStyle(
                                         color: testimony.likedByMe
-                                            ? theme.colorScheme.primary
+                                            ? Colors.redAccent
                                             : theme.colorScheme.onSurface
                                                   .withOpacity(0.6),
                                         fontWeight: FontWeight.bold,
@@ -412,7 +415,11 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
 
                         const Divider(height: 40),
                         Text(
-                          'Comments',
+                          // ✅ "Comments" -> "Words of Encouragement" — this
+                          // is a testimony, not a forum thread; the label
+                          // should match the emotional register of sharing
+                          // something meaningful.
+                          'Words of Encouragement',
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
@@ -441,8 +448,6 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                             }
                             final comments = snapshot.data ?? [];
                             if (comments.isEmpty) {
-                              // ✅ Warmer empty state instead of a lone
-                              // gray line.
                               return Padding(
                                 padding: const EdgeInsets.symmetric(vertical: 20),
                                 child: Column(
@@ -451,7 +456,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                         color: Colors.grey[400], size: 32),
                                     const SizedBox(height: 8),
                                     const Text(
-                                      'No comments yet.\nBe the first to encourage them!',
+                                      'No encouragement yet.\nBe the first to celebrate this testimony!',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(color: Colors.grey),
                                     ),
@@ -536,7 +541,9 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Add a comment',
+                                  // ✅ Warmer framing than a generic
+                                  // "Add a comment" label.
+                                  'Encourage them',
                                   style: theme.textTheme.titleSmall?.copyWith(
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -546,7 +553,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                   controller: _commentController,
                                   maxLines: 3,
                                   decoration: InputDecoration(
-                                    hintText: 'Write your comment here...',
+                                    hintText: 'Share a word of encouragement...',
                                     filled: true,
                                     fillColor: Colors.grey.withOpacity(0.06),
                                     border: OutlineInputBorder(
@@ -568,7 +575,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                   width: double.infinity,
                                   child: FilledButton(
                                     onPressed: _submitComment,
-                                    child: const Text('Post Comment'),
+                                    child: const Text('Send Encouragement'),
                                   ),
                                 ),
                               ],
