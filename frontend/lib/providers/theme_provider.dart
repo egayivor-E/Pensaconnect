@@ -1,6 +1,8 @@
 // ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../theme/app_style.dart';
 
 class ThemeProvider extends ChangeNotifier {
   static const _themeModeKey = 'theme_mode';
@@ -10,7 +12,7 @@ class ThemeProvider extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
 
   ThemeProvider() {
-    // ✅ FIX: load any previously saved preference on startup instead of
+    // Load any previously saved preference on startup instead of
     // always resetting to ThemeMode.system.
     _loadThemeMode();
   }
@@ -45,7 +47,6 @@ class ThemeProvider extends ChangeNotifier {
   void setTheme(ThemeMode mode) {
     _themeMode = mode;
     notifyListeners();
-    // ✅ FIX: persist so the choice survives app restarts.
     _persistThemeMode(mode);
   }
 
@@ -59,10 +60,8 @@ class ThemeProvider extends ChangeNotifier {
     toggleDarkMode(isDark);
   }
 
-  // ✅ FIX: resolves whether dark mode is actually active right now,
-  // accounting for ThemeMode.system - checking `themeMode == ThemeMode.dark`
-  // alone reports "off" even when the system is in dark mode and the app
-  // is visibly rendering dark.
+  // Resolves whether dark mode is actually active right now, accounting
+  // for ThemeMode.system.
   bool isDarkMode(BuildContext context) {
     if (_themeMode == ThemeMode.system) {
       return MediaQuery.platformBrightnessOf(context) == Brightness.dark;
@@ -70,45 +69,148 @@ class ThemeProvider extends ChangeNotifier {
     return _themeMode == ThemeMode.dark;
   }
 
-  // Build ThemeData dynamically based on brightness
+  // Build ThemeData dynamically based on brightness, using the
+  // PensaConnect "golden hour fellowship" brand tokens.
   ThemeData getThemeData(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
-    final primaryColor = isDark ? Colors.deepPurple[300]! : Colors.deepPurple;
-    final secondaryColor = isDark ? Colors.teal[200]! : Colors.teal;
+
+    final colorScheme = isDark
+        ? const ColorScheme.dark(
+            primary: AppColors.emberGold,
+            onPrimary: AppColors.deepDusk,
+            secondary: AppColors.verdantSage,
+            onSecondary: Colors.white,
+            tertiary: AppColors.roseQuartz,
+            onTertiary: AppColors.deepDusk,
+            surface: Color(0xFF2A2340),
+            onSurface: AppColors.warmLinen,
+            error: Color(0xFFE5726A),
+            onError: Colors.white,
+          )
+        : const ColorScheme.light(
+            primary: AppColors.emberGold,
+            onPrimary: Colors.white,
+            secondary: AppColors.verdantSage,
+            onSecondary: Colors.white,
+            tertiary: AppColors.roseQuartz,
+            onTertiary: AppColors.inkDusk,
+            surface: Colors.white,
+            onSurface: AppColors.inkDusk,
+            error: Color(0xFFC94C40),
+            onError: Colors.white,
+          );
+
+    final baseTextTheme =
+        isDark ? Typography.whiteMountainView : Typography.blackMountainView;
+
+    // Fraunces (warm display serif) for headings, Manrope (clean
+    // geometric sans) for body/UI text.
+    final textTheme = GoogleFonts.manropeTextTheme(baseTextTheme).copyWith(
+      displayLarge: GoogleFonts.fraunces(
+        fontSize: 40,
+        fontWeight: FontWeight.w600,
+        color: colorScheme.onSurface,
+        height: 1.1,
+      ),
+      displayMedium: GoogleFonts.fraunces(
+        fontSize: 32,
+        fontWeight: FontWeight.w600,
+        color: colorScheme.onSurface,
+        height: 1.15,
+      ),
+      headlineMedium: GoogleFonts.fraunces(
+        fontSize: 26,
+        fontWeight: FontWeight.w600,
+        color: colorScheme.onSurface,
+      ),
+      headlineSmall: GoogleFonts.fraunces(
+        fontSize: 22,
+        fontWeight: FontWeight.w600,
+        color: colorScheme.onSurface,
+      ),
+      titleLarge: GoogleFonts.manrope(
+        fontSize: 19,
+        fontWeight: FontWeight.w700,
+        color: colorScheme.onSurface,
+      ),
+      titleMedium: GoogleFonts.manrope(
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        color: colorScheme.onSurface,
+      ),
+      bodyLarge: GoogleFonts.manrope(
+        fontSize: 16,
+        color: colorScheme.onSurface,
+        height: 1.45,
+      ),
+      bodyMedium: GoogleFonts.manrope(
+        fontSize: 14,
+        color: colorScheme.onSurface,
+        height: 1.4,
+      ),
+      labelLarge: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w700),
+    );
+
     return ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primaryColor,
-        brightness: brightness,
-        primary: primaryColor,
-        secondary: secondaryColor,
-      ),
+      brightness: brightness,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor:
+          isDark ? AppColors.deepDusk : AppColors.warmLinen,
+      textTheme: textTheme,
       cardTheme: CardThemeData(
-        elevation: 2,
+        elevation: 0,
+        color: isDark ? const Color(0xFF2A2340) : Colors.white,
         margin: const EdgeInsets.all(8),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
+        shape: AppShapes.archBorder(),
       ),
       appBarTheme: AppBarTheme(
         centerTitle: true,
         elevation: 0,
+        backgroundColor: Colors.transparent,
         scrolledUnderElevation: 2,
-        titleTextStyle: TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          color: isDark ? Colors.white : Colors.black,
+        foregroundColor: colorScheme.onSurface,
+        titleTextStyle: GoogleFonts.fraunces(
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+          color: colorScheme.onSurface,
         ),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
-        backgroundColor: primaryColor,
-        foregroundColor: Colors.white,
-        elevation: 4,
+        backgroundColor: colorScheme.primary,
+        foregroundColor: colorScheme.onPrimary,
+        elevation: 2,
+        shape: AppShapes.pill,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: colorScheme.primary,
+          foregroundColor: colorScheme.onPrimary,
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+          textStyle: GoogleFonts.manrope(fontSize: 16, fontWeight: FontWeight.w700),
+          shape: AppShapes.pill,
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: colorScheme.secondary,
+          textStyle: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+        ),
       ),
       inputDecorationTheme: InputDecorationTheme(
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
+        ),
         filled: true,
-        fillColor: isDark ? Colors.grey[800] : Colors.grey[100],
+        fillColor: isDark ? const Color(0xFF332A4D) : AppColors.warmLinen,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        labelStyle: GoogleFonts.manrope(color: colorScheme.onSurface.withOpacity(0.65)),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: isDark ? const Color(0xFF332A4D) : AppColors.warmLinen,
+        labelStyle: GoogleFonts.manrope(fontWeight: FontWeight.w600),
+        shape: const StadiumBorder(),
       ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(
