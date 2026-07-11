@@ -99,6 +99,8 @@ def create_event():
                 icon="event",
                 color="blue",
                 user_id=user_id,
+                target_type="event",
+                target_id=event.id,
             )
             db.session.add(activity)
             db.session.commit()
