@@ -1,29 +1,48 @@
-import 'dart:async';
+// screens/home_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:shimmer/shimmer.dart';
-
-import '../config/config.dart';
-import '../services/api_service.dart';
-import '../services/auth_service.dart';
-import '../repositories/activity_repository.dart';
-import '../repositories/user_repository.dart';
+import 'package:provider/provider.dart';
 import '../models/activity.dart';
-import '../models/user.dart';
+import '../providers/auth_provider.dart';
+import '../repositories/activity_repository.dart';
+import '../repositories/forum_repository.dart';
+import '../repositories/prayer_repository.dart';
+import '../repositories/testimony_repository.dart';
+import '../theme/app_style.dart';
+import '../utils/activity_target.dart';
 import '../widgets/app_drawer.dart';
 
-/// Production notes vs. the draft this was built from:
-/// - Auth state is watched via AuthService so the feed stays correct across
-///   login/logout even if this screen isn't recreated.
-/// - "Failed to load" and "nothing to show yet" are different states with
-///   different UI — a network error should never look like an empty feed.
-/// - Search is debounced (matches the draft) so typing doesn't thrash the
-///   filtered list or restart in-flight animations.
-/// - List items use a stable key derived from content, not list index,
-///   since Activity has no server-assigned id.
-/// - Author avatars are resolved against Config.baseUrl the same way the
-///   profile avatar is, since the API returns a relative path.
+// ==========================================
+// DOMAIN MODEL
+// ==========================================
+
+class HomeFeature {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String route;
+  final Color color;
+
+  const HomeFeature({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.route,
+    required this.color,
+  });
+}
+
+// ==========================================
+// HOME SCREEN
+// ==========================================
+//
+// NOTE: this file previously contained an entire standalone demo app
+// (its own `main()`, `MaterialApp`, and mock `Activity`/`UserProfile`
+// models) that wasn't wired into PensaConnect's actual routing or
+// AuthProvider at all — none of its "feature" taps went to real
+// screens. This rebuild replaces that with a real dashboard that
+// greets the logged-in member and links to the app's actual routes.
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -32,319 +51,494 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
-  Timer? _searchDebounce;
+  final ActivityRepository _activityRepo = ActivityRepository();
 
-  User? _currentUser;
   List<Activity> _activities = [];
-  bool _loading = true;
-  bool _hasError = false;
+  bool _loadingActivities = true;
+  bool _activitiesFailed = false;
 
-  int? _loadedForUserId;
-  late final VoidCallback _authListener;
+  // Tracks activities whose like/prayer action is mid-flight, so a
+  // double-tap can't fire the request twice.
+  final Set<int> _actionInFlight = {};
+  // Tracks the *locally known* liked/prayed state per activity id. The
+  // recent-activity feed doesn't carry a likedByMe flag from the API (it's
+  // a log entry, not the underlying testimony/thread/prayer itself), so
+  // this reflects "did the current session already toggle this" rather
+  // than server truth — good enough to give the button visual feedback.
+  final Map<int, bool> _locallyActive = {};
 
   @override
   void initState() {
     super.initState();
-    _authListener = _onAuthChanged;
-    AuthService().addListener(_authListener);
-    _loadData();
+    _loadActivities();
   }
 
-  @override
-  void dispose() {
-    AuthService().removeListener(_authListener);
-    _searchDebounce?.cancel();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _onAuthChanged() {
-    if (!mounted) return;
-    final newUserId = AuthService().userId;
-    if (newUserId != _loadedForUserId) {
-      _loadData();
-    }
-  }
-
-  Future<void> _loadData() async {
-    if (!mounted) return;
+  Future<void> _loadActivities() async {
     setState(() {
-      _loading = true;
-      _hasError = false;
+      _loadingActivities = true;
+      _activitiesFailed = false;
     });
 
     try {
-      final token = await ApiService.getToken();
-      final loggedInUserId = AuthService().userId;
+      final fetched = await _activityRepo.fetchRecentActivities(limit: 10);
 
-      User? user;
-      List<Activity> activities = [];
-
-      if (token != null && loggedInUserId != null) {
-        user = await UserRepository().getCurrentUser(token);
-        activities = await ActivityRepository().fetchRecentActivities(limit: 20);
+      // ✅ De-duplicate by the activity's own id. Using a Map keyed by id
+      // (rather than just setState-appending to the existing list) means
+      // a pull-to-refresh — or any rebuild that re-triggers this — always
+      // *replaces* the feed with a clean, unique set instead of piling
+      // more copies of the same rows on top of what's already showing.
+      final unique = <int, Activity>{};
+      for (final activity in fetched) {
+        unique[activity.id] = activity;
       }
 
       if (!mounted) return;
       setState(() {
-        _currentUser = user;
-        _activities = activities;
-        _loading = false;
-        _loadedForUserId = loggedInUserId;
+        _activities = unique.values.toList();
+        _loadingActivities = false;
       });
-    } catch (e) {
-      debugPrint('❌ HomeScreen._loadData: $e');
+    } catch (_) {
       if (!mounted) return;
       setState(() {
-        _currentUser = null;
-        _activities = [];
-        _loading = false;
-        _hasError = true;
-        _loadedForUserId = AuthService().userId;
+        _loadingActivities = false;
+        _activitiesFailed = true;
       });
     }
   }
 
-  void _onSearchChanged(String value) {
-    _searchDebounce?.cancel();
-    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) setState(() => _searchQuery = value);
-    });
+  Future<void> _handleActivityAction(Activity activity) async {
+    final info = activityTargetInfo(activity.targetType);
+    if (!info.canLike || activity.targetId == null) return;
+    if (_actionInFlight.contains(activity.id)) return;
+
+    setState(() => _actionInFlight.add(activity.id));
+
+    try {
+      // ✅ Route the action through the *real* endpoint for whatever this
+      // activity is about, reusing the same repositories the actual
+      // testimony/forum/prayer screens use — so tapping it here has the
+      // same effect as tapping it there, instead of the feed just
+      // toggling a fake local flag.
+      switch (activity.targetType) {
+        case 'testimony':
+          await context.read<TestimonyRepository>().toggleLike(
+            activity.targetId!,
+          );
+          break;
+        case 'forum_thread':
+          await context.read<ForumRepository>().toggleLikeThread(
+            activity.targetId!,
+          );
+          break;
+        case 'prayer_request':
+          await context.read<PrayerRepository>().togglePrayerById(
+            activity.targetId!,
+          );
+          break;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _locallyActive[activity.id] = !(_locallyActive[activity.id] ?? false);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Couldn\'t complete "${info.label}". Try again.')),
+      );
+    } finally {
+      if (mounted) setState(() => _actionInFlight.remove(activity.id));
+    }
   }
 
-  List<Activity> get _filteredActivities => _activities
-      .where((a) => a.title.toLowerCase().contains(_searchQuery.toLowerCase()))
-      .toList();
-
-  String? _resolveAvatarUrl(String? path) {
-    if (path == null || path.isEmpty) return null;
-    if (path.startsWith('http://') || path.startsWith('https://')) return path;
-    final base = Config.baseUrl.endsWith('/')
-        ? Config.baseUrl.substring(0, Config.baseUrl.length - 1)
-        : Config.baseUrl;
-    final normalizedPath = path.startsWith('/') ? path : '/$path';
-    return '$base$normalizedPath';
+  void _openActivityTarget(Activity activity) {
+    switch (activity.targetType) {
+      case 'testimony':
+        context.push('/testimonies/${activity.targetId}');
+        break;
+      case 'forum_thread':
+        context.push('/threads/${activity.targetId}');
+        break;
+    }
   }
 
-  Widget _buildSearchField(ThemeData theme) {
-    return StatefulBuilder(
-      builder: (context, setLocalState) {
-        return TextField(
-          controller: _searchController,
-          onChanged: (value) {
-            setLocalState(() {});
-            _onSearchChanged(value);
-          },
-          decoration: InputDecoration(
-            hintText: 'Search activities...',
-            prefixIcon: const Icon(Icons.search),
-            suffixIcon: _searchController.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () {
-                      _searchDebounce?.cancel();
-                      _searchController.clear();
-                      setLocalState(() {});
-                      setState(() => _searchQuery = '');
-                    },
-                  )
-                : null,
-            filled: true,
-            fillColor: theme.colorScheme.surface,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildActivityTile(BuildContext context, Activity activity, {Key? key}) {
-    final theme = Theme.of(context);
-    final resolvedAvatarUrl = _resolveAvatarUrl(activity.authorAvatarUrl);
-
-    return Card(
-      key: key,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: theme.colorScheme.outline.withOpacity(0.15)),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        leading: activity.hasAuthorAvatar
-            ? ClipOval(
-                child: CachedNetworkImage(
-                  imageUrl: resolvedAvatarUrl!,
-                  width: 44,
-                  height: 44,
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => CircleAvatar(
-                    radius: 22,
-                    backgroundColor: activity.color.withOpacity(0.12),
-                  ),
-                  errorWidget: (context, url, error) => CircleAvatar(
-                    radius: 22,
-                    backgroundColor: activity.color.withOpacity(0.12),
-                    child: Icon(activity.icon, color: activity.color, size: 20),
-                  ),
-                ),
-              )
-            : CircleAvatar(
-                radius: 22,
-                backgroundColor: activity.color.withOpacity(0.12),
-                child: Icon(activity.icon, color: activity.color, size: 20),
-              ),
-        title: Text(
-          activity.title,
-          style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(
-          activity.subtitle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Text(
-          activity.timeAgo,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurface.withOpacity(0.45),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLoadingSkeleton(ThemeData theme) {
-    return Shimmer.fromColors(
-      baseColor: theme.colorScheme.onSurface.withOpacity(0.06),
-      highlightColor: theme.colorScheme.onSurface.withOpacity(0.12),
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        itemCount: 6,
-        itemBuilder: (_, __) => Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          height: 78,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(BuildContext context, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 32),
-      child: Column(
-        children: [
-          Icon(Icons.auto_awesome, size: 36, color: theme.colorScheme.primary.withOpacity(0.6)),
-          const SizedBox(height: 12),
-          Text(
-            'No activity yet',
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Activity from your community will show up here.',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurface.withOpacity(0.6),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildErrorState(BuildContext context, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 32),
-      child: Column(
-        children: [
-          Icon(Icons.cloud_off_rounded, size: 36, color: theme.colorScheme.error),
-          const SizedBox(height: 12),
-          Text(
-            "Couldn't load your feed",
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Check your connection and try again.',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurface.withOpacity(0.6),
-            ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton.tonal(onPressed: _loadData, child: const Text('Retry')),
-        ],
-      ),
-    );
-  }
+  static const List<HomeFeature> _features = [
+    HomeFeature(
+      icon: Icons.calendar_today,
+      title: 'Events',
+      subtitle: "What's coming up",
+      route: '/events',
+      color: AppColors.emberGold,
+    ),
+    HomeFeature(
+      icon: Icons.book,
+      title: 'Bible Study',
+      subtitle: 'Grow in the Word',
+      route: '/bible',
+      color: AppColors.verdantSage,
+    ),
+    HomeFeature(
+      icon: Icons.music_note,
+      title: 'Praise & Worship',
+      subtitle: 'Songs to lift you',
+      route: '/worship',
+      color: AppColors.roseQuartz,
+    ),
+    HomeFeature(
+      icon: Icons.live_tv,
+      title: 'Live Stream',
+      subtitle: 'Join the gathering',
+      route: '/live',
+      color: AppColors.inkDusk,
+    ),
+    HomeFeature(
+      icon: Icons.forum,
+      title: 'Discussion Forums',
+      subtitle: 'Talk it through',
+      route: '/forums',
+      color: AppColors.verdantSage,
+    ),
+    HomeFeature(
+      icon: Icons.self_improvement,
+      title: 'Prayer Wall',
+      subtitle: 'Ask, and be asked for',
+      route: '/prayer-wall',
+      color: AppColors.emberGold,
+    ),
+    HomeFeature(
+      icon: Icons.auto_stories,
+      title: 'Testimonies',
+      subtitle: 'Stories of faith',
+      route: '/testimonies',
+      color: AppColors.roseQuartz,
+    ),
+    HomeFeature(
+      icon: Icons.chat,
+      title: 'Group Chats',
+      subtitle: 'Stay connected',
+      route: '/group-chats',
+      color: AppColors.inkDusk,
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final filtered = _filteredActivities;
+    final authProvider = context.watch<AuthProvider>();
+    final username = authProvider.currentUser?.username;
+    final greetingName = (username == null || username.isEmpty)
+        ? 'friend'
+        : username;
 
     return Scaffold(
       drawer: const AppDrawer(),
       body: RefreshIndicator(
-        onRefresh: _loadData,
+        onRefresh: _loadActivities,
         child: CustomScrollView(
-          slivers: [
-            SliverAppBar(
-              floating: true,
-              pinned: true,
-              title: Text('Welcome back, ${_currentUser?.username ?? "Friend"}'),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.person_outline),
-                  onPressed: () => GoRouter.of(context).go('/profile'),
-                  tooltip: 'Profile',
+        slivers: [
+          SliverAppBar(
+            pinned: true,
+            expandedHeight: 180,
+            backgroundColor: AppColors.inkDusk,
+            iconTheme: const IconThemeData(color: Colors.white),
+            flexibleSpace: FlexibleSpaceBar(
+              background: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [AppColors.inkDusk, AppColors.emberGold],
+                  ),
                 ),
-              ],
-              bottom: PreferredSize(
-                preferredSize: const Size.fromHeight(60),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                  child: _buildSearchField(theme),
+                padding: const EdgeInsets.fromLTRB(24, 60, 24, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(
+                      'Welcome back, $greetingName',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'PensaConnect · Ladies & Gents Wing',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white.withOpacity(0.85),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            if (_loading)
-              SliverFillRemaining(child: _buildLoadingSkeleton(theme))
-            else if (_hasError && filtered.isEmpty)
-              SliverFillRemaining(hasScrollBody: false, child: _buildErrorState(context, theme))
-            else if (filtered.isEmpty)
-              SliverFillRemaining(hasScrollBody: false, child: _buildEmptyState(context, theme))
-            else
-              SliverPadding(
-                padding: const EdgeInsets.only(top: 8, bottom: 24),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final activity = filtered[index];
-                      return _buildActivityTile(
-                        context,
-                        activity,
-                        key: ValueKey(
-                          '${activity.title}_${activity.createdAt.millisecondsSinceEpoch}_$index',
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 14,
+                crossAxisSpacing: 14,
+                childAspectRatio: 0.98,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _FeatureCard(feature: _features[index]),
+                childCount: _features.length,
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            sliver: SliverToBoxAdapter(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Recent Activity', style: theme.textTheme.titleLarge),
+                  if (!_loadingActivities)
+                    IconButton(
+                      onPressed: _loadActivities,
+                      icon: const Icon(Icons.refresh),
+                      tooltip: 'Refresh',
+                    ),
+                ],
+              ),
+            ),
+          ),
+          _buildActivitySliver(theme),
+          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivitySliver(ThemeData theme) {
+    if (_loadingActivities) {
+      return const SliverPadding(
+        padding: EdgeInsets.symmetric(vertical: 32),
+        sliver: SliverToBoxAdapter(
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    if (_activitiesFailed) {
+      return SliverPadding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        sliver: SliverToBoxAdapter(
+          child: Center(
+            child: Column(
+              children: [
+                Text(
+                  "Couldn't load recent activity.",
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _loadActivities,
+                  child: const Text('Try again'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_activities.isEmpty) {
+      return SliverPadding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        sliver: SliverToBoxAdapter(
+          child: Center(
+            child: Text(
+              'Nothing new yet — check back soon.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.6),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      sliver: SliverList(
+        // ✅ Keyed by the activity's own id so Flutter's element diffing
+        // matches list items to the correct widget state across rebuilds
+        // (e.g. after an action toggles _locallyActive) instead of
+        // matching by position, which is what causes rows to visually
+        // "jump" or duplicate state when the underlying list changes.
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final activity = _activities[index];
+            final isLast = index == _activities.length - 1;
+            return Padding(
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
+              child: _ActivityTile(
+                key: ValueKey(activity.id),
+                activity: activity,
+                isActionInFlight: _actionInFlight.contains(activity.id),
+                isLocallyActive: _locallyActive[activity.id] ?? false,
+                onAction: () => _handleActivityAction(activity),
+                onOpen: () => _openActivityTarget(activity),
+              ),
+            );
+          },
+          childCount: _activities.length,
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityTile extends StatelessWidget {
+  final Activity activity;
+  final bool isActionInFlight;
+  final bool isLocallyActive;
+  final VoidCallback onAction;
+  final VoidCallback onOpen;
+
+  const _ActivityTile({
+    super.key,
+    required this.activity,
+    required this.isActionInFlight,
+    required this.isLocallyActive,
+    required this.onAction,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final info = activityTargetInfo(activity.targetType);
+
+    return Material(
+      color: theme.cardTheme.color,
+      shape: AppShapes.archBorder(top: 16, bottom: 16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: info.canOpenDetail ? onOpen : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              activity.hasAuthorAvatar
+                  ? CircleAvatar(
+                      radius: 20,
+                      backgroundImage: NetworkImage(activity.authorAvatarUrl!),
+                    )
+                  : CircleAvatar(
+                      radius: 20,
+                      backgroundColor: activity.color.withOpacity(0.15),
+                      child: Icon(activity.icon, color: activity.color, size: 20),
+                    ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      activity.title,
+                      style: theme.textTheme.titleSmall,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (activity.subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        activity.subtitle,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
                         ),
-                      );
-                    },
-                    childCount: filtered.length,
-                  ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(
+                      [
+                        if (activity.authorName != null) activity.authorName!,
+                        activity.timeAgo,
+                      ].join(' · '),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.45),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-          ],
+              if (info.canLike)
+                IconButton(
+                  onPressed: isActionInFlight ? null : onAction,
+                  tooltip: isLocallyActive ? info.activeLabel : info.label,
+                  icon: isActionInFlight
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          isLocallyActive ? info.activeIcon : info.icon,
+                          color: isLocallyActive
+                              ? info.activeColor
+                              : theme.colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FeatureCard extends StatelessWidget {
+  final HomeFeature feature;
+
+  const _FeatureCard({required this.feature});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.cardTheme.color,
+      shape: AppShapes.archBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => context.push(feature.route),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: feature.color.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(feature.icon, color: feature.color, size: 22),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(feature.title, style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 2),
+                  Text(
+                    feature.subtitle,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
