@@ -145,6 +145,8 @@ def create_thread():
             icon="forum",
             color="orange",
             user_id=current_user.id,
+            target_type="forum_thread",
+            target_id=thread.id,
         )
         db.session.add(activity)
         db.session.commit()
