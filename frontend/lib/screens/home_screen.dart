@@ -35,23 +35,13 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Activity> _activities = [];
   bool _loading = true;
 
-  // ✅ FIX: track which user's data is currently loaded, and listen for
-  // AuthService changes so this screen stays in sync across login/logout
-  // even if it isn't recreated (e.g. it's still mounted underneath a
-  // pushed route when the auth state changes).
   int? _loadedForUserId;
   late final VoidCallback _authListener;
 
-  // --- Feed engagement ---
-  // Which activities the current user has liked/prayed for *this session*.
-  // Keyed by identityHashCode(activity) so it survives search filtering
-  // without needing a dedicated id on the feed's Activity objects. This
-  // is optimistic UI state layered on top of real API calls (see
-  // _handleLike) — the feed doesn't currently re-fetch each target's
-  // true like state on load, so a like made from another screen won't
-  // show as already-active here until the user taps it again.
-  final Set<int> _likedActivityKeys = {};
-  int? _heartBurstKey;
+  // ✅ FIX: Changed from Set<int> (identityHashCode) to Set<String> using a
+  // stable composite key so likes survive background re-fetches and search filtering.
+  final Set<String> _likedActivityKeys = {};
+  String? _heartBurstKey;
   Timer? _heartBurstTimer;
 
   @override
@@ -66,8 +56,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     final newUserId = AuthService().userId;
 
-    // Only reload if the logged-in user actually changed (covers both
-    // "logged out" -> null and "different user logged in" -> new id).
     if (newUserId != _loadedForUserId) {
       debugPrint('🔄 HomeScreen: auth changed ($_loadedForUserId → $newUserId), reloading');
       _loadData();
@@ -79,10 +67,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _loading = true);
 
     try {
-      // ✅ FIX: use the actual token source (ApiService/secure storage),
-      // not SharedPreferences['auth_token'] — nothing ever wrote a token
-      // there, so `token` was always null and getCurrentUser() never ran
-      // with real credentials.
       final token = await ApiService.getToken();
       final loggedInUserId = AuthService().userId;
 
@@ -90,9 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
       List<Activity> activities = [];
 
       if (token != null && loggedInUserId != null) {
-        // Fetch user + activities together; only proceed with activities
-        // if we're actually authenticated, so we don't fire a request
-        // that's guaranteed to 401 (e.g. right after a logout).
         user = await UserRepository().getCurrentUser(token);
         activities = await ActivityRepository().fetchRecentActivities(limit: 20);
       } else {
@@ -118,7 +99,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Kept for potential future grid usages (e.g. a "see all" features page).
+  // ✅ FIX: Stable composite key generator for Activity items
+  String _getActivityKey(Activity activity) {
+    return '${activity.targetType}_${activity.targetId ?? activity.title}_${activity.timeAgo}';
+  }
+
   int getCrossAxisCount(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     if (width > 1200) return 4;
@@ -144,18 +129,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildProfileAvatar() {
     if (_currentUser == null) {
       return CircleAvatar(
-        radius: 20,
+        radius: 18,
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
         child: Icon(
           Icons.person,
           color: Theme.of(context).colorScheme.onPrimaryContainer,
-          size: 20,
+          size: 18,
         ),
       );
     }
 
     return CircleAvatar(
-      radius: 20,
+      radius: 18,
       backgroundColor: Theme.of(context).colorScheme.primaryContainer,
       backgroundImage: _currentUser!.profilePicture != null
           ? NetworkImage(
@@ -169,7 +154,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ? Icon(
               Icons.person,
               color: Theme.of(context).colorScheme.onPrimaryContainer,
-              size: 20,
+              size: 18,
             )
           : null,
     );
@@ -180,25 +165,22 @@ class _HomeScreenState extends State<HomeScreen> {
       controller: _searchController,
       onChanged: (value) => setState(() => _searchQuery = value),
       decoration: InputDecoration(
-        hintText: 'Search...',
-        prefixIcon: const Icon(Icons.search),
+        hintText: 'Search posts, topics, or authors...',
+        prefixIcon: const Icon(Icons.search, size: 20),
         filled: true,
-        fillColor: theme.colorScheme.surface.withOpacity(0.1),
+        fillColor: theme.colorScheme.surface.withOpacity(0.15),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
         ),
         contentPadding: const EdgeInsets.symmetric(
-          vertical: 12,
+          vertical: 10,
           horizontal: 16,
         ),
       ),
     );
   }
 
-  // Compact quick-action chip used in the horizontal row that replaces
-  // the old full-page icon grid. Same feature data, much lower visual
-  // weight so the activity feed can be the star of the screen.
   Widget _buildQuickAction(BuildContext context, Map<String, dynamic> feature) {
     final theme = Theme.of(context);
     final color = feature['color'] as Color;
@@ -239,12 +221,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Feed-style card for a single activity item — richer than a plain
-  // ListTile so the "Recent Activity" section reads as living content,
-  // not a settings-style list.
-  // Activity author avatars come back as a relative path (same as
-  // User.profile_picture), not a full URL — resolve against Config.baseUrl
-  // the same way _buildProfileAvatar does for the current user.
   String? _resolveAvatarUrl(String? path) {
     if (path == null || path.isEmpty) return null;
     if (path.startsWith('http://') || path.startsWith('https://')) return path;
@@ -255,10 +231,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return '$base$normalizedPath';
   }
 
-  // Opens the real content an activity refers to, when we have somewhere
-  // to send the user — testimony and forum_thread both have live detail
-  // screens; prayer_request/post/event don't (yet), so tapping does
-  // nothing for those rather than dead-ending on a broken route.
   void _openActivityTarget(BuildContext context, Activity activity) {
     final info = activityTargetInfo(activity.targetType);
     if (!info.canOpenDetail || activity.targetId == null) return;
@@ -276,11 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Routes a like to whichever real endpoint backs this activity's
-  // target — there's no "like an activity" endpoint, because an
-  // Activity is a log entry, not content of its own. Optimistically
-  // flips the heart, then rolls back if the API call fails.
-  Future<void> _handleLike(Activity activity, int key) async {
+  Future<void> _handleLike(Activity activity, String key) async {
     final info = activityTargetInfo(activity.targetType);
     if (!info.canLike || activity.targetId == null) return;
 
@@ -317,7 +285,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _handleDoubleTapLike(Activity activity, int key) {
+  void _handleDoubleTapLike(Activity activity, String key) {
     final info = activityTargetInfo(activity.targetType);
     if (!info.canLike) return;
     if (!_likedActivityKeys.contains(key)) {
@@ -338,15 +306,13 @@ class _HomeScreenState extends State<HomeScreen> {
     Share.share(text);
   }
 
-  // Feed-style post card — header (author identity), content, then a
-  // real Like/Comment/Share action bar. Like and Comment only render
-  // when the activity has a real backing object with a working endpoint
-  // (see ActivityTargetInfo) — Share always works since it just shares
-  // the activity's own text.
   Widget _buildActivityCard(BuildContext context, Activity activity) {
     final theme = Theme.of(context);
     final resolvedAvatarUrl = _resolveAvatarUrl(activity.authorAvatarUrl);
-    final key = identityHashCode(activity);
+    
+    // ✅ FIX: Using the stable composite key
+    final key = _getActivityKey(activity);
+    
     final info = activityTargetInfo(activity.targetType);
     final isLiked = _likedActivityKeys.contains(key);
     final showBurst = _heartBurstKey == key;
@@ -368,7 +334,6 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // --- Post header: avatar, author, meta ---
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
             child: Row(
@@ -429,8 +394,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // --- Post content: tap opens the real content (if any),
-          // double-tap likes it (if likeable) ---
           GestureDetector(
             onTap: () => _openActivityTarget(context, activity),
             onDoubleTap: () => _handleDoubleTapLike(activity, key),
@@ -538,9 +501,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Empty state that invites action instead of just announcing absence —
-  // avoids the "nobody uses this app" impression a bare "No recent
-  // activity" text creates.
   Widget _buildEmptyFeedState(BuildContext context, ThemeData theme) {
     return Container(
       width: double.infinity,
@@ -586,7 +546,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bool isLargeScreen = MediaQuery.of(context).size.width >= 800;
-    final bool isIOS = defaultTargetPlatform == TargetPlatform.iOS;
 
     final features = [
       {
@@ -641,42 +600,17 @@ class _HomeScreenState extends State<HomeScreen> {
         )
         .toList();
 
-    final filteredActivities = _activities
-        .where(
-          (a) => a.title.toLowerCase().contains(_searchQuery.toLowerCase()),
-        )
-        .toList();
-
-    PreferredSizeWidget? appBar;
-    if (!isIOS) {
-      appBar = AppBar(
-        title: const Text("PensaConnect"),
-        actions: [
-          SizedBox(
-            width: 250,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-              child: _buildSearchField(theme),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.notifications),
-            onPressed: () {},
-            tooltip: 'Notifications',
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: GestureDetector(
-              onTap: () => GoRouter.of(context).go('/profile'),
-              child: _buildProfileAvatar(),
-            ),
-          ),
-        ],
-      );
-    }
+    // ✅ FIX: Broadened search scope (checks title, subtitle, and author)
+    final query = _searchQuery.toLowerCase();
+    final filteredActivities = _activities.where((a) {
+      final titleMatch = a.title.toLowerCase().contains(query);
+      final subtitleMatch = a.subtitle.toLowerCase().contains(query);
+      final authorMatch = (a.authorName ?? '').toLowerCase().contains(query);
+      return titleMatch || subtitleMatch || authorMatch;
+    }).toList();
 
     return Scaffold(
-      appBar: appBar,
+      // ✅ FIX: Removed platform-dependent AppBar to let SliverAppBar handle headers cleanly
       drawer: isLargeScreen ? null : const AppDrawer(),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -690,6 +624,34 @@ class _HomeScreenState extends State<HomeScreen> {
                       onRefresh: _loadData,
                       child: CustomScrollView(
                         slivers: [
+                          // ✅ FIX: Responsive SliverAppBar works on both iOS & Android without RenderFlex overflow
+                          SliverAppBar(
+                            floating: true,
+                            pinned: false,
+                            title: const Text("PensaConnect", style: TextStyle(fontWeight: FontWeight.bold)),
+                            actions: [
+                              IconButton(
+                                icon: const Icon(Icons.notifications_outlined),
+                                onPressed: () {},
+                                tooltip: 'Notifications',
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                                child: GestureDetector(
+                                  onTap: () => GoRouter.of(context).go('/profile'),
+                                  child: _buildProfileAvatar(),
+                                ),
+                              ),
+                            ],
+                            bottom: PreferredSize(
+                              preferredSize: const Size.fromHeight(60),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                                child: _buildSearchField(theme),
+                              ),
+                            ),
+                          ),
+
                           // --- Greeting header ---
                           SliverPadding(
                             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -716,7 +678,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
 
-                          // --- Compact quick-actions row (was the full grid) ---
+                          // --- Compact quick-actions row ---
                           if (filteredFeatures.isNotEmpty)
                             SliverPadding(
                               padding: const EdgeInsets.only(top: 20),
@@ -744,7 +706,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
 
-                          // --- Activity feed: now the primary content ---
+                          // --- Activity feed ---
                           SliverPadding(
                             padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
                             sliver: SliverToBoxAdapter(
@@ -807,10 +769,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// Single Like/Comment/Share button used in the activity card's action
-// bar. Pulled out as its own widget so all of them stay pixel-identical
-// (equal width, same icon size, same tap target) the way FB/IG action
-// bars do.
 class _ActionBarButton extends StatelessWidget {
   final IconData icon;
   final String label;
