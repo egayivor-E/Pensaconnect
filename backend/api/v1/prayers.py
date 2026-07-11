@@ -117,6 +117,8 @@ def create_prayer():
                 icon="pray",
                 color="blue",
                 user_id=user_id,
+                target_type="prayer_request",
+                target_id=prayer_instance.id,
             )
             db.session.add(activity)
             db.session.commit()
@@ -228,6 +230,8 @@ def toggle_prayer(prayer_id: int):
                 icon="pray",
                 color="blue",
                 user_id=user_id,
+                target_type="prayer_request",
+                target_id=prayer_request.id,
             )
             db.session.add(activity)
             db.session.commit()
