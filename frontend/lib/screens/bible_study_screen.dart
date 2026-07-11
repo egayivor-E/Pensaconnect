@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pensaconnect/models/bible_models.dart';
 import 'package:pensaconnect/repositories/bible_repository.dart';
+import '../theme/app_style.dart';
 
 // Add these enums to extend your models
 enum DevotionCategory { daily, prayer, wisdom, encouragement, guidance }
@@ -22,7 +23,7 @@ class _CategoryStyle {
 _CategoryStyle _categoryStyle(DevotionCategory category) {
   switch (category) {
     case DevotionCategory.prayer:
-      return const _CategoryStyle('🙏 Prayer', Icons.handshake, Colors.purple);
+      return const _CategoryStyle('🙏 Prayer', Icons.handshake, AppColors.roseQuartz);
     case DevotionCategory.wisdom:
       return const _CategoryStyle('💡 Wisdom', Icons.lightbulb, Colors.amber);
     case DevotionCategory.encouragement:
