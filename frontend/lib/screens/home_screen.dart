@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart'
     show FontAwesome;
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:pensaconnect/services/api_service.dart';
 import 'package:pensaconnect/services/auth_service.dart';
 
@@ -11,8 +14,12 @@ import '../widgets/app_drawer.dart';
 import '../widgets/chat_options_sheet.dart';
 import '../repositories/activity_repository.dart';
 import '../repositories/user_repository.dart';
+import '../repositories/testimony_repository.dart';
+import '../repositories/forum_repository.dart';
+import '../repositories/prayer_repository.dart';
 import '../models/activity.dart';
 import '../models/user.dart';
+import '../utils/activity_target.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -34,6 +41,18 @@ class _HomeScreenState extends State<HomeScreen> {
   // pushed route when the auth state changes).
   int? _loadedForUserId;
   late final VoidCallback _authListener;
+
+  // --- Feed engagement ---
+  // Which activities the current user has liked/prayed for *this session*.
+  // Keyed by identityHashCode(activity) so it survives search filtering
+  // without needing a dedicated id on the feed's Activity objects. This
+  // is optimistic UI state layered on top of real API calls (see
+  // _handleLike) — the feed doesn't currently re-fetch each target's
+  // true like state on load, so a like made from another screen won't
+  // show as already-active here until the user taps it again.
+  final Set<int> _likedActivityKeys = {};
+  int? _heartBurstKey;
+  Timer? _heartBurstTimer;
 
   @override
   void initState() {
@@ -118,6 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     AuthService().removeListener(_authListener);
     _searchController.dispose();
+    _heartBurstTimer?.cancel();
     super.dispose();
   }
 
@@ -235,92 +255,285 @@ class _HomeScreenState extends State<HomeScreen> {
     return '$base$normalizedPath';
   }
 
+  // Opens the real content an activity refers to, when we have somewhere
+  // to send the user — testimony and forum_thread both have live detail
+  // screens; prayer_request/post/event don't (yet), so tapping does
+  // nothing for those rather than dead-ending on a broken route.
+  void _openActivityTarget(BuildContext context, Activity activity) {
+    final info = activityTargetInfo(activity.targetType);
+    if (!info.canOpenDetail || activity.targetId == null) return;
+
+    switch (activity.targetType) {
+      case 'testimony':
+        GoRouter.of(context).push('/testimonies/${activity.targetId}');
+        break;
+      case 'forum_thread':
+        GoRouter.of(context).push(
+          '/threads/${activity.targetId}',
+          extra: {'title': activity.title},
+        );
+        break;
+    }
+  }
+
+  // Routes a like to whichever real endpoint backs this activity's
+  // target — there's no "like an activity" endpoint, because an
+  // Activity is a log entry, not content of its own. Optimistically
+  // flips the heart, then rolls back if the API call fails.
+  Future<void> _handleLike(Activity activity, int key) async {
+    final info = activityTargetInfo(activity.targetType);
+    if (!info.canLike || activity.targetId == null) return;
+
+    final wasLiked = _likedActivityKeys.contains(key);
+    setState(() {
+      wasLiked ? _likedActivityKeys.remove(key) : _likedActivityKeys.add(key);
+    });
+
+    try {
+      switch (activity.targetType) {
+        case 'testimony':
+          await TestimonyRepository().toggleLike(activity.targetId!);
+          break;
+        case 'forum_thread':
+          await ForumRepository().toggleLikeThread(activity.targetId!);
+          break;
+        case 'prayer_request':
+          await PrayerRepository().togglePrayerById(activity.targetId!);
+          break;
+      }
+    } catch (e) {
+      debugPrint(
+        '❌ Failed to sync like for ${activity.targetType}#${activity.targetId}: $e',
+      );
+      if (!mounted) return;
+      setState(() {
+        wasLiked ? _likedActivityKeys.add(key) : _likedActivityKeys.remove(key);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't save that — check your connection and try again."),
+        ),
+      );
+    }
+  }
+
+  void _handleDoubleTapLike(Activity activity, int key) {
+    final info = activityTargetInfo(activity.targetType);
+    if (!info.canLike) return;
+    if (!_likedActivityKeys.contains(key)) {
+      _handleLike(activity, key);
+    }
+    _heartBurstTimer?.cancel();
+    setState(() => _heartBurstKey = key);
+    _heartBurstTimer = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted) return;
+      setState(() => _heartBurstKey = null);
+    });
+  }
+
+  void _shareActivity(Activity activity) {
+    final text = activity.subtitle.isNotEmpty
+        ? '${activity.title}\n\n${activity.subtitle}'
+        : activity.title;
+    Share.share(text);
+  }
+
+  // Feed-style post card — header (author identity), content, then a
+  // real Like/Comment/Share action bar. Like and Comment only render
+  // when the activity has a real backing object with a working endpoint
+  // (see ActivityTargetInfo) — Share always works since it just shares
+  // the activity's own text.
   Widget _buildActivityCard(BuildContext context, Activity activity) {
     final theme = Theme.of(context);
     final resolvedAvatarUrl = _resolveAvatarUrl(activity.authorAvatarUrl);
+    final key = identityHashCode(activity);
+    final info = activityTargetInfo(activity.targetType);
+    final isLiked = _likedActivityKeys.contains(key);
+    final showBurst = _heartBurstKey == key;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: theme.colorScheme.outline.withOpacity(0.15),
-        ),
+        boxShadow: [
+          BoxShadow(
+            color: theme.colorScheme.shadow.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () {},
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Prefer a real author avatar; fall back to the activity-type
-              // icon circle when no author image is available. Keeps every
-              // card visually anchored to a person, not just an event type.
-              activity.hasAuthorAvatar
-                  ? CircleAvatar(
-                      radius: 22,
-                      backgroundColor: activity.color.withOpacity(0.12),
-                      backgroundImage: NetworkImage(resolvedAvatarUrl!),
-                      onBackgroundImageError: (exception, stackTrace) {
-                        debugPrint('Activity avatar load error: $exception');
-                      },
-                    )
-                  : Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: activity.color.withOpacity(0.12),
-                        shape: BoxShape.circle,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // --- Post header: avatar, author, meta ---
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                activity.hasAuthorAvatar
+                    ? CircleAvatar(
+                        radius: 22,
+                        backgroundColor: activity.color.withOpacity(0.12),
+                        backgroundImage: NetworkImage(resolvedAvatarUrl!),
+                        onBackgroundImageError: (exception, stackTrace) {
+                          debugPrint('Activity avatar load error: $exception');
+                        },
+                      )
+                    : Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: activity.color.withOpacity(0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(activity.icon, color: activity.color, size: 22),
                       ),
-                      child: Icon(activity.icon, color: activity.color, size: 22),
-                    ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (activity.authorName != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: Text(
-                          activity.authorName!,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurface.withOpacity(0.55),
-                            fontWeight: FontWeight.w500,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        activity.authorName ?? activity.title,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(activity.icon, size: 12, color: activity.color),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              activity.timeAgo,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface.withOpacity(0.5),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // --- Post content: tap opens the real content (if any),
+          // double-tap likes it (if likeable) ---
+          GestureDetector(
+            onTap: () => _openActivityTarget(context, activity),
+            onDoubleTap: () => _handleDoubleTapLike(activity, key),
+            behavior: HitTestBehavior.opaque,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (activity.authorName != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            activity.title,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
+                      Text(
+                        activity.subtitle,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.75),
+                          height: 1.35,
+                        ),
                       ),
-                    Text(
-                      activity.title,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      activity.subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.65),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      activity.timeAgo,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.45),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                AnimatedScale(
+                  scale: showBurst ? 1.0 : 0.6,
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOutBack,
+                  child: AnimatedOpacity(
+                    opacity: showBurst ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 250),
+                    child: Icon(
+                      info.activeIcon,
+                      color: Colors.white,
+                      size: 72,
+                      shadows: const [
+                        Shadow(color: Colors.black38, blurRadius: 12),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
+
+          if (info.canLike || info.canOpenDetail) ...[
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: theme.colorScheme.outline.withOpacity(0.1),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(
+                children: [
+                  if (info.canLike)
+                    Expanded(
+                      child: _ActionBarButton(
+                        icon: isLiked ? info.activeIcon : info.icon,
+                        label: isLiked ? info.activeLabel : info.label,
+                        color: isLiked ? info.activeColor : null,
+                        onTap: () => _handleLike(activity, key),
+                      ),
+                    ),
+                  if (info.canOpenDetail)
+                    Expanded(
+                      child: _ActionBarButton(
+                        icon: Icons.mode_comment_outlined,
+                        label: 'Comment',
+                        onTap: () => _openActivityTarget(context, activity),
+                      ),
+                    ),
+                  Expanded(
+                    child: _ActionBarButton(
+                      icon: Icons.share_outlined,
+                      label: 'Share',
+                      onTap: () => _shareActivity(activity),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+              child: _ActionBarButton(
+                icon: Icons.share_outlined,
+                label: 'Share',
+                onTap: () => _shareActivity(activity),
+              ),
+            ),
+          const SizedBox(height: 4),
+        ],
       ),
     );
   }
@@ -472,7 +685,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (isLargeScreen) const AppDrawer(),
                 Expanded(
                   child: Container(
-                    color: theme.colorScheme.surface,
+                    color: theme.colorScheme.surfaceVariant.withOpacity(0.25),
                     child: RefreshIndicator(
                       onRefresh: _loadData,
                       child: CustomScrollView(
@@ -589,6 +802,52 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         backgroundColor: theme.colorScheme.primary,
         child: const Icon(Icons.chat_bubble, color: Colors.white),
+      ),
+    );
+  }
+}
+
+// Single Like/Comment/Share button used in the activity card's action
+// bar. Pulled out as its own widget so all of them stay pixel-identical
+// (equal width, same icon size, same tap target) the way FB/IG action
+// bars do.
+class _ActionBarButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color? color;
+  final VoidCallback onTap;
+
+  const _ActionBarButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final effectiveColor = color ?? theme.colorScheme.onSurface.withOpacity(0.65);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 20, color: effectiveColor),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: effectiveColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
