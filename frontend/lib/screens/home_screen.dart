@@ -4,8 +4,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
-// [Point 1] Removed unused import: 'package:flutter/foundation.dart' show defaultTargetPlatform;
-
 void main() {
   runApp(const SocialFeedApp());
 }
@@ -42,7 +40,6 @@ class SocialFeedApp extends StatelessWidget {
 // DOMAIN MODELS & TYPE SAFETY
 // ==========================================
 
-// [Point 2] Strongly-typed HomeFeature class replacing Map<String, dynamic>
 class HomeFeature {
   final IconData icon;
   final String title;
@@ -57,7 +54,6 @@ class HomeFeature {
   });
 }
 
-// [Point 9] Server-backed Activity model with embedded like state
 class Activity {
   final String id;
   final String authorId;
@@ -81,7 +77,6 @@ class Activity {
     required this.isLiked,
   });
 
-  // [Point 8] Reliable, collision-free Hero tag handling nulls safely
   String get heroTag => 'avatar_${targetType}_$targetId';
 
   Activity copyWith({
@@ -127,7 +122,6 @@ class SocialFeedScreen extends StatefulWidget {
 }
 
 class _SocialFeedScreenState extends State<SocialFeedScreen> {
-  // [Point 3] Moved static features outside build() to prevent reallocation on rebuild
   static const List<HomeFeature> _features = [
     HomeFeature(
       icon: Icons.calendar_today,
@@ -150,16 +144,15 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
   ];
 
   final TextEditingController _searchController = TextEditingController();
-  // [Point 5] ValueNotifier isolates search text state from the main widget tree
   final ValueNotifier<String> _searchQuery = ValueNotifier<String>('');
-  
+  Timer? _debounce; // FIX: debounce search input instead of filtering per keystroke
+
   UserProfile? _currentUser;
   List<Activity> _allActivities = [];
-  // [Point 4] Filtered list stored as state property, updated only when query changes
   List<Activity> _filteredActivities = [];
-  
+
   bool _isLoading = true;
-  // [Point 10] Track pending network likes to prevent rapid multi-tap spam
+  bool _hasError = false; // FIX: surface fetch failures instead of hanging forever
   final Set<String> _pendingLikes = {};
 
   @override
@@ -169,15 +162,20 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     _searchQuery.addListener(_applyFilter);
   }
 
-  // [Point 11] Initial load fetches BOTH user and activities
   Future<void> _initialLoad() async {
-    setState(() => _isLoading = true);
-    await Future.wait([
-      _loadUserProfile(),
-      _fetchActivities(),
-    ]);
-    if (mounted) {
-      setState(() => _isLoading = false);
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+    });
+    try {
+      await Future.wait([
+        _loadUserProfile(),
+        _fetchActivities(),
+      ]);
+    } catch (_) {
+      if (mounted) setState(() => _hasError = true);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -190,22 +188,26 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     );
   }
 
-  // [Point 11] Refresh indicator ONLY reloads activities; user data remains untouched
   Future<void> _handleRefresh() async {
-    await _fetchActivities();
+    try {
+      await _fetchActivities();
+    } catch (_) {
+      if (mounted) setState(() => _hasError = true);
+    }
   }
 
   Future<void> _fetchActivities() async {
     await Future.delayed(const Duration(milliseconds: 800));
-    
-    // Realistic mock data
-    final fetchedData = [
+
+    final fetchedData = <Activity>[
       const Activity(
         id: 'act_101',
         authorId: 'usr_552',
         authorName: 'David K.',
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        content: 'Just deployed the new real-time WebSocket messaging service! Performance is up by 40%.',
+        avatarUrl:
+            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+        content:
+            'Just deployed the new real-time WebSocket messaging service! Performance is up by 40%.',
         targetType: 'post',
         targetId: 'post_8891',
         likeCount: 24,
@@ -215,8 +217,10 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
         id: 'act_102',
         authorId: 'usr_312',
         authorName: 'Sarah Jenkins',
-        avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
-        content: 'Anyone attending the Flutter architectural meetup this Saturday? Let’s connect!',
+        avatarUrl:
+            'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
+        content:
+            'Anyone attending the Flutter architectural meetup this Saturday? Let’s connect!',
         targetType: 'event',
         targetId: 'evt_4022',
         likeCount: 56,
@@ -226,8 +230,10 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
         id: 'act_103',
         authorId: 'usr_789',
         authorName: 'Marcus Chen',
-        avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-        content: 'Written a comprehensive guide on moving from Material 2 to Material 3 in large-scale apps.',
+        avatarUrl:
+            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
+        content:
+            'Written a comprehensive guide on moving from Material 2 to Material 3 in large-scale apps.',
         targetType: 'article',
         targetId: 'art_9011',
         likeCount: 112,
@@ -236,48 +242,57 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     ];
 
     if (mounted) {
-      _allActivities = fetchedData;
-      _applyFilter();
+      setState(() {
+        _allActivities = fetchedData;
+        _filteredActivities = _computeFiltered(_allActivities, _searchQuery.value);
+      });
     }
   }
 
-  // [Point 4 & 12] Trim whitespace, lowercase, and update filtered state directly
+  // Pure filter logic, no setState here — callers decide when to rebuild.
+  List<Activity> _computeFiltered(List<Activity> source, String rawQuery) {
+    final query = rawQuery.trim().toLowerCase();
+    if (query.isEmpty) return List.from(source);
+    return source.where((act) {
+      final contentMatch = act.content.toLowerCase().contains(query);
+      final authorMatch = act.authorName.toLowerCase().contains(query);
+      return contentMatch || authorMatch;
+    }).toList();
+  }
+
+  // Triggered by the ValueNotifier listener (debounced search changes).
   void _applyFilter() {
-    final query = _searchQuery.value.trim().toLowerCase();
     setState(() {
-      if (query.isEmpty) {
-        _filteredActivities = List.from(_allActivities);
-      } else {
-        _filteredActivities = _allActivities.where((act) {
-          final contentMatch = act.content.toLowerCase().contains(query);
-          final authorMatch = act.authorName.toLowerCase().contains(query);
-          return contentMatch || authorMatch;
-        }).toList();
-      }
+      _filteredActivities = _computeFiltered(_allActivities, _searchQuery.value);
     });
   }
 
-  // [Point 10] Network request throttling with optimistic UI updates
+  void _onSearchChanged(String text) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      _searchQuery.value = text; // triggers _applyFilter via the listener
+    });
+  }
+
+  // FIX: single setState, no nested call into _applyFilter's own setState.
   Future<void> _handleLike(Activity activity) async {
     if (_pendingLikes.contains(activity.id)) return;
 
     setState(() {
       _pendingLikes.add(activity.id);
-      
-      // Optimistic state toggle
       final index = _allActivities.indexWhere((a) => a.id == activity.id);
       if (index != -1) {
         final current = _allActivities[index];
         _allActivities[index] = current.copyWith(
           isLiked: !current.isLiked,
-          likeCount: current.isLiked ? current.likeCount - 1 : current.likeCount + 1,
+          likeCount:
+              current.isLiked ? current.likeCount - 1 : current.likeCount + 1,
         );
-        _applyFilter();
+        _filteredActivities = _computeFiltered(_allActivities, _searchQuery.value);
       }
     });
 
     try {
-      // Simulate backend REST/GraphQL mutation
       await Future.delayed(const Duration(milliseconds: 400));
     } finally {
       if (mounted) {
@@ -288,6 +303,7 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     _searchQuery.dispose();
     super.dispose();
@@ -306,7 +322,7 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
                 radius: 16,
                 backgroundColor: Theme.of(context).colorScheme.primaryContainer,
                 child: Text(
-                  _currentUser!.name[0],
+                  _currentUser!.name.isNotEmpty ? _currentUser!.name[0] : '?',
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onPrimaryContainer,
                     fontWeight: FontWeight.bold,
@@ -322,17 +338,18 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
           _buildSearchField(),
           Expanded(
             child: _isLoading
-                ? _buildShimmerSkeleton() // [Point 6]
-                : RefreshIndicator(
-                    onRefresh: _handleRefresh, // [Point 11]
-                    child: _filteredActivities.isEmpty
-                        ? _buildAnimatedEmptyState() // [Point 13]
-                        : _buildFeedList(), // [Point 17]
-                  ),
+                ? _buildShimmerSkeleton()
+                : _hasError
+                    ? _buildErrorState()
+                    : RefreshIndicator(
+                        onRefresh: _handleRefresh,
+                        child: _filteredActivities.isEmpty
+                            ? _buildAnimatedEmptyState()
+                            : _buildFeedList(),
+                      ),
           ),
         ],
       ),
-      // [Point 14] Material 3 Extended FAB for clear, modern visual hierarchy
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {},
         icon: const Icon(Icons.add),
@@ -366,7 +383,6 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     );
   }
 
-  // [Point 5 & 15] Search input with ValueListenableBuilder and conditional clear button
   Widget _buildSearchField() {
     return Padding(
       padding: const EdgeInsets.all(16.0),
@@ -375,14 +391,15 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
         builder: (context, value, child) {
           return TextField(
             controller: _searchController,
-            onChanged: (text) => _searchQuery.value = text,
+            onChanged: _onSearchChanged, // FIX: debounced
             decoration: InputDecoration(
               hintText: 'Search feed...',
               prefixIcon: const Icon(Icons.search),
-              suffixIcon: value.isNotEmpty
+              suffixIcon: _searchController.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.close),
                       onPressed: () {
+                        _debounce?.cancel();
                         _searchController.clear();
                         _searchQuery.value = '';
                       },
@@ -402,7 +419,6 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     );
   }
 
-  // [Point 17] Staggered entry animations using flutter_animate
   Widget _buildFeedList() {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -411,17 +427,18 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
       itemBuilder: (context, index) {
         final activity = _filteredActivities[index];
         return _ActivityCard(
+          key: ValueKey(activity.id), // FIX: stable identity across reorders
           activity: activity,
+          isPending: _pendingLikes.contains(activity.id),
           onLike: () => _handleLike(activity),
         )
-        .animate()
-        .fadeIn(duration: 300.ms, delay: (50 * index).ms)
-        .slideY(begin: 0.08, end: 0, curve: Curves.easeOutQuad);
+            .animate()
+            .fadeIn(duration: 300.ms, delay: (50 * index).ms)
+            .slideY(begin: 0.08, end: 0, curve: Curves.easeOutQuad);
       },
     );
   }
 
-  // [Point 6] Skeletonizer wraps realistic layout for shimmer effects
   Widget _buildShimmerSkeleton() {
     return Skeletonizer(
       enabled: true,
@@ -460,7 +477,6 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
     );
   }
 
-  // [Point 13] Animated, lively empty state replacing static icons
   Widget _buildAnimatedEmptyState() {
     return Center(
       child: SingleChildScrollView(
@@ -473,25 +489,56 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
               size: 64,
               color: Theme.of(context).colorScheme.outline,
             )
-            .animate(onPlay: (controller) => controller.repeat(reverse: true))
-            .scale(
-              begin: const Offset(0.95, 0.95),
-              end: const Offset(1.05, 1.05),
-              duration: 1500.ms,
-              curve: Curves.easeInOut,
-            ),
+                .animate(onPlay: (controller) => controller.repeat(reverse: true))
+                .scale(
+                  begin: const Offset(0.95, 0.95),
+                  end: const Offset(1.05, 1.05),
+                  duration: 1500.ms,
+                  curve: Curves.easeInOut,
+                ),
             const SizedBox(height: 16),
             Text(
               'No activities found',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
             ).animate().fadeIn(duration: 400.ms),
             const SizedBox(height: 8),
             Text(
               'Try adjusting your search terms.',
               style: TextStyle(color: Theme.of(context).colorScheme.outline),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // NEW: retry UI when initial load fails, instead of an infinite skeleton.
+  Widget _buildErrorState() {
+    return Center(
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.cloud_off_rounded,
+              size: 64,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Couldn’t load your feed',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _initialLoad,
+              child: const Text('Retry'),
             ),
           ],
         ),
@@ -504,20 +551,68 @@ class _SocialFeedScreenState extends State<SocialFeedScreen> {
 // MATERIAL 3 ACTIVITY CARD COMPONENT
 // ==========================================
 
-class _ActivityCard extends StatelessWidget {
+class _ActivityCard extends StatefulWidget {
   final Activity activity;
+  final bool isPending;
   final VoidCallback onLike;
 
   const _ActivityCard({
+    super.key,
     required this.activity,
+    required this.isPending,
     required this.onLike,
   });
 
   @override
+  State<_ActivityCard> createState() => _ActivityCardState();
+}
+
+class _ActivityCardState extends State<_ActivityCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _burstController;
+  late final Animation<double> _burstScale;
+
+  @override
+  void initState() {
+    super.initState();
+    // FIX: a proper "burst and settle back to 1.0" heart animation,
+    // instead of a tween that has no way back down.
+    _burstController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _burstScale = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 1.0, end: 1.3).chain(CurveTween(curve: Curves.easeOut)),
+        weight: 40,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 1.3, end: 1.0).chain(CurveTween(curve: Curves.elasticOut)),
+        weight: 60,
+      ),
+    ]).animate(_burstController);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ActivityCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.activity.isLiked && widget.activity.isLiked) {
+      _burstController.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _burstController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
-    // [Point 18] Material 3 Card with surfaceTint and 0 elevation
+    final activity = widget.activity;
+    final hasAvatar = (activity.avatarUrl ?? '').isNotEmpty;
+
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 12),
@@ -525,7 +620,7 @@ class _ActivityCard extends StatelessWidget {
       surfaceTintColor: theme.colorScheme.surfaceTint,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
+        side: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -534,27 +629,36 @@ class _ActivityCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                // [Point 8 & 16] Hero tag + CachedNetworkImage with memory & disk cache
                 Hero(
                   tag: activity.heroTag,
                   child: ClipOval(
-                    child: CachedNetworkImage(
-                      imageUrl: activity.avatarUrl ?? '',
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        child: const Icon(Icons.person, size: 20),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        color: theme.colorScheme.primaryContainer,
-                        child: Icon(
-                          Icons.person,
-                          color: theme.colorScheme.onPrimaryContainer,
-                        ),
-                      ),
-                    ),
+                    child: hasAvatar
+                        ? CachedNetworkImage(
+                            imageUrl: activity.avatarUrl!,
+                            width: 40,
+                            height: 40,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(
+                              color: theme.colorScheme.surfaceContainerHighest,
+                              child: const Icon(Icons.person, size: 20),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              color: theme.colorScheme.primaryContainer,
+                              child: Icon(
+                                Icons.person,
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          )
+                        : Container(
+                            width: 40,
+                            height: 40,
+                            color: theme.colorScheme.primaryContainer,
+                            child: Icon(
+                              Icons.person,
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -587,26 +691,33 @@ class _ActivityCard extends StatelessWidget {
             const SizedBox(height: 12),
             Row(
               children: [
-                // [Point 7] TweenAnimationBuilder creates Instagram-style heart burst
-                TweenAnimationBuilder<double>(
-                  key: ValueKey(activity.isLiked),
-                  tween: Tween(begin: 1.0, end: activity.isLiked ? 1.3 : 1.0),
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.elasticOut,
-                  builder: (context, scale, child) {
+                AnimatedBuilder(
+                  animation: _burstScale,
+                  builder: (context, child) {
                     return Transform.scale(
-                      scale: scale,
-                      child: IconButton(
-                        icon: Icon(
-                          activity.isLiked ? Icons.favorite : Icons.favorite_border,
-                          color: activity.isLiked
-                              ? Colors.redAccent
-                              : theme.colorScheme.onSurfaceVariant,
-                        ),
-                        onPressed: onLike,
-                      ),
+                      scale: _burstScale.value,
+                      child: child,
                     );
                   },
+                  child: Opacity(
+                    // NEW: visible pending state instead of a silent no-op tap
+                    opacity: widget.isPending ? 0.5 : 1.0,
+                    child: IconButton(
+                      icon: widget.isPending
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              activity.isLiked ? Icons.favorite : Icons.favorite_border,
+                              color: activity.isLiked
+                                  ? Colors.redAccent
+                                  : theme.colorScheme.onSurfaceVariant,
+                            ),
+                      onPressed: widget.isPending ? null : widget.onLike,
+                    ),
+                  ),
                 ),
                 Text(
                   '${activity.likeCount}',
