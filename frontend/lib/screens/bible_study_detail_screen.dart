@@ -6,6 +6,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
+import '../theme/app_style.dart';
 import 'package:pensaconnect/models/bible_models.dart';
 
 class BibleStudyDetailScreen extends StatefulWidget {
@@ -699,7 +700,7 @@ class _BibleStudyDetailScreenState extends State<BibleStudyDetailScreen> {
             title: 'Personal Reflection',
             content: d.reflection!,
             icon: Icons.psychology_outlined,
-            accentColor: Colors.deepPurple,
+            accentColor: AppColors.emberGold,
             theme: theme,
           ),
         ],
