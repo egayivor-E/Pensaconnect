@@ -2,6 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart';
 import 'package:timeago/timeago.dart' as timeago;
 class Activity {
+  // ✅ The activity log row's own id (distinct from targetId, which is
+  // the id of whatever the activity is *about*). Required for dedup —
+  // without a stable key, re-fetching (pull-to-refresh, rebuilds) has
+  // no way to tell "already have this one" from "new entry" and the
+  // list silently grows duplicates.
+  final int id;
   final String title;
   final String subtitle;
   final IconData icon;
@@ -21,6 +27,7 @@ class Activity {
   final String? targetType;
   final int? targetId;
   Activity({
+    required this.id,
     required this.title,
     required this.subtitle,
     required this.icon,
@@ -41,6 +48,11 @@ class Activity {
     // Falls back gracefully if "user" is absent (e.g. older cached data).
     final Map<String, dynamic>? author = json['user'] as Map<String, dynamic>?;
     return Activity(
+      // Falls back to a hash of title+createdAt if the backend ever omits
+      // "id" (shouldn't happen, but keeps fromJson from crashing / keeps
+      // dedup-by-id from silently colliding every unidentified row onto 0).
+      id: (json['id'] as num?)?.toInt() ??
+          Object.hash(json['title'], json['created_at'] ?? json['createdAt']),
       title: json['title'] ?? 'Untitled',
       subtitle: json['subtitle'] ?? '',
       icon: _mapIcon(json['icon']),
@@ -56,6 +68,7 @@ class Activity {
   }
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'title': title,
       'subtitle': subtitle,
       'icon': icon.codePoint,
@@ -81,6 +94,8 @@ class Activity {
         return FontAwesome.book;
       case 'forum':
         return Icons.forum;
+      case 'pray':
+        return Icons.self_improvement;
       default:
         return Icons.notifications;
     }
