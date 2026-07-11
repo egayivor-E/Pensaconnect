@@ -474,8 +474,16 @@ class PrayerRequest(BaseModel):
         """
         Serialize prayer request to dictionary.
         :param include_prayers: include prayers details
-        :param current_user_id: used to check if current user has prayed
+        :param current_user_id: JWT identity of the viewer, used both for
+            has_prayed and is_owner checks.
         """
+        display_name = None
+        profile_pic = None
+        if not self.is_anonymous and self.user:
+            full_name = (self.user.get_full_name() or "").strip()
+            display_name = full_name if full_name else self.user.username
+            profile_pic = self.user.profile_picture
+
         data = {
             "id": self.id,
             "title": self.title,
@@ -492,16 +500,25 @@ class PrayerRequest(BaseModel):
             "urgency_level": self.urgency_level,
             "suggested_verses": self.suggested_verses,
             "sentiment_analysis": self.sentiment_analysis,
+            # ✅ Never leaks the real id for anonymous requests, to anyone.
             "user_id": None if self.is_anonymous else self.user_id,
+            "username": display_name,
+            "user_profile_pic": profile_pic,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "has_prayed": False,  # default
+            # ✅ Computed server-side so the true author can still manage
+            # their own anonymous request without exposing user_id to them
+            # (or anyone) via the response.
+            "is_owner": current_user_id is not None and current_user_id == self.user_id,
         }
+
         if include_prayers:
             data["prayers"] = [p.to_dict() for p in self.prayers]
-        # Check if current user has prayed
+
         if current_user_id:
             data["has_prayed"] = any(p.user_id == current_user_id for p in self.prayers)
+
         return data
         
 # --- Prayer Model ---        
