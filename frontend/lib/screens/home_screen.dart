@@ -289,17 +289,38 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            padding: const EdgeInsets.fromLTRB(20, 8, 12, 6),
             sliver: SliverToBoxAdapter(
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Text('Recent Activity', style: theme.textTheme.titleLarge),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Recent Activity',
+                          style: theme.textTheme.headlineSmall,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          "What's happening across the fellowship",
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(0.55),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   if (!_loadingActivities)
-                    IconButton(
-                      onPressed: _loadActivities,
-                      icon: const Icon(Icons.refresh),
-                      tooltip: 'Refresh',
+                    Material(
+                      color: theme.colorScheme.onSurface.withOpacity(0.06),
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        onPressed: _loadActivities,
+                        icon: const Icon(Icons.refresh_rounded, size: 20),
+                        tooltip: 'Refresh',
+                      ),
                     ),
                 ],
               ),
@@ -363,7 +384,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return SliverPadding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
       sliver: SliverList(
         // ✅ Keyed by the activity's own id so Flutter's element diffing
         // matches list items to the correct widget state across rebuilds
@@ -375,7 +396,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final activity = _activities[index];
             final isLast = index == _activities.length - 1;
             return Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 10),
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
               child: _ActivityTile(
                 key: ValueKey(activity.id),
                 activity: activity,
@@ -409,86 +430,274 @@ class _ActivityTile extends StatelessWidget {
     required this.onOpen,
   });
 
+  /// Facebook-style feed action labels, worded for what each target
+  /// actually is rather than a generic "View" — "Read", "Discuss".
+  String _openLabel() {
+    switch (activity.targetType) {
+      case 'testimony':
+        return 'Read';
+      case 'forum_thread':
+        return 'Discuss';
+      default:
+        return 'View';
+    }
+  }
+
+  IconData _openIcon() {
+    switch (activity.targetType) {
+      case 'testimony':
+        return Icons.menu_book_outlined;
+      case 'forum_thread':
+        return Icons.chat_bubble_outline;
+      default:
+        return Icons.arrow_forward;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final info = activityTargetInfo(activity.targetType);
+    final hasActionBar = info.canLike || info.canOpenDetail;
 
-    return Material(
-      color: theme.cardTheme.color,
-      shape: AppShapes.archBorder(top: 16, bottom: 16),
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.cardTheme.color,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: (isDark ? Colors.black : AppColors.inkDusk).withOpacity(
+              isDark ? 0.25 : 0.06,
+            ),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: info.canOpenDetail ? onOpen : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              activity.hasAuthorAvatar
-                  ? CircleAvatar(
-                      radius: 20,
-                      backgroundImage: NetworkImage(activity.authorAvatarUrl!),
-                    )
-                  : CircleAvatar(
-                      radius: 20,
-                      backgroundColor: activity.color.withOpacity(0.15),
-                      child: Icon(activity.icon, color: activity.color, size: 20),
-                    ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: info.canOpenDetail ? onOpen : null,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      activity.title,
-                      style: theme.textTheme.titleSmall,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (activity.subtitle.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        activity.subtitle,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withOpacity(0.6),
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                    // Avatar with a small colored badge overlapping its
+                    // corner — a story-ring-style cue for *what kind* of
+                    // activity this is, so the feed reads at a glance
+                    // even before you get to the text.
+                    SizedBox(
+                      width: 46,
+                      height: 46,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          activity.hasAuthorAvatar
+                              ? CircleAvatar(
+                                  radius: 23,
+                                  backgroundImage: NetworkImage(
+                                    activity.authorAvatarUrl!,
+                                  ),
+                                )
+                              : CircleAvatar(
+                                  radius: 23,
+                                  backgroundColor: activity.color.withOpacity(
+                                    0.15,
+                                  ),
+                                  child: Text(
+                                    (activity.authorName?.isNotEmpty ?? false)
+                                        ? activity.authorName![0].toUpperCase()
+                                        : 'P',
+                                    style: theme.textTheme.titleMedium
+                                        ?.copyWith(color: activity.color),
+                                  ),
+                                ),
+                          Positioned(
+                            right: -2,
+                            bottom: -2,
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                color: activity.color,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: theme.cardTheme.color ?? Colors.white,
+                                  width: 2,
+                                ),
+                              ),
+                              child: Icon(
+                                activity.icon,
+                                size: 10,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                    const SizedBox(height: 4),
-                    Text(
-                      [
-                        if (activity.authorName != null) activity.authorName!,
-                        activity.timeAgo,
-                      ].join(' · '),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.45),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  activity.authorName ?? 'PensaConnect',
+                                  style: theme.textTheme.titleMedium,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Text(
+                                '  ·  ${activity.timeAgo}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface
+                                      .withOpacity(0.5),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            activity.title,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              height: 1.3,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-              ),
-              if (info.canLike)
-                IconButton(
-                  onPressed: isActionInFlight ? null : onAction,
-                  tooltip: isLocallyActive ? info.activeLabel : info.label,
-                  icon: isActionInFlight
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(
-                          isLocallyActive ? info.activeIcon : info.icon,
-                          color: isLocallyActive
-                              ? info.activeColor
-                              : theme.colorScheme.onSurface.withOpacity(0.5),
-                        ),
-                ),
-            ],
+                if (activity.subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 58),
+                    child: Text(
+                      activity.subtitle,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.62),
+                        height: 1.4,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+                if (hasActionBar) ...[
+                  const SizedBox(height: 10),
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: theme.colorScheme.onSurface.withOpacity(0.08),
+                  ),
+                  IntrinsicHeight(
+                    child: Row(
+                      children: [
+                        if (info.canLike)
+                          Expanded(
+                            child: _FeedActionButton(
+                              icon: isLocallyActive
+                                  ? info.activeIcon
+                                  : info.icon,
+                              label: isLocallyActive
+                                  ? info.activeLabel
+                                  : info.label,
+                              color: isLocallyActive
+                                  ? info.activeColor
+                                  : theme.colorScheme.onSurface.withOpacity(
+                                      0.65,
+                                    ),
+                              loading: isActionInFlight,
+                              onTap: isActionInFlight ? null : onAction,
+                            ),
+                          ),
+                        if (info.canLike && info.canOpenDetail)
+                          Container(
+                            width: 1,
+                            color: theme.colorScheme.onSurface.withOpacity(
+                              0.08,
+                            ),
+                          ),
+                        if (info.canOpenDetail)
+                          Expanded(
+                            child: _FeedActionButton(
+                              icon: _openIcon(),
+                              label: _openLabel(),
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.65,
+                              ),
+                              onTap: onOpen,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ] else
+                  const SizedBox(height: 6),
+              ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A single segment of the feed card's Facebook-style split action bar.
+class _FeedActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final bool loading;
+  final VoidCallback? onTap;
+
+  const _FeedActionButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+    this.loading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (loading)
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: color),
+              )
+            else
+              Icon(icon, size: 18, color: color),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ),
       ),
     );
