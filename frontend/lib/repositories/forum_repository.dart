@@ -74,7 +74,7 @@ class ForumRepository {
   }
 
   // In ForumRepository - update createPost method
-  Future<bool> createPost({
+  Future<PostSubmissionResult> createPost({
     required int threadId,
     required String title,
     required String content,
@@ -119,9 +119,10 @@ class ForumRepository {
       debugPrint(
         '❌ createPost failed → Status ${response.statusCode}, Body: ${response.body}',
       );
-      return false;
+      return const PostSubmissionResult(success: false);
     }
 
+    final attachmentErrors = <String>[];
     try {
       final responseData = jsonDecode(response.body);
       if (responseData['data'] != null) {
@@ -131,12 +132,28 @@ class ForumRepository {
         ForumEventBus().notifyPostCreated(threadId, newPost);
         debugPrint('🎉 Post creation event fired for thread $threadId');
       }
+
+      // ✅ Backend records per-file upload failures (e.g. Supabase not
+      // configured, unsupported type) even when the post itself saves
+      // fine — surface them instead of letting media vanish silently.
+      final rawErrors = responseData['data']?['attachment_errors'] ??
+          responseData['attachment_errors'];
+      if (rawErrors is List) {
+        for (final e in rawErrors) {
+          final name = e is Map ? (e['file_name'] ?? 'file') : 'file';
+          final reason = e is Map ? (e['error'] ?? 'upload failed') : 'upload failed';
+          attachmentErrors.add('$name: $reason');
+        }
+      }
     } catch (e) {
       debugPrint('⚠️ Could not parse post creation response: $e');
     }
 
     debugPrint('✅ Post created successfully for thread $threadId');
-    return true;
+    return PostSubmissionResult(
+      success: true,
+      attachmentErrors: attachmentErrors,
+    );
   }
 
   Future<void> toggleLike(int postId) async {
@@ -160,7 +177,7 @@ class ForumRepository {
     return commentList.map((c) => ForumComment.fromJson(c)).toList();
   }
 
-  Future<void> addComment({
+  Future<List<String>> addComment({
     required int threadId, // ✅ add threadId
     required int postId,
     required String content,
@@ -206,6 +223,7 @@ class ForumRepository {
       );
     }
 
+    final attachmentErrors = <String>[];
     try {
       final responseData = jsonDecode(response.body);
       if (responseData['data'] != null) {
@@ -218,11 +236,22 @@ class ForumRepository {
           '🎉 Comment creation event fired for thread $threadId → post $postId',
         );
       }
+
+      final rawErrors = responseData['data']?['attachment_errors'] ??
+          responseData['attachment_errors'];
+      if (rawErrors is List) {
+        for (final e in rawErrors) {
+          final name = e is Map ? (e['file_name'] ?? 'file') : 'file';
+          final reason = e is Map ? (e['error'] ?? 'upload failed') : 'upload failed';
+          attachmentErrors.add('$name: $reason');
+        }
+      }
     } catch (e) {
       debugPrint('⚠️ Could not parse comment creation response: $e');
     }
 
     debugPrint('✅ Comment added successfully to post $postId');
+    return attachmentErrors;
   }
 
   Future<void> deleteComment(int postId, int commentId) async {
