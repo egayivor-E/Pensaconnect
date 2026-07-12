@@ -166,6 +166,60 @@ class GroupChatRepository {
     }
   }
 
+  /// Public groups the user hasn't joined yet — used by the "browse
+  /// groups" / discover screen, as opposed to [getGroups] which only
+  /// returns groups the user already belongs to.
+  Future<List<GroupChat>> discoverGroups() async {
+    try {
+      final response = await ApiService.get(
+        'group-chats/discover',
+        headers: await _getHeaders(),
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = json.decode(response.body);
+        if (data['data'] is List) {
+          return (data['data'] as List)
+              .map<GroupChat>((jsonItem) => GroupChat.fromJson(jsonItem))
+              .toList();
+        }
+        return [];
+      } else {
+        debugPrint("❌ Failed to load discoverable groups: ${response.statusCode}");
+        throw Exception('Failed to load discoverable groups: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint("❌ Error fetching discoverable groups: $e");
+      rethrow;
+    }
+  }
+
+  /// Get-or-create a direct (1:1) chat with [otherUserId]. Backed by the
+  /// same GroupChat table with chat_type='direct' — the returned
+  /// GroupChat works with every existing message/socket call the same
+  /// way a real group does.
+  Future<GroupChat> getOrCreateDirectChat(int otherUserId) async {
+    try {
+      final response = await ApiService.post(
+        'group-chats/direct/$otherUserId',
+        {},
+        headers: await _getHeaders(),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> data = json.decode(response.body);
+        final chatData = data['data'] is Map ? data['data'] : data;
+        return GroupChat.fromJson(chatData);
+      } else {
+        debugPrint("❌ Failed to start direct chat: ${response.statusCode}");
+        throw Exception('Failed to start direct chat: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint("❌ Error starting direct chat: $e");
+      rethrow;
+    }
+  }
+
   /// Join a public group
   Future<void> joinGroup(int groupId) async {
     try {
