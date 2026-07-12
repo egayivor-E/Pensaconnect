@@ -236,12 +236,34 @@ class ForumRepository {
   }
 
   /// ---------------- ATTACHMENTS ----------------
+
+  /// The backend returns attachment `url` values as paths relative to the
+  /// API (e.g. "/forums/attachments/12"), not full URLs — same idea as
+  /// avatars (see UserRepository.getProfilePictureUrl). Without this,
+  /// Image.network(a.url) gets handed a schemeless path, fails to load,
+  /// and the attachment silently renders blank instead of the image.
+  static String getAttachmentUrl(String? relativePath) {
+    if (relativePath == null || relativePath.isEmpty) return '';
+
+    // Already absolute (e.g. some future CDN url) — use as-is.
+    if (relativePath.startsWith('http://') ||
+        relativePath.startsWith('https://')) {
+      return relativePath;
+    }
+
+    final base = Config.apiBaseUrl.endsWith('/')
+        ? Config.apiBaseUrl.substring(0, Config.apiBaseUrl.length - 1)
+        : Config.apiBaseUrl;
+    final normalizedPath = relativePath.startsWith('/')
+        ? relativePath
+        : '/$relativePath';
+    return '$base$normalizedPath';
+  }
+
   Future<void> openAttachment(ForumAttachment attachment) async {
-    final ok = await launchUrlString(
-      attachment.url,
-      mode: LaunchMode.externalApplication,
-    );
-    if (!ok) throw Exception("Could not open ${attachment.url}");
+    final url = getAttachmentUrl(attachment.url);
+    final ok = await launchUrlString(url, mode: LaunchMode.externalApplication);
+    if (!ok) throw Exception("Could not open $url");
   }
 
   /// ---------------- UTILITY METHODS ----------------
