@@ -48,7 +48,10 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   bool _isFetching = false;
   String? _errorMessage;
   int _retryCount = 0;
-  final int _maxRetries = 3;
+  // A Render free-tier cold start can take up to ~60s. 3 retries at a
+  // 10s timeout each wasn't a wide enough window to reliably survive
+  // one, so a genuine cold start looked identical to a real failure.
+  final int _maxRetries = 5;
 
   // polling + events
   Timer? _pollingTimer;
@@ -170,7 +173,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
 
       final posts = await repo
           .getPosts(widget.threadId)
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 20));
 
       if (!mounted) return;
 
@@ -219,6 +222,17 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
 
     _retryCount++;
     debugPrint('Fetch error: $message (attempt $_retryCount)');
+
+    // A timeout on an early attempt is far more likely to be the
+    // backend cold-starting than a genuine failure — say so instead of
+    // showing a raw error while we're still within the retry budget.
+    if (mounted && _retryCount <= _maxRetries) {
+      setState(() {
+        _errorMessage = message.contains('timed out')
+            ? 'Waking up the server — this can take up to a minute on first load.'
+            : message;
+      });
+    }
 
     if (_retryCount <= _maxRetries) {
       Future.delayed(Duration(seconds: 2 * _retryCount), () async {
@@ -1132,7 +1146,25 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
       body: Stack(
         children: [
           _isLoadingPosts
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      if (_errorMessage != null) ...[
+                        const SizedBox(height: 16),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+                            _errorMessage!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                )
               : _errorMessage != null
               ? _buildErrorBody()
               : _posts.isEmpty
