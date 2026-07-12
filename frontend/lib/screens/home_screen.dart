@@ -614,6 +614,37 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
+          // --- Media thumbnail (e.g. first image on a forum post) ---
+          if (activity.hasImage)
+            AspectRatio(
+              aspectRatio: 16 / 10,
+              child: Image.network(
+                _resolveAvatarUrl(activity.imageUrl)!,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  color: activity.color.withOpacity(0.08),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: activity.color,
+                    size: 32,
+                  ),
+                ),
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return Container(
+                    color: activity.color.withOpacity(0.06),
+                    alignment: Alignment.center,
+                    child: const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                },
+              ),
+            ),
+
           // --- Post content: tap opens the real content (if any),
           // double-tap likes it (if likeable) ---
           GestureDetector(
