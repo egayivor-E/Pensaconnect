@@ -45,6 +45,8 @@ import 'screens/prayer_wall_screen.dart';
 import 'screens/testimonies_screen.dart';
 import 'screens/group_chats_screen.dart';
 import 'screens/group_chat_detail_screen.dart';
+import 'screens/discover_groups_screen.dart';
+import 'screens/new_message_screen.dart';
 import 'screens/anonymous_chat_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
@@ -74,6 +76,8 @@ class Routes {
   static const prayerWall = '/prayer-wall';
   static const testimonies = '/testimonies';
   static const groupChats = '/group-chats';
+  static const discoverGroups = '/group-chats/discover';
+  static const newMessage = '/messages/new';
   static const anonymousChat = '/anonymous-chat';
   static const profile = '/profile';
   static const settings = '/settings';
@@ -465,6 +469,14 @@ class MyApp extends StatelessWidget {
               groupName: extras['groupName'] as String? ?? 'Group Chat',
             );
           },
+        ),
+        GoRoute(
+          path: Routes.discoverGroups,
+          builder: (_, __) => const DiscoverGroupsScreen(),
+        ),
+        GoRoute(
+          path: Routes.newMessage,
+          builder: (_, __) => const NewMessageScreen(),
         ),
         GoRoute(
           path: Routes.anonymousChat,
