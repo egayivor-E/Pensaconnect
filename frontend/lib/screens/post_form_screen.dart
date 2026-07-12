@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:file_picker/file_picker.dart';
@@ -33,6 +34,47 @@ class _PostFormScreenState extends State<PostFormScreen> {
       _imageExtensions.contains((f.extension ?? '').toLowerCase());
   bool _isVideo(PlatformFile f) =>
       _videoExtensions.contains((f.extension ?? '').toLowerCase());
+
+  Widget _buildThumbnail(PlatformFile file) {
+    if (!_isImage(file)) {
+      return Icon(
+        _isVideo(file) ? Icons.videocam_outlined : Icons.insert_drive_file,
+      );
+    }
+
+    // file_picker never populates `.path` on web — only `.bytes` — so
+    // dart:io's File/Image.file must never be used here on web. Using it
+    // unconditionally was throwing at paint time and blanking the whole
+    // Flutter canvas (visible as the screen "turning blur"/gray) even
+    // though the underlying post upload kept succeeding in the background.
+    if (kIsWeb) {
+      if (file.bytes == null) {
+        return const Icon(Icons.image_outlined);
+      }
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Image.memory(
+          file.bytes!,
+          width: 44,
+          height: 44,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
+    if (file.path == null) {
+      return const Icon(Icons.image_outlined);
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Image.file(
+        File(file.path!),
+        width: 44,
+        height: 44,
+        fit: BoxFit.cover,
+      ),
+    );
+  }
 
   Future<void> _pickFiles() async {
     // Photos/videos/docs — matches the backend's ALLOWED_EXTENSIONS in
@@ -121,21 +163,7 @@ class _PostFormScreenState extends State<PostFormScreen> {
                   children: _attachments
                       .map(
                         (file) => ListTile(
-                          leading: _isImage(file) && file.path != null
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.file(
-                                    File(file.path!),
-                                    width: 44,
-                                    height: 44,
-                                    fit: BoxFit.cover,
-                                  ),
-                                )
-                              : Icon(
-                                  _isVideo(file)
-                                      ? Icons.videocam_outlined
-                                      : Icons.insert_drive_file,
-                                ),
+                          leading: _buildThumbnail(file),
                           title: Text(file.name),
                           trailing: IconButton(
                             icon: const Icon(Icons.close),
