@@ -177,7 +177,7 @@ void main() {
 
       // Load .env file
       developer.log("🔄 Loading .env file...", name: 'main');
-      await dotenv.load(fileName: ".env");
+      await dotenv.load(fileName: "assets/.env");
 
       // Debug .env variables
       developer.log("🎯 .env FILE DEBUG INFO:", name: 'main');
