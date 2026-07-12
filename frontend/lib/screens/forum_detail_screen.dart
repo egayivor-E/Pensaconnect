@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:pensaconnect/repositories/user_repository.dart';
 import 'package:pensaconnect/utils/forum_event_bus.dart';
 import 'package:pensaconnect/utils/role_utils.dart';
@@ -98,6 +99,95 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
       return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
     }
     return name[0].toUpperCase();
+  }
+
+  // ✅ Mirrors the backend's can_manage() check (forums.py): the author
+  // of the content, or a moderator/admin, can manage it. Keeping this
+  // check on the client just controls whether the delete affordance is
+  // *shown* — the backend still enforces it independently on every
+  // DELETE request, so this is UX, not the security boundary.
+  bool _canManage(int authorId) {
+    final auth = context.read<AuthProvider>();
+    final currentUser = auth.currentUser;
+    if (currentUser == null) return false;
+    if (currentUser.id == authorId) return true;
+    return auth.hasAnyRole(const ['admin', 'moderator']);
+  }
+
+  Future<bool> _confirmDelete(String what) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Delete $what?'),
+        content: const Text('This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _deletePost(ForumPost post) async {
+    if (!await _confirmDelete('post')) return;
+    try {
+      await context.read<ForumRepository>().deletePost(post.id);
+      if (!mounted) return;
+      setState(() {
+        _posts.removeWhere((p) => p.id == post.id);
+        _commentsMap.remove(post.id);
+        _commentControllers.remove(post.id)?.dispose();
+        _commentAttachments.remove(post.id);
+        _isPostingCommentForPost.remove(post.id);
+        _isCommentsVisible.remove(post.id);
+        _isCommentsLoading.remove(post.id);
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Post deleted')));
+    } catch (e) {
+      debugPrint('Delete post failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to delete post')));
+    }
+  }
+
+  Future<void> _deleteComment(ForumComment comment) async {
+    if (!await _confirmDelete('comment')) return;
+    try {
+      await context.read<ForumRepository>().deleteComment(
+        comment.postId,
+        comment.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _commentsMap[comment.postId]?.removeWhere((c) => c.id == comment.id);
+        final idx = _posts.indexWhere((p) => p.id == comment.postId);
+        if (idx != -1) {
+          _posts[idx].commentsCount =
+              (_posts[idx].commentsCount - 1).clamp(0, 1 << 30);
+        }
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Comment deleted')));
+    } catch (e) {
+      debugPrint('Delete comment failed: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to delete comment')),
+      );
+    }
   }
 
   @override
@@ -716,6 +806,25 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                     ],
                   ),
                 ),
+                if (_canManage(post.authorId))
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    onSelected: (value) {
+                      if (value == 'delete') _deletePost(post);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline, color: Colors.red, size: 18),
+                            SizedBox(width: 8),
+                            Text('Delete post', style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
 
@@ -995,6 +1104,13 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
             color: _colorForName(comment.authorName),
           ),
         ),
+        trailing: _canManage(comment.authorId)
+            ? IconButton(
+                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
+                tooltip: 'Delete comment',
+                onPressed: () => _deleteComment(comment),
+              )
+            : null,
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
