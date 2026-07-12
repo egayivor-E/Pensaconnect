@@ -53,6 +53,7 @@ dependencies:
   chewie: ^1.5.0
   audioplayers: ^5.2.1
   video_player: ^2.8.2
+  visibility_detector: ^0.4.0+2
   image_picker: ^1.1.2
   file_picker: ^8.0.0
   screenshot: ^3.0.0
