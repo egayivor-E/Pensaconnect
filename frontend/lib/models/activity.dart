@@ -26,6 +26,12 @@ class Activity {
   // endpoints instead of treating the activity log itself as likeable.
   final String? targetType;
   final int? targetId;
+  // ✅ Whether the requesting user has already liked/prayed for this
+  // activity's target, as reported by the backend. Used to hydrate the
+  // feed's liked state on load rather than assuming everything starts
+  // unliked every session. Defaults to false for older/cached payloads
+  // that predate this field.
+  final bool hasLiked;
   Activity({
     required this.id,
     required this.title,
@@ -37,6 +43,7 @@ class Activity {
     this.authorAvatarUrl,
     this.targetType,
     this.targetId,
+    this.hasLiked = false,
   });
   /// Returns a "5m ago" style string
   String get timeAgo => timeago.format(createdAt);
@@ -64,6 +71,7 @@ class Activity {
       authorAvatarUrl: author?['profilePicture'] as String?,
       targetType: json['targetType'] as String?,
       targetId: (json['targetId'] as num?)?.toInt(),
+      hasLiked: json['hasLiked'] as bool? ?? false,
     );
   }
   Map<String, dynamic> toJson() {
@@ -76,6 +84,7 @@ class Activity {
       'created_at': createdAt.toIso8601String(),
       if (targetType != null) 'targetType': targetType,
       if (targetId != null) 'targetId': targetId,
+      'hasLiked': hasLiked,
       if (authorName != null)
         'user': {
           'fullName': authorName,
