@@ -106,7 +106,54 @@ class _PrayerWallScreenState extends State<PrayerWallScreen>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (_) => _NewRequestForm(repo: repo),
+    );
+  }
+
+  Widget _buildEmptyState(int tabIndex) {
+    final content = switch (tabIndex) {
+      0 => (
+          Icons.volunteer_activism,
+          "The wall is quiet right now",
+          "Be the first to share something the community can pray over.",
+        ),
+      1 => (
+          Icons.edit_note,
+          "You haven't shared a prayer yet",
+          "Tap the + button to ask your community to pray with you.",
+        ),
+      _ => (
+          Icons.celebration,
+          "No answered prayers yet",
+          "When one of your requests is answered, mark it — it'll show up here as a reminder of what's been done.",
+        ),
+    };
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(content.$1, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              content.$2,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              content.$3,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -133,67 +180,85 @@ class _PrayerWallScreenState extends State<PrayerWallScreen>
         },
         child: repo.isLoading && repo.requests.isEmpty
             ? const Center(child: CircularProgressIndicator())
-            : ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                itemCount: repo.requests.length + (repo.hasMore ? 1 : 0),
-                itemBuilder: (context, i) {
-                  if (i >= repo.requests.length) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Center(child: CircularProgressIndicator()),
-                    );
-                  }
-
-                  final req = repo.requests[i];
-                  final isWallTab = _tabController.index == 0;
-                  final isOwner = req.userId == repo.currentUserId;
-
-                  return _PrayerCard(
-                    request: req,
-                    showIPrayed: isWallTab,
-                    onTogglePrayer: isWallTab
-                        ? (prayerId) async {
-                            await repo.togglePrayerById(prayerId);
-                          }
-                        : null,
-                    onDelete: () async {
-                      final confirmed = await showDialog<bool>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text("Delete Prayer Request?"),
-                          content: const Text(
-                            "Are you sure you want to delete this prayer request?",
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text("Cancel"),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: const Text("Delete"),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (confirmed == true) {
-                        await repo.deleteRequest(req.id);
-                        setState(() {});
+            : repo.requests.isEmpty
+                ? ListView(
+                    // ListView so RefreshIndicator's pull-to-refresh still
+                    // works even when the empty state has nothing to scroll.
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.6,
+                        child: _buildEmptyState(_tabController.index),
+                      ),
+                    ],
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    itemCount: repo.requests.length + (repo.hasMore ? 1 : 0),
+                    itemBuilder: (context, i) {
+                      if (i >= repo.requests.length) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
                       }
-                    },
-                    showMarkAnswered: _tabController.index == 1 && isOwner,
-                    onToggleAnswered: _tabController.index == 1 && isOwner
-                        ? () async {
-                            await repo.toggleAnswered(
-                              req.id,
-                              removeIfUnanswered: _tabController.index == 2,
-                            );
+
+                      final req = repo.requests[i];
+                      final isWallTab = _tabController.index == 0;
+
+                      return _PrayerCard(
+                        request: req,
+                        showIPrayed: isWallTab,
+                        onTogglePrayer: isWallTab
+                            ? (prayerId) async {
+                                await repo.togglePrayerById(prayerId);
+                              }
+                            : null,
+                        onDelete: () async {
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text("Delete Prayer Request?"),
+                              content: const Text(
+                                "Are you sure you want to delete this prayer request?",
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text("Cancel"),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text("Delete"),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed == true) {
+                            await repo.deleteRequest(req.id);
+                            setState(() {});
                           }
-                        : null,
-                  );
-                },
-              ),
+                        },
+                        // ✅ Uses server-computed isOwner instead of
+                        // comparing raw ids — works correctly even for the
+                        // author's own anonymous requests, and never
+                        // depends on a userId that may be null.
+                        showMarkAnswered:
+                            _tabController.index == 1 && req.isOwner,
+                        onToggleAnswered:
+                            _tabController.index == 1 && req.isOwner
+                                ? () async {
+                                    await repo.toggleAnswered(
+                                      req.id,
+                                      removeIfUnanswered:
+                                          _tabController.index == 2,
+                                    );
+                                  }
+                                : null,
+                      );
+                    },
+                  ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showNewRequestForm(context, repo),
@@ -240,10 +305,26 @@ class _NewRequestFormState extends State<_NewRequestForm> {
       child: SingleChildScrollView(
         child: Column(
           children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
             Text(
               "New Prayer Request",
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "Your community is ready to stand with you",
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.6),
               ),
             ),
             const SizedBox(height: 16),
@@ -283,8 +364,9 @@ class _NewRequestFormState extends State<_NewRequestForm> {
             const SizedBox(height: 16),
             Row(
               children: [
-                const Text("Pray anonymously"),
-                const Spacer(),
+                const Icon(Icons.visibility_off_outlined, size: 20),
+                const SizedBox(width: 8),
+                const Expanded(child: Text("Pray anonymously")),
                 Switch(
                   value: isAnonymous,
                   onChanged: (v) => setState(() => isAnonymous = v),
@@ -294,6 +376,7 @@ class _NewRequestFormState extends State<_NewRequestForm> {
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
+              height: 48,
               child: ElevatedButton(
                 onPressed: () async {
                   if (!mounted) return;
@@ -346,6 +429,35 @@ class _PrayerCard extends StatefulWidget {
 class _PrayerCardState extends State<_PrayerCard> {
   late bool hasPrayed;
   late String status;
+  bool _showPrayerBurst = false;
+
+  // ✅ Same identity-color system used on forums/testimonies, so a given
+  // person's name always maps to the same color across the whole app.
+  static const List<Color> _avatarPalette = [
+    Color(0xFF7C4DFF),
+    Color(0xFF26A69A),
+    Color(0xFFFF7043),
+    Color(0xFF42A5F5),
+    Color(0xFFEC407A),
+    Color(0xFF66BB6A),
+    Color(0xFF5C6BC0),
+    Color(0xFFFFA726),
+  ];
+
+  Color _colorForName(String name) {
+    if (name.isEmpty) return _avatarPalette.first;
+    final hash = name.codeUnits.fold<int>(0, (a, b) => a + b);
+    return _avatarPalette[hash % _avatarPalette.length];
+  }
+
+  String _initialsFor(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
 
   @override
   void initState() {
@@ -357,12 +469,24 @@ class _PrayerCardState extends State<_PrayerCard> {
   Future<void> _togglePrayer() async {
     if (widget.onTogglePrayer == null) return;
 
+    final wasPrayed = hasPrayed;
     setState(() => hasPrayed = !hasPrayed);
+
+    // ✅ Satisfying, immediate feedback the moment you tap — this is the
+    // "addictive" part: a quick heart burst + haptic-style scale, same
+    // language as the testimony screen, so the gesture feels consistent
+    // everywhere in the app.
+    if (!wasPrayed) {
+      setState(() => _showPrayerBurst = true);
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) setState(() => _showPrayerBurst = false);
+      });
+    }
 
     try {
       await widget.onTogglePrayer!(widget.request.id);
     } catch (_) {
-      setState(() => hasPrayed = !hasPrayed);
+      setState(() => hasPrayed = wasPrayed);
     }
   }
 
@@ -394,105 +518,227 @@ class _PrayerCardState extends State<_PrayerCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
+    final req = widget.request;
+    final isAnswered = status == "answered";
+
+    // ✅ Real display name, never a raw numeric id. Anonymous requests
+    // show "Anonymous" (backend never sends the real name for those);
+    // missing/blank names fall back to something human, not "User 4821".
+    final displayName = req.isAnonymous
+        ? "Anonymous"
+        : ((req.username?.trim().isNotEmpty ?? false)
+            ? req.username!.trim()
+            : "A community member");
+    final avatarColor = _colorForName(displayName);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
       margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundImage: widget.request.userProfilePic != null
-                      ? NetworkImage(
-                          UserRepository.getProfilePictureUrl(
-                            widget.request.userProfilePic,
-                          ), // ← FIXED!
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        // ✅ Answered prayers get a warm celebratory border — a visible
+        // "something good happened here" marker as you scroll the wall.
+        border: isAnswered
+            ? Border.all(color: Colors.amber.shade400, width: 1.5)
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Card(
+        margin: EdgeInsets.zero,
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isAnswered)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.celebration, size: 16, color: Colors.amber.shade800),
+                      const SizedBox(width: 6),
+                      Text(
+                        "Prayer Answered",
+                        style: TextStyle(
+                          color: Colors.amber.shade800,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Row(
+                children: [
+                  req.isAnonymous
+                      ? CircleAvatar(
+                          backgroundColor: Colors.grey[300],
+                          child: const Icon(Icons.person_off_outlined,
+                              size: 20, color: Colors.grey),
                         )
-                      : null,
-                  child: widget.request.userProfilePic == null
-                      ? const Icon(Icons.person)
-                      : null,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.request.isAnonymous
-                      ? "Anonymous"
-                      : (widget.request.username ??
-                            "User ${widget.request.userId}"),
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                      : CircleAvatar(
+                          backgroundColor: avatarColor,
+                          backgroundImage: req.userProfilePic != null
+                              ? NetworkImage(
+                                  UserRepository.getProfilePictureUrl(
+                                    req.userProfilePic,
+                                  ),
+                                )
+                              : null,
+                          child: req.userProfilePic == null
+                              ? Text(
+                                  _initialsFor(displayName),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                )
+                              : null,
+                        ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      displayName,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: req.isAnonymous ? null : avatarColor,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.delete),
-                  onPressed: widget.onDelete,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              widget.request.title,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: widget.onDelete,
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            if (widget.request.category != null &&
-                widget.request.category!.isNotEmpty)
+              const SizedBox(height: 12),
               Text(
-                "Category: ${widget.request.category}",
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontStyle: FontStyle.italic,
-                  color: Colors.grey[600],
+                req.title,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            const SizedBox(height: 8),
-            Text(widget.request.content),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Text(
-                  "${widget.request.prayersCount + (hasPrayed && !widget.request.hasPrayed ? 1 : 0)} prayers",
+              if (req.category != null && req.category!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      req.category!,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
                 ),
-                const Spacer(),
-                if (widget.showIPrayed && widget.onTogglePrayer != null)
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: _togglePrayer,
-                        icon: Icon(
-                          hasPrayed ? Icons.favorite : Icons.favorite_border,
-                          color: hasPrayed ? Colors.red : Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      const Text("I prayed"),
-                    ],
-                  ),
-                if (widget.showMarkAnswered && widget.onToggleAnswered != null)
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          status == "answered" ? Icons.undo : Icons.check,
-                          color: status == "answered"
-                              ? Colors.orange
-                              : Colors.green,
-                        ),
-                        onPressed: _toggleAnswered,
-                        tooltip: status == "answered"
-                            ? "Mark as Pending"
-                            : "Mark as Answered",
-                      ),
-                      Text(status == "answered" ? "Answered" : "Pending"),
-                    ],
-                  ),
               ],
-            ),
-          ],
+              const SizedBox(height: 10),
+              Text(req.content),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Text(
+                    "${req.prayersCount + (hasPrayed && !req.hasPrayed ? 1 : 0)} prayers",
+                    style: TextStyle(color: theme.colorScheme.onSurface.withOpacity(0.6)),
+                  ),
+                  const Spacer(),
+                  if (widget.showIPrayed && widget.onTogglePrayer != null)
+                    InkWell(
+                      onTap: _togglePrayer,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Row(
+                          children: [
+                            Stack(
+                              alignment: Alignment.center,
+                              clipBehavior: Clip.none,
+                              children: [
+                                AnimatedScale(
+                                  scale: hasPrayed ? 1.15 : 1.0,
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.elasticOut,
+                                  child: Icon(
+                                    hasPrayed ? Icons.favorite : Icons.favorite_border,
+                                    color: hasPrayed ? Colors.redAccent : Colors.grey,
+                                  ),
+                                ),
+                                if (_showPrayerBurst)
+                                  AnimatedOpacity(
+                                    opacity: _showPrayerBurst ? 1 : 0,
+                                    duration: const Duration(milliseconds: 150),
+                                    child: AnimatedScale(
+                                      scale: _showPrayerBurst ? 1.8 : 1.0,
+                                      duration: const Duration(milliseconds: 500),
+                                      curve: Curves.easeOut,
+                                      child: Icon(
+                                        Icons.favorite,
+                                        color: Colors.redAccent.withOpacity(0.35),
+                                        size: 26,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(width: 6),
+                            const Text("I prayed"),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (widget.showMarkAnswered && widget.onToggleAnswered != null)
+                    InkWell(
+                      onTap: _toggleAnswered,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(
+                              isAnswered ? Icons.undo : Icons.check_circle_outline,
+                              color: isAnswered ? Colors.orange : Colors.green,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              isAnswered ? "Mark as Pending" : "Mark as Answered",
+                              style: TextStyle(
+                                color: isAnswered ? Colors.orange : Colors.green,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

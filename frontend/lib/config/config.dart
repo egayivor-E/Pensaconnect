@@ -40,28 +40,33 @@ class Config {
     return videoId;
   }
 
-  // ✅ FIXED: WebSocket Configuration for Flask-SocketIO
   static String get websocketUrl {
-    var wsUrl =
-        dotenv.env['WEBSOCKET_URL'] ?? 'wss://pensaconnect.onrender.com';
+    // 1. Initial retrieval and immediate trim (removes \n and spaces)
+    String url =
+        (dotenv.env['WEBSOCKET_URL'] ??
+                'https://pensaconnect-pjz9.onrender.com')
+            .trim();
 
-    // Fix common WebSocket URL issues
-    if (wsUrl.startsWith('http://')) {
-      wsUrl = wsUrl.replaceFirst('http://', 'ws://');
-    }
-    if (wsUrl.startsWith('https://')) {
-      wsUrl = wsUrl.replaceFirst('https://', 'wss://');
-    }
-
-    // ✅ CRITICAL FIX: Remove '/ws' suffix - Flask-SocketIO uses standard Socket.IO path
-    // The Socket.IO client will automatically handle the '/socket.io' path
-    if (wsUrl.endsWith('/ws')) {
-      wsUrl = wsUrl.substring(0, wsUrl.length - 3);
+    // 2. Normalize scheme to HTTP/HTTPS for Socket.IO handshake
+    if (url.startsWith('ws://')) {
+      url = url.replaceFirst('ws://', 'http://');
+    } else if (url.startsWith('wss://')) {
+      url = url.replaceFirst('wss://', 'https://');
     }
 
-    debugPrint('🔌 WebSocket URL: $wsUrl');
-    return wsUrl;
+    // 3. Remove path suffixes that interfere with socket.io
+    if (url.endsWith('/ws')) {
+      url = url.substring(0, url.length - 3);
+    }
+    if (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+
+    // 4. Final debug to verify the handshake target
+    debugPrint('🔌 Final Handshake URL: "$url"');
+    return url.replaceFirst('wss://', 'https://');
   }
+
 
   // ✅ ADDED: Socket.IO specific configuration options
   static Map<String, dynamic> get socketIOOptions {

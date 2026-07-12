@@ -17,19 +17,32 @@ from backend.models import (
     ForumCategory,
     ForumLike,
     User,
+    Activity,
 )
-from .utils import success_response, error_response
+from .utils import success_response, error_response, broadcast_new_activity
 
 forums_bp = Blueprint("forums", __name__, url_prefix="/forums")
 
 UPLOAD_FOLDER = "uploads/forum"
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "pdf", "docx", "txt"}
+IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+VIDEO_EXTENSIONS = {"mp4", "mov", "avi", "webm", "mkv", "m4v"}
+DOCUMENT_EXTENSIONS = {"pdf", "docx", "txt"}
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 
 # ------------------------ Helpers ------------------------
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def _extension(filename: str) -> str:
+    return filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+
+def is_image_file(filename: str) -> bool:
+    return _extension(filename) in IMAGE_EXTENSIONS
+
+def is_video_file(filename: str) -> bool:
+    return _extension(filename) in VIDEO_EXTENSIONS
 
 def paginate_query(query):
     """Helper for pagination with consistent response format"""
@@ -128,6 +141,31 @@ def create_thread():
     )
     db.session.add(thread)
     db.session.commit()
+
+    # Activity feed logging — matches the pattern used in posts.py/testimonies.py.
+    # Thread creation is the only forum event logged to the feed (see discussion:
+    # individual post replies are deliberately excluded to avoid flooding it).
+    # No anonymity concern here (unlike testimonies/prayers), so no skip-logic
+    # is needed — thread.author_id is always attributable.
+    # Wrapped in its own try/except and committed separately so a logging
+    # failure (bad enum value, DB hiccup) can't roll back or fail the
+    # already-successful thread creation.
+    try:
+        activity = Activity(
+            title=f"{current_user.get_full_name()} started a new discussion",
+            subtitle=(thread.description or thread.title)[:140],
+            icon="forum",
+            color="orange",
+            user_id=current_user.id,
+            target_type="forum_thread",
+            target_id=thread.id,
+        )
+        db.session.add(activity)
+        db.session.commit()
+        broadcast_new_activity(activity)
+    except Exception:
+        db.session.rollback()
+
     return success_response(thread.to_dict(), 201)
 
 @forums_bp.route("/threads/<int:thread_id>/react", methods=["POST"])
@@ -295,6 +333,38 @@ def create_post():
                     db.session.add(attachment)
 
         db.session.commit()
+
+        # ✅ Log + broadcast an Activity so this post shows up in the live
+        # Home feed. If there's a video attachment, that becomes the
+        # feed card's "reel" (autoplaying video); otherwise the first
+        # image (if any) becomes a static thumbnail. Both ride along in
+        # meta_data — no schema change needed.
+        first_image = next(
+            (a for a in post.attachments if is_image_file(a.file_name)), None
+        )
+        first_video = next(
+            (a for a in post.attachments if is_video_file(a.file_name)), None
+        )
+        media_meta = {}
+        if first_video:
+            media_meta["video_url"] = first_video.to_dict()["url"]
+        if first_image:
+            media_meta["image_url"] = first_image.to_dict()["url"]
+
+        activity = Activity(
+            title=f"{current_user.get_full_name()} shared a new post",
+            subtitle=(post.content or post.title)[:140],
+            icon="forum",
+            color="blue",
+            user_id=current_user.id,
+            target_type="post",
+            target_id=post.id,
+            meta_data=media_meta or None,
+        )
+        db.session.add(activity)
+        db.session.commit()
+        broadcast_new_activity(activity)
+
         # FIX: Change from 200 to 201
         return success_response(post.to_dict(include_attachments=True), 201)  # ✅ Changed to 201
 
@@ -319,6 +389,20 @@ def create_post():
     )
     db.session.add(post)
     db.session.commit()
+
+    activity = Activity(
+        title=f"{current_user.get_full_name()} shared a new post",
+        subtitle=(post.content or post.title)[:140],
+        icon="forum",
+        color="blue",
+        user_id=current_user.id,
+        target_type="post",
+        target_id=post.id,
+    )
+    db.session.add(activity)
+    db.session.commit()
+    broadcast_new_activity(activity)
+
     # FIX: Already 201 here, but keep it
     return success_response(post.to_dict(), 201)  # ✅ Already correct
 

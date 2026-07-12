@@ -15,6 +15,7 @@ class PrayerRepository extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get hasMore => _hasMore;
 
+  // ✅ FIXED: Changed return type to Future<void> and removed return statements
   Future<void> fetchRequests({
     String filter = "wall",
     int page = 1,
@@ -37,23 +38,27 @@ class PrayerRepository extends ChangeNotifier {
 
       if (res.statusCode == 200) {
         final body = ApiService.parseBody(res);
-        final fetchedRequests = PrayerRequest.listFromJson(body['data']);
-
-        if (refresh) _requests.clear();
-
-        _requests.addAll(fetchedRequests);
-        _hasMore = fetchedRequests.length >= perPage;
+        final List<dynamic> data = body['data'] ?? [];
+        final List<PrayerRequest> newRequests = PrayerRequest.listFromJson(data);
+        
+        if (refresh) {
+          _requests.clear();
+        }
+        _requests.addAll(newRequests);
+        _hasMore = newRequests.length >= perPage;
+        notifyListeners();
       } else {
         debugPrint("❌ fetchRequests failed: ${res.statusCode}");
       }
     } catch (e) {
       debugPrint("❌ fetchRequests error: $e");
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
-
-    _isLoading = false;
-    notifyListeners();
   }
 
+  // ✅ FIXED: This method correctly returns Future<bool>
   Future<bool> createRequest({
     required String title,
     required String content,
@@ -75,39 +80,43 @@ class PrayerRepository extends ChangeNotifier {
         final newRequest = PrayerRequest.fromJson(body['data']);
         _requests.insert(0, newRequest);
         notifyListeners();
-        return true;
+        return true; // ✅ Valid return
       } else {
         debugPrint("❌ createRequest failed: ${res.statusCode}");
-        return false;
+        return false; // ✅ Valid return
       }
     } catch (e) {
       debugPrint("❌ createRequest error: $e");
-      return false;
+      return false; // ✅ Valid return
     }
   }
 
   Future<void> togglePrayerById(int prayerId) async {
-    try {
-      final endpoint = "prayers/$prayerId/toggle_prayer";
-      final res = await ApiService.post(endpoint, {});
+    // ✅ Previously swallowed every failure (both the non-2xx branch,
+    // which ApiService.post can't actually reach since it throws before
+    // returning, and the catch-all below) — callers had no way to know
+    // the toggle didn't take. Now it rethrows so e.g. the home feed's
+    // optimistic "I prayed" heart can roll back instead of staying
+    // lit for a request that never landed.
+    final endpoint = "prayers/$prayerId/toggle_prayer";
+    final res = await ApiService.post(endpoint, {});
 
-      if (res.statusCode == 200 || res.statusCode == 201) {
-        final index = _requests.indexWhere((r) => r.id == prayerId);
-        if (index != -1) {
-          final req = _requests[index];
-          final increment = !req.hasPrayed;
-          _requests[index] = req.copyWith(
-            prayersCount: req.prayersCount + (increment ? 1 : -1),
-            hasPrayed: increment,
-          );
-          notifyListeners();
-        }
-      } else {
-        debugPrint("❌ togglePrayer failed: ${res.statusCode}");
-      }
-    } catch (e) {
-      debugPrint("❌ togglePrayer error: $e");
+    final index = _requests.indexWhere((r) => r.id == prayerId);
+    if (index != -1) {
+      final req = _requests[index];
+      final increment = !req.hasPrayed;
+      _requests[index] = req.copyWith(
+        prayersCount: req.prayersCount + (increment ? 1 : -1),
+        hasPrayed: increment,
+      );
+      notifyListeners();
     }
+    // If this activity isn't in the currently-loaded `_requests` page
+    // (e.g. toggled from the home feed before the Prayer Wall has ever
+    // been opened this session), there's nothing local to update — the
+    // server call above is still the source of truth, and the Prayer
+    // Wall will pick up the real count next time it fetches.
+    debugPrint("✅ Prayer toggled for request $prayerId (status ${res.statusCode})");
   }
 
   Future<void> deleteRequest(int prayerId) async {

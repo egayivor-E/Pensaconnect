@@ -3,7 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/theme_provider.dart';
-import '../repositories/auth_repository.dart';
+import '../providers/auth_provider.dart';
+import '../services/api_service.dart';
 import '../repositories/notification_repository.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -14,10 +15,8 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final AuthRepository _authRepository = AuthRepository();
   late NotificationRepository _notificationRepository;
   bool _notificationsEnabled = true;
-  bool _isLoading = false;
   String? _errorMessage;
   bool _isLoggingOut = false;
 
@@ -49,8 +48,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('notifications_enabled', enabled);
 
-      // Update backend if authenticated
-      final token = prefs.getString('auth_token');
+      // ✅ FIX: read the token from ApiService (the actual source of truth
+      // set by AuthProvider.login()/fetchProfile()), not a SharedPreferences
+      // key that nothing in the auth flow ever writes to.
+      final token = ApiService.authToken;
       if (token != null) {
         await _notificationRepository.updateNotificationPreference(
           token,
@@ -79,17 +80,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
 
     try {
+      // ✅ FIX: go through AuthProvider instead of calling AuthRepository
+      // directly. AuthProvider.logout() also clears AuthService's cached
+      // user (via AuthService().clearUserData()), so both auth stores stay
+      // in sync instead of one thinking the user is still logged in.
+      final authProvider = context.read<AuthProvider>();
+      await authProvider.logout();
+
+      // Clear settings-specific local storage that AuthProvider doesn't
+      // own (notification preference is UI state, not auth state).
       final prefs = await SharedPreferences.getInstance();
-
-      // Call backend logout
-      await _authRepository.logout();
-
-      // Clear local storage
-      await Future.wait([
-        prefs.remove('auth_token'),
-        prefs.remove('user_data'),
-        prefs.remove('notifications_enabled'),
-      ]);
+      await prefs.remove('notifications_enabled');
 
       // Navigate to login screen
       if (mounted) {
@@ -123,14 +124,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: TextButton.styleFrom(
               foregroundColor: theme.colorScheme.error,
             ),
-            child: Text('Logout'),
+            child: const Text('Logout'),
           ),
         ],
       ),
@@ -158,7 +159,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final themeProvider = context.watch<ThemeProvider>();
-    final isDarkMode = themeProvider.themeMode == ThemeMode.dark;
+    // ✅ FIX: use isDarkMode(context) instead of `themeMode == ThemeMode.dark`
+    // so the switch shows the correct state even when themeMode is
+    // ThemeMode.system and the device itself is in dark mode.
+    final isDarkMode = themeProvider.isDarkMode(context);
 
     // Platform detection
     final isMobile = MediaQuery.of(context).size.width < 600;
@@ -324,9 +328,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Dark Mode',
             value: isDarkMode,
             onChanged: (value) {
-              final themeProvider = context.read<ThemeProvider>();
-              // ✅ FIXED: Use the correct method name from your ThemeProvider
-              themeProvider.toggleDarkMode(value);
+              context.read<ThemeProvider>().toggleDarkMode(value);
             },
           ),
           Divider(height: 1, indent: 16, color: theme.dividerColor),
@@ -449,7 +451,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     color: theme.colorScheme.onError,
                   ),
                 )
-              : Icon(Icons.logout, size: 18),
+              : const Icon(Icons.logout, size: 18),
           label: Text(_isLoggingOut ? 'Logging out...' : 'Logout'),
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
@@ -462,10 +464,5 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
   }
 }

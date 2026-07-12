@@ -13,9 +13,8 @@ import '../models/bible_models.dart';
 class GroupChatRepository {
   final Dio _dio;
   final AuthRepository authRepo;
-  final SocketIoService _socketService; // ✅ CHANGED: Injected, not created
+  final SocketIoService _socketService;
 
-  // ✅ CHANGED: Constructor now accepts SocketIoService
   GroupChatRepository(this._dio, this.authRepo, this._socketService);
 
   Stream<List<GroupMessage>> watchMessages(int groupId) {
@@ -92,7 +91,6 @@ class GroupChatRepository {
             .map<GroupMessage>((jsonItem) => GroupMessage.fromJson(jsonItem))
             .toList();
 
-        // ✅ ADDED: Store messages in socket service cache to prevent duplicate WebSocket messages
         _socketService.setInitialMessages(groupId, messages);
 
         debugPrint("✅ Loaded ${messages.length} messages for group $groupId");
@@ -226,13 +224,23 @@ class GroupChatRepository {
         final Map<String, dynamic> data = json.decode(response.body);
         final message = GroupMessage.fromJson(data);
 
-        // ✅ Emit real-time update via socket
+        // ✅ FIXED: Send COMPLETE message with ID and all fields via WebSocket
         _socketService.sendMessage(groupId, {
           'groupId': groupId,
+          'id': message.id,                    // ✅ Include the REAL ID from database
           'content': message.content,
           'senderId': message.senderId,
+          'messageType': message.messageType,
+          'createdAt': message.createdAt.toIso8601String(),
+          'sender': {
+            'id': message.sender?['id'] ?? message.senderId,
+            'username': message.sender?['username'] ?? 'Unknown',
+            'full_name': message.sender?['full_name'] ?? 'Unknown User',
+            'profile_picture': message.sender?['profile_picture'],
+          }
         });
 
+        debugPrint('✅ Message sent with real ID: ${message.id}');
         return message;
       } else {
         debugPrint("❌ Failed to send message: ${response.statusCode}");
@@ -358,7 +366,6 @@ class GroupChatRepository {
       'Accept': 'application/json',
     };
 
-    // ✅ ADD JWT token if available
     try {
       final token = await authRepo.getAccessToken();
       if (token != null && token.isNotEmpty) {

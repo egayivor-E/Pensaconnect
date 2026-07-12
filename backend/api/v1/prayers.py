@@ -1,8 +1,8 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from backend.models import PrayerRequest, Prayer, PrayerStatus
+from backend.models import PrayerRequest, Prayer, PrayerStatus, Activity
 from backend.extensions import db
-from .utils import success_response, error_response
+from .utils import success_response, error_response, broadcast_new_activity
 from datetime import datetime
 
 prayers_bp = Blueprint("prayers", __name__, url_prefix="/prayers")
@@ -75,7 +75,10 @@ def get_prayer(prayer_id: int):
 def create_prayer():
     try:
         user_id = get_jwt_identity()
-        data = request.get_json(force=True)
+        data = request.get_json(silent=True)
+
+        if data is None:
+            return error_response("Request body must be valid JSON", 400)
 
         title = data.get("title", "").strip()
         content = data.get("content", "").strip()
@@ -89,18 +92,38 @@ def create_prayer():
         if not status_instance:
             return error_response(f"Invalid status '{status_name}'", 400)
 
+        is_anonymous = data.get("is_anonymous", False)
+
         prayer_instance = PrayerRequest(
             user_id=user_id,
             title=title,
             content=content,
             category=category,
-            is_anonymous=data.get("is_anonymous", False),
+            is_anonymous=is_anonymous,
             status=status_instance,
             created_at=datetime.utcnow(),
         )
 
         db.session.add(prayer_instance)
         db.session.commit()
+
+        # Activity logging is skipped entirely when the request is anonymous.
+        # Activity.user_id is non-nullable and Activity.to_dict(include_user=True)
+        # would otherwise leak the identity of a user who asked to stay hidden.
+        if not is_anonymous:
+            activity = Activity(
+                title="New Prayer Request",
+                subtitle=title,
+                icon="pray",
+                color="blue",
+                user_id=user_id,
+                target_type="prayer_request",
+                target_id=prayer_instance.id,
+            )
+            db.session.add(activity)
+            db.session.commit()
+            broadcast_new_activity(activity)
+
         return success_response(prayer_instance.to_dict(), "Prayer request created", 201)
     except Exception as e:
         db.session.rollback()
@@ -113,7 +136,16 @@ def create_prayer():
 def update_prayer(prayer_id: int):
     try:
         prayer = PrayerRequest.query.get_or_404(prayer_id)
-        data = request.get_json(force=True)
+
+        # Ownership check: only the original author may edit their request.
+        current_user_id = get_jwt_identity()
+        if prayer.user_id != current_user_id:
+            return error_response("You do not have permission to edit this prayer request", 403)
+
+        data = request.get_json(silent=True)
+
+        if data is None:
+            return error_response("Request body must be valid JSON", 400)
 
         if "status" in data:
             status_name = data["status"].lower()
@@ -140,6 +172,12 @@ def update_prayer(prayer_id: int):
 def delete_prayer(prayer_id: int):
     try:
         prayer = PrayerRequest.query.get_or_404(prayer_id)
+
+        # Ownership check: only the original author may delete their request.
+        current_user_id = get_jwt_identity()
+        if prayer.user_id != current_user_id:
+            return error_response("You do not have permission to delete this prayer request", 403)
+
         db.session.delete(prayer)
         db.session.commit()
         return success_response(message="Prayer request deleted")
@@ -155,6 +193,7 @@ def toggle_prayer(prayer_id: int):
     try:
         user_id = get_jwt_identity()
         prayer_request = PrayerRequest.query.get_or_404(prayer_id)
+        did_pray = False  # track which branch ran, so Activity only logs on "add"
 
         with db.session.begin_nested():
             existing_prayer = Prayer.query.filter_by(
@@ -168,6 +207,7 @@ def toggle_prayer(prayer_id: int):
                     user_id=user_id, prayer_request_id=prayer_id, message=""
                 )
                 db.session.add(new_prayer)
+                did_pray = True
 
             db.session.flush()
 
@@ -181,6 +221,42 @@ def toggle_prayer(prayer_id: int):
             db.session.add(prayer_request)
 
         db.session.commit()
+
+        # Log an Activity only when the user prayed (not when un-praying), so
+        # toggling off doesn't spam the feed with removal events.
+        #
+        # ✅ Deduped per (user, prayer_request): without this check, toggling
+        # prayed -> unprayed -> prayed again for the same request inserted a
+        # fresh Activity row every time, so the global feed filled up with
+        # multiple near-identical "Prayed for a Request" rows for the same
+        # user+request. This also broke the frontend's like state, which
+        # tracked "liked" by the Activity row's id — a new row on every
+        # re-pray meant the old id's "liked" flag no longer matched anything
+        # once the feed refreshed, making the like appear to vanish. Logging
+        # at most once per user+request keeps the feed entry (and the id the
+        # frontend keys off of) stable across repeated toggles.
+        if did_pray:
+            already_logged = Activity.query.filter_by(
+                user_id=user_id,
+                target_type="prayer_request",
+                target_id=prayer_request.id,
+            ).first()
+            if not already_logged:
+                activity = Activity(
+                    title="Prayed for a Request",
+                    subtitle=prayer_request.title,
+                    icon="pray",
+                    color="blue",
+                    user_id=user_id,
+                    target_type="prayer_request",
+                    target_id=prayer_request.id,
+                )
+                db.session.add(activity)
+                db.session.commit()
+                # ✅ Only reached when a genuinely new Activity row was just
+                # committed (never on a re-toggle of an already-logged
+                # prayer) — so this can never push a duplicate feed entry.
+                broadcast_new_activity(activity)
 
         updated_request = PrayerRequest.query.get(prayer_id)
         return success_response(

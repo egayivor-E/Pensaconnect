@@ -1,14 +1,45 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 # Import the new EventReminder model
-from backend.models import Event, EventAttendee, EventReminder 
+from backend.models import Event, EventAttendee, EventReminder, EventType, User, Activity
 from backend.extensions import db
-from .utils import success_response, error_response
+from .utils import success_response, error_response, broadcast_new_activity
 from datetime import datetime, timezone 
 import json # Import json for JSON handling if needed
 
 # ✅ Use url_prefix without trailing slash
 events_bp = Blueprint("events", __name__, url_prefix="/events")
+
+
+# --- Helpers ---
+
+def resolve_event_type_id(data: dict) -> int:
+    """
+    Event.event_type is a relationship to EventType, not a plain string
+    column — Event.event_type_id is the real FK. Older client code sent
+    a raw string as `event_type`, which was being assigned straight to
+    the relationship attribute and would break at flush/commit (or get
+    silently clobbered) since SQLAlchemy expects an EventType instance
+    there, not a string.
+
+    This accepts either:
+      - event_type_id (int): used directly
+      - event_type (str, a name): looked up against EventType.name
+
+    Raises KeyError if neither is present, ValueError if a name is
+    given but doesn't match any known EventType.
+    """
+    if data.get("event_type_id") is not None:
+        return data["event_type_id"]
+
+    name = data.get("event_type")
+    if name:
+        event_type = EventType.query.filter_by(name=name).first()
+        if not event_type:
+            raise ValueError(f"Unknown event_type: {name!r}")
+        return event_type.id
+
+    raise KeyError("event_type_id")
 
 
 # --- EXISTING EVENT ROUTES (Keep as-is) ---
@@ -42,23 +73,41 @@ def create_event():
     data = request.get_json()
 
     try:
+        event_type_id = resolve_event_type_id(data)
+
         event = Event(
             user_id=user_id,
             title=data["title"],
             description=data["description"],
-            # Assuming event_type in data is now just a string, 
-            # but event_type_id is required for the FK.
-            # If the data includes event_type (string), you should check your model.
-            # For now, let's keep the original logic:
-            event_type=data["event_type"], 
             start_time=datetime.fromisoformat(data["start_time"]),
             end_time=datetime.fromisoformat(data["end_time"]),
             location=data.get("location"),
             is_virtual=data.get("is_virtual", False),
-            event_type_id=data["event_type_id"],
+            event_type_id=event_type_id,
         )
         db.session.add(event)
         db.session.commit()
+
+        # Activity feed logging — same pattern as posts.py/testimonies.py/forums.py.
+        # Runs in its own try/except and commit so a logging failure can't
+        # turn an already-successful event creation into an error response.
+        try:
+            current_user = User.query.get(user_id)
+            activity = Activity(
+                title=f"{current_user.get_full_name()} created a new event",
+                subtitle=(event.description or event.title)[:140],
+                icon="event",
+                color="blue",
+                user_id=user_id,
+                target_type="event",
+                target_id=event.id,
+            )
+            db.session.add(activity)
+            db.session.commit()
+            broadcast_new_activity(activity)
+        except Exception:
+            db.session.rollback()
+
         return success_response(event.to_dict(), "Event created", 201)
     except KeyError as e:
         db.session.rollback()
@@ -76,7 +125,7 @@ def update_event(event_id: int):
 
     try:
         for key in [
-            "title", "description", "event_type", "start_time", "end_time", 
+            "title", "description", "start_time", "end_time",
             "location", "is_virtual",
         ]:
             if key in data:
@@ -84,6 +133,11 @@ def update_event(event_id: int):
                     setattr(event, key, datetime.fromisoformat(data[key]))
                 else:
                     setattr(event, key, data[key])
+
+        # event_type is a relationship, not a plain column — resolve to
+        # the FK instead of assigning a raw string/dict onto it directly.
+        if "event_type_id" in data or "event_type" in data:
+            event.event_type_id = resolve_event_type_id(data)
 
         event.updated_at = datetime.utcnow()
         db.session.commit()

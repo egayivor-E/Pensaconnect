@@ -5,11 +5,73 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pensaconnect/models/bible_models.dart';
 import 'package:pensaconnect/repositories/bible_repository.dart';
+import '../theme/app_style.dart';
 
 // Add these enums to extend your models
 enum DevotionCategory { daily, prayer, wisdom, encouragement, guidance }
 
 enum StudyPlanDifficulty { beginner, intermediate, advanced }
+
+// ---- Shared style helpers: keep category/difficulty look consistent everywhere ----
+class _CategoryStyle {
+  final String label;
+  final IconData icon;
+  final Color color;
+  const _CategoryStyle(this.label, this.icon, this.color);
+}
+
+_CategoryStyle _categoryStyle(DevotionCategory category) {
+  switch (category) {
+    case DevotionCategory.prayer:
+      return const _CategoryStyle('🙏 Prayer', Icons.handshake, AppColors.roseQuartz);
+    case DevotionCategory.wisdom:
+      return const _CategoryStyle('💡 Wisdom', Icons.lightbulb, Colors.amber);
+    case DevotionCategory.encouragement:
+      return const _CategoryStyle('❤️ Encouragement', Icons.favorite, Colors.pink);
+    case DevotionCategory.guidance:
+      return const _CategoryStyle('🧭 Guidance', Icons.explore, Colors.teal);
+    case DevotionCategory.daily:
+      return const _CategoryStyle('📅 Daily', Icons.calendar_today, Colors.blue);
+  }
+}
+
+_CategoryStyle _difficultyStyle(StudyPlanDifficulty difficulty) {
+  switch (difficulty) {
+    case StudyPlanDifficulty.beginner:
+      return const _CategoryStyle('🌱 Beginner', Icons.eco, Colors.green);
+    case StudyPlanDifficulty.intermediate:
+      return const _CategoryStyle('🔥 Intermediate', Icons.local_fire_department, Colors.orange);
+    case StudyPlanDifficulty.advanced:
+      return const _CategoryStyle('⚡ Advanced', Icons.bolt, Colors.red);
+  }
+}
+
+// Colorful pill chip used across list items — light tinted background, bold colored text.
+class _StyledChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _StyledChip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: color.computeLuminance() > 0.9 ? color : color.withRed((color.red * 0.7).round()),
+        ),
+      ),
+    );
+  }
+}
 
 class BibleStudyScreen extends StatefulWidget {
   const BibleStudyScreen({super.key});
@@ -85,7 +147,8 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Filter Content'),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Filter Content', style: TextStyle(fontWeight: FontWeight.bold)),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView(
@@ -106,6 +169,9 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
               child: const Text('Reset'),
             ),
             FilledButton(
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              ),
               onPressed: () {
                 Navigator.pop(context);
                 setState(() {}); // Refresh the lists
@@ -120,40 +186,55 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
 
   List<Widget> _buildDevotionFilters(StateSetter setDialogState) => [
     const Text('Category', style: TextStyle(fontWeight: FontWeight.bold)),
-    DropdownButton<DevotionCategory>(
-      value: _selectedCategory,
-      isExpanded: true,
-      items: DevotionCategory.values.map((category) {
-        return DropdownMenuItem(
-          value: category,
-          child: Text(_formatCategory(category)),
+    const SizedBox(height: 8),
+    Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: DevotionCategory.values.map((category) {
+        final style = _categoryStyle(category);
+        final selected = _selectedCategory == category;
+        return ChoiceChip(
+          label: Text(style.label),
+          selected: selected,
+          selectedColor: style.color.withOpacity(0.2),
+          onSelected: (_) => setDialogState(
+            () => _selectedCategory = selected ? null : category,
+          ),
         );
       }).toList(),
-      onChanged: (category) =>
-          setDialogState(() => _selectedCategory = category),
     ),
     const SizedBox(height: 16),
   ];
 
   List<Widget> _buildStudyPlanFilters(StateSetter setDialogState) => [
     const Text('Difficulty', style: TextStyle(fontWeight: FontWeight.bold)),
-    DropdownButton<StudyPlanDifficulty>(
-      value: _selectedDifficulty,
-      isExpanded: true,
-      items: StudyPlanDifficulty.values.map((difficulty) {
-        return DropdownMenuItem(
-          value: difficulty,
-          child: Text(_formatDifficulty(difficulty)),
+    const SizedBox(height: 8),
+    Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: StudyPlanDifficulty.values.map((difficulty) {
+        final style = _difficultyStyle(difficulty);
+        final selected = _selectedDifficulty == difficulty;
+        return ChoiceChip(
+          label: Text(style.label),
+          selected: selected,
+          selectedColor: style.color.withOpacity(0.2),
+          onSelected: (_) => setDialogState(
+            () => _selectedDifficulty = selected ? null : difficulty,
+          ),
         );
       }).toList(),
-      onChanged: (difficulty) =>
-          setDialogState(() => _selectedDifficulty = difficulty),
     ),
   ];
 
   List<Widget> _buildArchiveFilters(StateSetter setDialogState) => [
     const Text('Date Range', style: TextStyle(fontWeight: FontWeight.bold)),
-    FilledButton(
+    const SizedBox(height: 8),
+    FilledButton.icon(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+      icon: const Icon(Icons.date_range),
       onPressed: () async {
         final range = await showDateRangePicker(
           context: context,
@@ -164,39 +245,13 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
           setDialogState(() => _selectedDateRange = range);
         }
       },
-      child: Text(
+      label: Text(
         _selectedDateRange == null
             ? 'Select Date Range'
             : '${_formatDate(_selectedDateRange!.start)} - ${_formatDate(_selectedDateRange!.end)}',
       ),
     ),
   ];
-
-  String _formatCategory(DevotionCategory category) {
-    switch (category) {
-      case DevotionCategory.prayer:
-        return 'Prayer';
-      case DevotionCategory.wisdom:
-        return 'Wisdom';
-      case DevotionCategory.encouragement:
-        return 'Encouragement';
-      case DevotionCategory.guidance:
-        return 'Guidance';
-      case DevotionCategory.daily:
-        return 'Daily';
-    }
-  }
-
-  String _formatDifficulty(StudyPlanDifficulty difficulty) {
-    switch (difficulty) {
-      case StudyPlanDifficulty.beginner:
-        return 'Beginner';
-      case StudyPlanDifficulty.intermediate:
-        return 'Intermediate';
-      case StudyPlanDifficulty.advanced:
-        return 'Advanced';
-    }
-  }
 
   String _formatDate(DateTime date) =>
       '${date.year}/${date.month.toString().padLeft(2, '0')}/${date.day.toString().padLeft(2, '0')}';
@@ -245,60 +300,97 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bible Study'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.replace('/home');
-            }
-          },
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () => showSearch(
-              context: context,
-              delegate: _SimpleBibleSearchDelegate(),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight + 48),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [colorScheme.primary, colorScheme.secondary],
             ),
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.primary.withOpacity(0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-          IconButton(
-            icon: Stack(
+          child: SafeArea(
+            child: Column(
               children: [
-                const Icon(Icons.filter_list),
-                if (_hasActiveFilters())
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 12,
-                        minHeight: 12,
+                AppBar(
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  foregroundColor: Colors.white,
+                  title: const Text('📖 Bible Study',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: () {
+                      if (context.canPop()) {
+                        context.pop();
+                      } else {
+                        context.replace('/home');
+                      }
+                    },
+                  ),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      onPressed: () => showSearch(
+                        context: context,
+                        delegate: _SimpleBibleSearchDelegate(),
                       ),
                     ),
-                  ),
+                    IconButton(
+                      icon: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          const Icon(Icons.filter_list),
+                          if (_hasActiveFilters())
+                            Positioned(
+                              right: 0,
+                              top: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(3),
+                                decoration: const BoxDecoration(
+                                  color: Colors.pinkAccent,
+                                  shape: BoxShape.circle,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 10,
+                                  minHeight: 10,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      onPressed: _showFilterDialog,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+                TabBar(
+                  controller: _tabController,
+                  indicatorColor: Colors.white,
+                  indicatorWeight: 3,
+                  labelColor: Colors.white,
+                  unselectedLabelColor: Colors.white70,
+                  labelStyle: const TextStyle(fontWeight: FontWeight.bold),
+                  tabs: const [
+                    Tab(text: '🙏 Devotions'),
+                    Tab(text: '📚 Study Plans'),
+                    Tab(text: '📦 Archive'),
+                  ],
+                ),
               ],
             ),
-            onPressed: _showFilterDialog,
           ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'Devotions'),
-            Tab(text: 'Study Plans'),
-            Tab(text: 'Archive'),
-          ],
         ),
       ),
 
@@ -323,10 +415,28 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
         ],
       ),
       floatingActionButton: _selectedIndex == 1
-          ? FloatingActionButton(
-              onPressed: _createNewStudyPlan,
-              child: const Icon(Icons.add),
-              tooltip: 'Create New Study Plan',
+          ? Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(30),
+                gradient: LinearGradient(
+                  colors: [colorScheme.primary, colorScheme.secondary],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: colorScheme.primary.withOpacity(0.4),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: FloatingActionButton.extended(
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                onPressed: _createNewStudyPlan,
+                icon: const Icon(Icons.add, color: Colors.white),
+                label: const Text('New Plan',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
             )
           : null,
     );
@@ -342,7 +452,12 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Study plan created successfully!')),
+        SnackBar(
+          content: const Text('🎉 Study plan created successfully!',
+              style: TextStyle(fontWeight: FontWeight.w600)),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
       );
     }
   }
@@ -401,7 +516,7 @@ class _SimpleBibleSearchDelegate extends SearchDelegate<String> {
         }
 
         if (totalResults == 0) {
-          return _EmptyState(message: 'No results found for "$query"');
+          return _EmptyState(message: 'No results found for "$query" 🔍');
         }
 
         return CustomScrollView(
@@ -451,12 +566,12 @@ class _SimpleBibleSearchDelegate extends SearchDelegate<String> {
             Icon(
               Icons.search,
               size: 64,
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
             ),
             const SizedBox(height: 16),
             Text(
-              'Search Devotions & Study Plans',
-              style: Theme.of(context).textTheme.titleMedium,
+              '🔎 Search Devotions & Study Plans',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -614,8 +729,8 @@ class _DevotionsListState extends State<_DevotionsList> {
         if (items.isEmpty) {
           return _EmptyState(
             message: widget.searchQuery.isNotEmpty || widget.category != null
-                ? 'No devotions match your filters.'
-                : 'No devotions available.',
+                ? 'No devotions match your filters 🤔'
+                : 'No devotions available yet ✨',
           );
         }
 
@@ -624,7 +739,7 @@ class _DevotionsListState extends State<_DevotionsList> {
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 8),
             itemCount: items.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            separatorBuilder: (_, __) => const SizedBox(height: 2),
             itemBuilder: (ctx, i) {
               final devotion = items[i];
               final progress = _progressCache[devotion.id];
@@ -715,7 +830,9 @@ class _DevotionListItemState extends State<_DevotionListItem> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('"${widget.devotion.verse}" added to archive'),
+          content: Text('📦 "${widget.devotion.verse}" added to archive'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           action: SnackBarAction(
             label: 'View',
             onPressed: () {
@@ -745,24 +862,31 @@ class _DevotionListItemState extends State<_DevotionListItem> {
     final progress = _currentProgress;
     final isCompleted = progress?.isCompleted ?? false;
     final progressPercentage = progress?.progress ?? 0.0;
+    final style = _categoryStyle(widget.category);
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: style.color.withOpacity(0.15)),
+      ),
       child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: Container(
-          width: 40,
-          height: 40,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primaryContainer,
+            color: style.color.withOpacity(0.15),
             shape: BoxShape.circle,
           ),
           child: Stack(
             children: [
               Center(
                 child: Icon(
-                  _getCategoryIcon(widget.category),
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  style.icon,
+                  color: style.color,
                   size: 20,
                 ),
               ),
@@ -770,9 +894,7 @@ class _DevotionListItemState extends State<_DevotionListItem> {
                 CircularProgressIndicator(
                   value: progressPercentage,
                   backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    Theme.of(context).colorScheme.primary.withOpacity(0.3),
-                  ),
+                  valueColor: AlwaysStoppedAnimation<Color>(style.color.withOpacity(0.5)),
                   strokeWidth: 3,
                 ),
             ],
@@ -783,39 +905,37 @@ class _DevotionListItemState extends State<_DevotionListItem> {
             Expanded(
               child: Text(
                 widget.devotion.verse,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+                style: const TextStyle(fontWeight: FontWeight.w700),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             if (isCompleted)
-              const Icon(Icons.check_circle, color: Colors.green, size: 16),
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.check_circle, color: Colors.green, size: 16),
+              ),
           ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const SizedBox(height: 2),
             Text(
               widget.devotion.content,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Row(
               children: [
-                Chip(
-                  label: Text(_formatCategory(widget.category)),
-                  visualDensity: VisualDensity.compact,
-                ),
+                _StyledChip(label: style.label, color: style.color),
                 if (progress != null) ...[
-                  const SizedBox(width: 8),
-                  Chip(
-                    label: Text('${(progressPercentage * 100).toInt()}%'),
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor: _getProgressColor(
-                      context,
-                      progressPercentage,
-                    ),
+                  const SizedBox(width: 6),
+                  _StyledChip(
+                    label: '${(progressPercentage * 100).toInt()}%',
+                    color: _getProgressColor(progressPercentage),
                   ),
                 ],
               ],
@@ -832,11 +952,11 @@ class _DevotionListItemState extends State<_DevotionListItem> {
                       height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.archive, size: 20),
+                  : const Icon(Icons.archive_outlined, size: 20),
               onPressed: _isArchiving ? null : _archiveDevotion,
               tooltip: 'Add to Archive',
             ),
-            const Icon(Icons.chevron_right),
+            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.outline),
           ],
         ),
         onTap: () async {
@@ -876,6 +996,7 @@ class _DevotionListItemState extends State<_DevotionListItem> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Update Reading Progress'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -919,40 +1040,10 @@ class _DevotionListItemState extends State<_DevotionListItem> {
     );
   }
 
-  Color _getProgressColor(BuildContext context, double progress) {
-    if (progress >= 1.0) return Colors.green.shade100;
-    if (progress >= 0.5) return Colors.blue.shade100;
-    return Colors.grey.shade200;
-  }
-
-  IconData _getCategoryIcon(DevotionCategory category) {
-    switch (category) {
-      case DevotionCategory.prayer:
-        return Icons.handshake;
-      case DevotionCategory.wisdom:
-        return Icons.lightbulb;
-      case DevotionCategory.encouragement:
-        return Icons.favorite;
-      case DevotionCategory.guidance:
-        return Icons.explore;
-      case DevotionCategory.daily:
-        return Icons.calendar_today;
-    }
-  }
-
-  String _formatCategory(DevotionCategory category) {
-    switch (category) {
-      case DevotionCategory.prayer:
-        return 'Prayer';
-      case DevotionCategory.wisdom:
-        return 'Wisdom';
-      case DevotionCategory.encouragement:
-        return 'Encouragement';
-      case DevotionCategory.guidance:
-        return 'Guidance';
-      case DevotionCategory.daily:
-        return 'Daily';
-    }
+  Color _getProgressColor(double progress) {
+    if (progress >= 1.0) return Colors.green;
+    if (progress >= 0.5) return Colors.blue;
+    return Colors.grey;
   }
 }
 
@@ -962,11 +1053,15 @@ class _PlansList extends StatefulWidget {
   final String searchQuery;
   final StudyPlanDifficulty Function(StudyPlan) determineDifficulty;
 
+  // FIXED: `key` now forwards to super.key so the parent's GlobalKey actually
+  // attaches to this widget. Previously it was a plain named field that never
+  // reached the Widget base class, so `_plansListKey.currentState` was always
+  // null and "create plan → refresh list" silently did nothing.
   const _PlansList({
+    super.key,
     this.difficulty,
     this.searchQuery = '',
     required this.determineDifficulty,
-    required GlobalKey<_PlansListState> key,
   });
 
   @override
@@ -1016,7 +1111,7 @@ class _PlansListState extends State<_PlansList> {
     }).toList();
   }
 
-  // ADD THIS METHOD to refresh after delete or create
+  // Refresh after delete or create
   Future<void> _refreshPlans() async {
     setState(() {
       _plansFuture = _fetchPlansWithProgress();
@@ -1043,8 +1138,8 @@ class _PlansListState extends State<_PlansList> {
         if (items.isEmpty) {
           return _EmptyState(
             message: widget.searchQuery.isNotEmpty || widget.difficulty != null
-                ? 'No study plans match your filters.'
-                : 'No study plans available.',
+                ? 'No study plans match your filters 🤔'
+                : 'No study plans yet — start one! 🚀',
           );
         }
 
@@ -1053,7 +1148,7 @@ class _PlansListState extends State<_PlansList> {
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 8),
             itemCount: items.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            separatorBuilder: (_, __) => const SizedBox(height: 2),
             itemBuilder: (ctx, i) {
               final plan = items[i];
               final progress = _progressCache[plan.id];
@@ -1083,7 +1178,7 @@ class _StudyPlanListItem extends StatefulWidget {
   final ReadingProgress? progress;
   final Function(ReadingProgress)? onProgressUpdate;
   final VoidCallback? onArchive;
-  final VoidCallback? onDelete; // ADD THIS
+  final VoidCallback? onDelete;
 
   const _StudyPlanListItem({
     required this.plan,
@@ -1091,7 +1186,7 @@ class _StudyPlanListItem extends StatefulWidget {
     this.progress,
     this.onProgressUpdate,
     this.onArchive,
-    this.onDelete, // ADD THIS
+    this.onDelete,
   });
 
   @override
@@ -1101,7 +1196,7 @@ class _StudyPlanListItem extends StatefulWidget {
 class _StudyPlanListItemState extends State<_StudyPlanListItem> {
   ReadingProgress? _currentProgress;
   bool _isArchiving = false;
-  bool _isDeleting = false; // ADD THIS
+  bool _isDeleting = false;
   bool _isNavigating = false;
 
   @override
@@ -1148,7 +1243,9 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('"${widget.plan.title}" added to archive'),
+          content: Text('📦 "${widget.plan.title}" added to archive'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           action: SnackBarAction(
             label: 'View',
             onPressed: () {
@@ -1173,13 +1270,13 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
     }
   }
 
-  // ADD DELETE METHOD
   void _deleteStudyPlan() async {
     if (_isDeleting) return;
 
     final shouldDelete = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Delete Study Plan'),
         content: Text(
           'Are you sure you want to delete "${widget.plan.title}"? This action cannot be undone.',
@@ -1193,6 +1290,7 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
             onPressed: () => Navigator.of(context).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             ),
             child: const Text('Delete'),
           ),
@@ -1213,6 +1311,8 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('"${widget.plan.title}" deleted successfully'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),
         );
 
@@ -1239,24 +1339,34 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
     final progress = _currentProgress;
     final isCompleted = progress?.isCompleted ?? false;
     final progressPercentage = progress?.progress ?? 0.0;
+    final style = _difficultyStyle(widget.difficulty);
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: style.color.withOpacity(0.15)),
+      ),
       child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: Container(
-          width: 40,
-          height: 40,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
-            color: _getDifficultyColor(context, widget.difficulty),
+            color: style.color,
             shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(color: style.color.withOpacity(0.35), blurRadius: 8, offset: const Offset(0, 3)),
+            ],
           ),
           child: Stack(
             children: [
-              Center(
+              const Center(
                 child: Icon(
                   Icons.assignment,
-                  color: Theme.of(context).colorScheme.onPrimary,
+                  color: Colors.white,
                   size: 20,
                 ),
               ),
@@ -1265,7 +1375,7 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
                   value: progressPercentage,
                   backgroundColor: Colors.transparent,
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    Colors.white.withOpacity(0.3),
+                    Colors.white.withOpacity(0.5),
                   ),
                   strokeWidth: 3,
                 ),
@@ -1277,42 +1387,38 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
             Expanded(
               child: Text(
                 widget.plan.title,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
             if (isCompleted)
-              const Icon(Icons.check_circle, color: Colors.green, size: 16),
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.check_circle, color: Colors.green, size: 16),
+              ),
           ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const SizedBox(height: 2),
             Text(
               widget.plan.description,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Wrap(
-              spacing: 8,
+              spacing: 6,
+              runSpacing: 4,
               children: [
-                Chip(
-                  label: Text(_formatDifficulty(widget.difficulty)),
-                  visualDensity: VisualDensity.compact,
-                ),
+                _StyledChip(label: style.label, color: style.color),
                 if (widget.plan.dayCount != null)
-                  Chip(
-                    label: Text('${widget.plan.dayCount} days'),
-                    visualDensity: VisualDensity.compact,
-                  ),
+                  _StyledChip(label: '${widget.plan.dayCount} days', color: Colors.blueGrey),
                 if (progress != null)
-                  Chip(
-                    label: Text('${(progressPercentage * 100).toInt()}%'),
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor: _getProgressColor(
-                      context,
-                      progressPercentage,
-                    ),
+                  _StyledChip(
+                    label: '${(progressPercentage * 100).toInt()}%',
+                    color: _getProgressColor(progressPercentage),
                   ),
               ],
             ),
@@ -1321,30 +1427,23 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // DELETE BUTTON - Text instead of icon
             if (!_isDeleting)
-              TextButton(
+              IconButton(
+                icon: Icon(Icons.delete_outline,
+                    size: 20, color: Theme.of(context).colorScheme.error),
                 onPressed: _deleteStudyPlan,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(
-                  'Delete',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+                tooltip: 'Delete',
               )
             else
-              const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               ),
 
-            // ARCHIVE BUTTON
             IconButton(
               icon: _isArchiving
                   ? const SizedBox(
@@ -1352,12 +1451,12 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
                       height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.archive, size: 20),
+                  : const Icon(Icons.archive_outlined, size: 20),
               onPressed: _isArchiving ? null : _archiveStudyPlan,
               tooltip: 'Add to Archive',
             ),
 
-            const Icon(Icons.chevron_right),
+            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.outline),
           ],
         ),
         onTap: () async {
@@ -1370,8 +1469,7 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
             );
 
             if (result == true) {
-              // handle result if detail screen returns something that requires update
-              widget.onDelete?.call(); // for example
+              widget.onDelete?.call();
             }
           } catch (e) {
             if (mounted)
@@ -1397,6 +1495,7 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Update Study Progress'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1440,35 +1539,10 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
     );
   }
 
-  Color _getDifficultyColor(
-    BuildContext context,
-    StudyPlanDifficulty difficulty,
-  ) {
-    switch (difficulty) {
-      case StudyPlanDifficulty.beginner:
-        return Colors.green;
-      case StudyPlanDifficulty.intermediate:
-        return Colors.orange;
-      case StudyPlanDifficulty.advanced:
-        return Colors.red;
-    }
-  }
-
-  Color _getProgressColor(BuildContext context, double progress) {
-    if (progress >= 1.0) return Colors.green.shade100;
-    if (progress >= 0.5) return Colors.blue.shade100;
-    return Colors.grey.shade200;
-  }
-
-  String _formatDifficulty(StudyPlanDifficulty difficulty) {
-    switch (difficulty) {
-      case StudyPlanDifficulty.beginner:
-        return 'Beginner';
-      case StudyPlanDifficulty.intermediate:
-        return 'Intermediate';
-      case StudyPlanDifficulty.advanced:
-        return 'Advanced';
-    }
+  Color _getProgressColor(double progress) {
+    if (progress >= 1.0) return Colors.green;
+    if (progress >= 0.5) return Colors.blue;
+    return Colors.grey;
   }
 }
 
@@ -1550,8 +1624,8 @@ class _ArchiveListState extends State<_ArchiveList> {
         if (items.isEmpty) {
           return _EmptyState(
             message: widget.searchQuery.isNotEmpty || widget.dateRange != null
-                ? 'No archive items match your filters.'
-                : 'No archive items found.',
+                ? 'No archive items match your filters 🤔'
+                : 'Nothing archived yet 📦',
           );
         }
 
@@ -1560,7 +1634,7 @@ class _ArchiveListState extends State<_ArchiveList> {
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 8),
             itemCount: items.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            separatorBuilder: (_, __) => const SizedBox(height: 2),
             itemBuilder: (ctx, i) {
               final item = items[i];
               final progress = _progressCache[item.id];
@@ -1647,7 +1721,11 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
       await BibleRepository.unarchiveItem(widget.item.id);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"${widget.item.title}" removed from archive')),
+        SnackBar(
+          content: Text('"${widget.item.title}" removed from archive'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
       );
 
       widget.onUnarchive?.call();
@@ -1669,12 +1747,18 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
     final progressPercentage = progress?.progress ?? 0.0;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      elevation: 0,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: Theme.of(context).colorScheme.secondary.withOpacity(0.15)),
+      ),
       child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: Container(
-          width: 40,
-          height: 40,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.secondaryContainer,
             shape: BoxShape.circle,
@@ -1693,7 +1777,7 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
                   value: progressPercentage,
                   backgroundColor: Colors.transparent,
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    Theme.of(context).colorScheme.secondary.withOpacity(0.3),
+                    Theme.of(context).colorScheme.secondary.withOpacity(0.4),
                   ),
                   strokeWidth: 3,
                 ),
@@ -1705,38 +1789,36 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
             Expanded(
               child: Text(
                 widget.item.title,
-                style: const TextStyle(fontWeight: FontWeight.w600),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
             if (isCompleted)
-              const Icon(Icons.check_circle, color: Colors.green, size: 16),
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.check_circle, color: Colors.green, size: 16),
+              ),
           ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const SizedBox(height: 2),
             Text(
               widget.item.description,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Wrap(
-              spacing: 8,
+              spacing: 6,
               children: [
                 if (progress != null)
-                  Chip(
-                    label: Text('${(progressPercentage * 100).toInt()}%'),
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor: _getProgressColor(
-                      context,
-                      progressPercentage,
-                    ),
+                  _StyledChip(
+                    label: '${(progressPercentage * 100).toInt()}%',
+                    color: _getProgressColor(progressPercentage),
                   ),
-                Chip(
-                  label: Text(_formatDate(widget.item.date)),
-                  visualDensity: VisualDensity.compact,
-                ),
+                _StyledChip(label: _formatDate(widget.item.date), color: Colors.blueGrey),
               ],
             ),
           ],
@@ -1751,25 +1833,9 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
                       height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.unarchive, size: 20),
+                  : const Icon(Icons.unarchive_outlined, size: 20),
               onPressed: _isUnarchiving ? null : _unarchiveItem,
               tooltip: 'Remove from Archive',
-            ),
-            Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${widget.item.date.year}/${widget.item.date.month.toString().padLeft(2, '0')}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                Text(
-                  widget.item.date.day.toString(),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                ),
-              ],
             ),
           ],
         ),
@@ -1783,7 +1849,7 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
             );
 
             if (result == true) {
-              widget.onUnarchive?.call(); // if detail triggers something
+              widget.onUnarchive?.call();
             }
           } catch (e) {
             if (mounted)
@@ -1809,6 +1875,7 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Update Reading Progress'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1852,10 +1919,10 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
     );
   }
 
-  Color _getProgressColor(BuildContext context, double progress) {
-    if (progress >= 1.0) return Colors.green.shade100;
-    if (progress >= 0.5) return Colors.blue.shade100;
-    return Colors.grey.shade200;
+  Color _getProgressColor(double progress) {
+    if (progress >= 1.0) return Colors.green;
+    if (progress >= 0.5) return Colors.blue;
+    return Colors.grey;
   }
 
   String _formatDate(DateTime date) {
@@ -1885,8 +1952,8 @@ class _ErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'Something went wrong',
-              style: Theme.of(context).textTheme.titleMedium,
+              'Oops, something went wrong',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -1897,7 +1964,15 @@ class _ErrorState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 24),
-            FilledButton(onPressed: onRetry, child: const Text('Try Again')),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Try Again'),
+            ),
           ],
         ),
       ),
@@ -1922,13 +1997,14 @@ class _EmptyState extends StatelessWidget {
             Icon(
               Icons.inbox_outlined,
               size: 64,
-              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.25),
             ),
             const SizedBox(height: 16),
             Text(
               message,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                fontWeight: FontWeight.w600,
                 color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
               ),
             ),

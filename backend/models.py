@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 import enum
 import re
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
+from flask import current_app
 from sqlalchemy import Column, ForeignKey, Index, Numeric, Float
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy.dialects.postgresql import TSVECTOR, ARRAY
@@ -444,15 +445,12 @@ class Donation(BaseModel):
 # --- PrayerRequest Model ---
 class PrayerRequest(BaseModel):
     __tablename__ = 'prayer_requests'
-
     title = Column(String(200), nullable=False, index=True)
     content = Column(Text, nullable=False)
     is_anonymous = Column(Boolean, default=False, nullable=False)
     category = Column(String(50), default="General", nullable=False)
-
     status_id = Column(Integer, db.ForeignKey("prayer_statuses.id"), nullable=False)
     status = relationship("PrayerStatus", back_populates="prayer_requests")
-
     prayer_count = Column(Integer, default=0)
     unique_prayers = Column(Integer, default=0)
     answered_at = Column(DateTime(timezone=True))
@@ -462,26 +460,30 @@ class PrayerRequest(BaseModel):
     urgency_level = Column(Integer, default=1)
     suggested_verses = Column(JSON)
     sentiment_analysis = Column(JSON)
-
     user_id = Column(BigInteger, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-
     # Relationships
     user = relationship('User', back_populates='prayer_requests')
     prayers = relationship('Prayer', back_populates='prayer_request', cascade='all, delete-orphan')
     comments = relationship('Comment', back_populates='prayer_request', cascade='all, delete-orphan')
-
     __table_args__ = (
         Index('ix_prayer_requests_status', 'status_id', 'is_active'),
         Index('ix_prayer_requests_public', 'is_public', 'created_at'),
         Index('ix_prayer_requests_urgency', 'urgency_level', 'created_at'),
     )
-
     def to_dict(self, include_prayers=False, current_user_id=None):
         """
         Serialize prayer request to dictionary.
         :param include_prayers: include prayers details
-        :param current_user_id: used to check if current user has prayed
+        :param current_user_id: JWT identity of the viewer, used both for
+            has_prayed and is_owner checks.
         """
+        display_name = None
+        profile_pic = None
+        if not self.is_anonymous and self.user:
+            full_name = (self.user.get_full_name() or "").strip()
+            display_name = full_name if full_name else self.user.username
+            profile_pic = self.user.profile_picture
+
         data = {
             "id": self.id,
             "title": self.title,
@@ -498,22 +500,28 @@ class PrayerRequest(BaseModel):
             "urgency_level": self.urgency_level,
             "suggested_verses": self.suggested_verses,
             "sentiment_analysis": self.sentiment_analysis,
-            "user_id": self.user_id,
+            # ✅ Never leaks the real id for anonymous requests, to anyone.
+            "user_id": None if self.is_anonymous else self.user_id,
+            "username": display_name,
+            "user_profile_pic": profile_pic,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "has_prayed": False,  # default
+            # ✅ Computed server-side so the true author can still manage
+            # their own anonymous request without exposing user_id to them
+            # (or anyone) via the response.
+            "is_owner": current_user_id is not None and current_user_id == self.user_id,
         }
 
         if include_prayers:
             data["prayers"] = [p.to_dict() for p in self.prayers]
 
-        # Check if current user has prayed
         if current_user_id:
             data["has_prayed"] = any(p.user_id == current_user_id for p in self.prayers)
 
-        return data    
-
-# --- Prayer Model ---
+        return data
+        
+# --- Prayer Model ---        
 class Prayer(BaseModel):
     __tablename__ = 'prayers'
 
@@ -773,7 +781,17 @@ class Activity(BaseModel):
     icon = Column(String(50), default="notifications")
     color = Column(String(50), default="grey")
     time_ago = Column(String(50), default="just now")
-    
+
+    # ✅ Polymorphic pointer to whatever real object this activity is
+    # "about" (a testimony, forum thread, prayer request, post, or
+    # event). Nullable + no FK constraint on purpose: an Activity is a
+    # lightweight log entry that may outlive the thing it points to
+    # (e.g. the testimony gets deleted), and it can point at any one of
+    # several tables, so a single FK column can't express it. Consumers
+    # must look the row up by (target_type, target_id) and handle a miss.
+    target_type = Column(String(30))
+    target_id = Column(Integer)
+
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     # Relationship with User
@@ -784,7 +802,7 @@ class Activity(BaseModel):
         return f"<Activity id={self.id} title={self.title} user_id={self.user_id}>"
 
     # Convert to dictionary for API
-    def to_dict(self, include_user=False):
+    def to_dict(self, include_user=False, liked_target_keys=None):
         data = {
             "id": self.id,
             "title": self.title,
@@ -797,6 +815,13 @@ class Activity(BaseModel):
             "isActive": self.is_active,
             "metaData": self.meta_data,
             "userId": self.user_id,
+            "targetType": self.target_type,
+            "targetId": self.target_id,
+            # ✅ No dedicated columns — piggybacks on the existing
+            # meta_data JSON field so no migration is needed. Most
+            # activity types have neither and both come back null.
+            "imageUrl": (self.meta_data or {}).get("image_url"),
+            "videoUrl": (self.meta_data or {}).get("video_url"),
         }
         if include_user and self.user:
             data["user"] = {
@@ -805,6 +830,24 @@ class Activity(BaseModel):
                 "fullName": self.user.get_full_name() if hasattr(self.user, "get_full_name") else None,
                 "profilePicture": getattr(self.user, "profile_picture", None),
             }
+        # ✅ Tells the client whether the *requesting* user has already
+        # liked/prayed for whatever this activity points at, so the feed
+        # can be hydrated with correct like state on load instead of
+        # starting every session assuming nothing is liked.
+        #
+        # `liked_target_keys` is a precomputed set of (target_type,
+        # target_id) tuples the caller already knows the current user
+        # has liked — built with a handful of batched `IN (...)` queries
+        # in get_recent_activities, not one query per activity here.
+        # This method deliberately does NOT query the DB itself: doing
+        # that here (e.g. one Prayer/TestimonyLike/ForumLike lookup per
+        # call) is what makes an N-row feed cost N extra queries. Pass
+        # the precomputed set in instead so this stays an O(1) lookup.
+        if liked_target_keys is not None and self.target_id is not None:
+            data["hasLiked"] = (
+                self.target_type,
+                self.target_id,
+            ) in liked_target_keys
         return data
 
     # Helper for recent activities

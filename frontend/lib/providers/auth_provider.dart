@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart'; // ✅ FIX: needed to hydrate AuthService
 
 /// ✅ Unified UserModel that accepts both int and string IDs
 class UserModel {
@@ -90,8 +91,6 @@ class AuthProvider with ChangeNotifier {
         return false;
       }
 
-      
-
       final response = await ApiService.post('auth/login', {
         'identifier': identifier,
         'password': password,
@@ -117,6 +116,15 @@ class AuthProvider with ChangeNotifier {
         final userJson = responseData['data']?['user'];
         if (userJson != null) {
           _currentUser = UserModel.fromJson(userJson);
+
+          // ✅ FIX: hydrate AuthService immediately so AuthService().userId /
+          // getUserId() are populated right away for every login, regardless
+          // of whether this device has any prior cached session. This is
+          // what was missing — AuthProvider previously never wrote to
+          // AuthService's storage/memory, so screens reading from
+          // AuthService (e.g. GroupChatDetail, socket join logic) saw null
+          // on first-ever logins.
+          await AuthService().setUserFromExternal(userJson);
         }
 
         _error = null;
@@ -150,8 +158,23 @@ class AuthProvider with ChangeNotifier {
       final response = await ApiService.get("auth/me");
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        _currentUser = UserModel.fromJson(data['data']);
-        notifyListeners();
+
+        // ✅ FIX: unwrap consistently with AuthService.fetchUserFromApi(),
+        // in case /auth/me nests the user under data.user rather than
+        // returning it directly under data.
+        final userJson = data['data']?['user'] ?? data['data'] ?? data['user'];
+
+        if (userJson != null) {
+          _currentUser = UserModel.fromJson(userJson);
+
+          // ✅ FIX: hydrate AuthService here too. tryAutoLogin() goes
+          // through fetchProfile() rather than login(), so without this,
+          // app-restart/auto-login sessions would still leave AuthService
+          // with a null user even though AuthProvider is authenticated.
+          await AuthService().setUserFromExternal(userJson);
+
+          notifyListeners();
+        }
       }
     } catch (e) {
       debugPrint("⚠️ Failed to fetch profile: $e");
@@ -163,6 +186,11 @@ class AuthProvider with ChangeNotifier {
     _token = null;
     _currentUser = null;
     await ApiService.clearTokens();
+
+    // ✅ FIX: keep AuthService in sync on logout too, otherwise a stale
+    // user/id can linger in AuthService after AuthProvider has logged out.
+    await AuthService().clearUserData();
+
     notifyListeners();
   }
 

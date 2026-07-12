@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/worship_song.dart';
 import '../widgets/song_card.dart';
 import '../providers/app_providers.dart';
+import '../theme/app_style.dart';
 
 class WorshipScreen extends StatefulWidget {
   const WorshipScreen({super.key});
@@ -252,7 +253,7 @@ class _WorshipScreenState extends State<WorshipScreen> {
                   'Total Songs',
                   songProvider.totalSongs.toString(),
                   Icons.library_music,
-                  Colors.deepPurple,
+                  AppColors.emberGold,
                 ),
               ),
               const SizedBox(width: 12),
@@ -309,7 +310,7 @@ class _WorshipScreenState extends State<WorshipScreen> {
                   'Video',
                   songProvider.videoSongs.toString(),
                   Icons.video_file,
-                  Colors.purple,
+                  AppColors.roseQuartz,
                 ),
               ),
             ],

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -55,6 +57,7 @@ import 'screens/help_support_screen.dart';
 // Providers
 import 'providers/auth_provider.dart';
 import 'providers/theme_provider.dart';
+import 'services/auth_service.dart';
 
 class Routes {
   static const splash = '/splash';
@@ -78,95 +81,182 @@ class Routes {
   static const helpSupport = '/help-support';
 }
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  // ✅ Web-compatible error handling
+  FlutterError.onError = (FlutterErrorDetails details) {
+    developer.log(
+      '❌ FLUTTER ERROR: ${details.exceptionAsString()}',
+      name: 'main',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+  };
 
-  // Load .env file with debug info
-  print("🔄 Loading .env file...");
-  await dotenv.load(fileName: ".env");
+  runZonedGuarded(() async {
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // Debug: Check if .env variables are loaded
-  print("🎯 .env FILE DEBUG INFO:");
-  print("   - ENABLE_LIVE_CHAT: '${dotenv.env['ENABLE_LIVE_CHAT']}'");
-  print("   - BACKEND_URL: '${dotenv.env['BACKEND_URL']}'");
-  print("   - WEBSOCKET_URL: '${dotenv.env['WEBSOCKET_URL']}'");
-  print("   - YOUTUBE_VIDEO_ID: '${dotenv.env['YOUTUBE_VIDEO_ID']}'");
-  print("   - All loaded keys: ${dotenv.env.keys.length}");
+      // Load .env file
+      developer.log("🔄 Loading .env file...", name: 'main');
+      await dotenv.load(fileName: ".env");
 
-  print("🔄 MAIN: Starting ApiService.init()...");
-  await ApiService.init();
-  print("✅ MAIN: ApiService.init() completed");
+      // Debug .env variables
+      developer.log("🎯 .env FILE DEBUG INFO:", name: 'main');
+      developer.log("   - ENABLE_LIVE_CHAT: '${dotenv.env['ENABLE_LIVE_CHAT']}'", name: 'main');
+      developer.log("   - BACKEND_URL: '${dotenv.env['BACKEND_URL']}'", name: 'main');
+      developer.log("   - WEBSOCKET_URL: '${dotenv.env['WEBSOCKET_URL']}'", name: 'main');
+      developer.log("   - YOUTUBE_VIDEO_ID: '${dotenv.env['YOUTUBE_VIDEO_ID']}'", name: 'main');
+      developer.log("   - All loaded keys: ${dotenv.env.keys.length}", name: 'main');
 
-  // ✅ Initialize Socket.IO Service - Use singleton instance
-  print("🔄 Initializing Socket.IO Service...");
-  final socketService = SocketIoService(); // ✅ Get singleton instance
-  try {
-    await socketService.initialize();
-    print("✅ Socket.IO Service initialized successfully");
-  } catch (e) {
-    print("❌ Socket.IO Service initialization failed: $e");
-  }
+      // Initialize ApiService
+      developer.log("🔄 MAIN: Starting ApiService.init()...", name: 'main');
+      await ApiService.init();
+      developer.log("✅ MAIN: ApiService.init() completed", name: 'main');
 
-  // Debug: Check token status after init
-  await ApiService.debugTokenStatus();
+      // Load user data
+      developer.log("🔄 MAIN: Loading user data...", name: 'main');
+      final authService = AuthService();
+      await authService.refreshUser();
 
-  final authProvider = AuthProvider();
-  final autoLoggedIn = await authProvider.tryAutoLogin();
+      if (authService.currentUser != null) {
+        developer.log(
+          "✅ MAIN: User loaded - ID=${authService.userId}, Username=${authService.username}",
+          name: 'main'
+        );
+      } else {
+        developer.log("⚠️ MAIN: No user found", name: 'main');
+      }
 
-  runApp(
-    MultiProvider(
-      providers: [
-        // ✅ Reuse existing authProvider instance
-        ChangeNotifierProvider.value(value: authProvider),
+      // Initialize Socket.IO Service
+      developer.log("🔄 MAIN: Initializing Socket.IO Service...", name: 'main');
+      final socketService = SocketIoService();
+      try {
+        await socketService.initialize();
+        developer.log("✅ Socket.IO Service initialized successfully", name: 'main');
+      } catch (e) {
+        developer.log("❌ Socket.IO Service initialization failed: $e", name: 'main');
+      }
 
-        // ✅ Single instance of AuthRepository
-        Provider<AuthRepository>(create: (_) => AuthRepository()),
+      // Debug token status
+      await ApiService.debugTokenStatus();
 
-        // ✅ Theme, Prayer, Threads, Testimony
-        ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => PrayerRepository()),
-        Provider<TestimonyRepository>(create: (_) => TestimonyRepository()),
-        ChangeNotifierProvider(create: (_) => ThreadsProvider()),
+      // Create auth provider
+      final authProvider = AuthProvider();
+      final autoLoggedIn = await authProvider.tryAutoLogin();
 
-        ChangeNotifierProvider(create: (_) => SongProvider()),
-        ChangeNotifierProvider(create: (_) => PlayerProvider()),
-        ChangeNotifierProvider(create: (_) => DownloadProvider()),
+      developer.log("🔐 MAIN: Auth state - Auto-login: $autoLoggedIn", name: 'main');
 
-        // ✅ Dio instance for HTTP
-        Provider<Dio>(create: (_) => Dio()),
+      // ✅ FIX: Sync AuthService with AuthProvider after auto-login.
+      // AuthProvider.tryAutoLogin() reads the token via ApiService and
+      // fetches the profile into AuthProvider.currentUser — but it never
+      // writes to AuthService's storage keys, so AuthService.currentUser /
+      // getUserId() stayed null even after a successful auto-login. This is
+      // what caused "GroupChatDetail: Current User ID = null" downstream.
+      if (authProvider.isAuthenticated &&
+          authProvider.currentUser != null &&
+          authService.currentUser == null) {
+        developer.log(
+          "🔄 MAIN: Syncing AuthService with AuthProvider (post auto-login)",
+          name: 'main',
+        );
+        await authService.setUserFromExternal({
+          'id': authProvider.currentUser!.id,
+          'username': authProvider.currentUser!.username,
+          'roles': authProvider.currentUser!.roles,
+        });
+        developer.log(
+          "✅ MAIN: AuthService synced - ID=${authService.userId}, Username=${authService.username}",
+          name: 'main',
+        );
+      }
 
-        Provider<ForumRepository>(create: (_) => ForumRepository()),
+      runApp(
+        MultiProvider(
+          providers: [
+            // Provide AuthService so widgets can use context.read<AuthService>()
+            // as an alternative to the AuthService() singleton constructor.
+            ChangeNotifierProvider<AuthService>.value(value: authService),
+            ChangeNotifierProvider.value(value: authProvider),
+            Provider<AuthRepository>(create: (_) => AuthRepository()),
+            ChangeNotifierProvider(create: (_) => ThemeProvider()),
+            ChangeNotifierProvider(create: (_) => PrayerRepository()),
+            Provider<TestimonyRepository>(create: (_) => TestimonyRepository()),
+            ChangeNotifierProvider(create: (_) => ThreadsProvider()),
+            ChangeNotifierProvider(create: (_) => SongProvider()),
+            ChangeNotifierProvider(create: (_) => PlayerProvider()),
+            ChangeNotifierProvider(create: (_) => DownloadProvider()),
+            Provider<Dio>(create: (_) => Dio()),
+            Provider<ForumRepository>(create: (_) => ForumRepository()),
+            Provider<SocketIoService>(create: (_) => socketService),
+            ProxyProvider3<Dio, AuthRepository, SocketIoService, GroupChatRepository>(
+              update: (_, dio, auth, socket, __) => GroupChatRepository(
+                dio,
+                auth,
+                socket,
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => ProfileViewModel(
+                authRepo: context.read<AuthRepository>(),
+                prayerRepo: context.read<PrayerRepository>(),
+                testimonyRepo: context.read<TestimonyRepository>(),
+                groupRepo: context.read<GroupChatRepository>(),
+              ),
+            ),
+          ],
+          child: MyApp(autoLoggedIn: autoLoggedIn),
+        ),
+      );
+    } catch (e, stackTrace) {
+      developer.log(
+        '❌ FATAL: App initialization failed: $e',
+        name: 'main',
+        error: e,
+        stackTrace: stackTrace,
+      );
 
-        // ✅ Socket.IO Service Provider - SINGLE INSTANCE
-        Provider<SocketIoService>(create: (_) => socketService),
-
-        // ✅ GroupChatRepository depends on Dio, AuthRepository & SocketService
-        ProxyProvider3<
-          Dio,
-          AuthRepository,
-          SocketIoService,
-          GroupChatRepository
-        >(
-          update: (_, dio, auth, socket, __) => GroupChatRepository(
-            dio,
-            auth,
-            socket, // ✅ Pass the socket service
+      runApp(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Failed to Start App',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      e.toString(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: () => main(),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
-
-        // ✅ ProfileViewModel depends on all required repositories
-        ChangeNotifierProvider(
-          create: (context) => ProfileViewModel(
-            authRepo: context.read<AuthRepository>(),
-            prayerRepo: context.read<PrayerRepository>(),
-            testimonyRepo: context.read<TestimonyRepository>(),
-            groupRepo: context.read<GroupChatRepository>(),
-          ),
-        ),
-      ],
-      child: MyApp(autoLoggedIn: autoLoggedIn),
-    ),
-  );
+      );
+    }
+  }, (error, stackTrace) {
+    developer.log(
+      '❌ ASYNC ERROR: $error',
+      name: 'main',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -191,31 +281,14 @@ class MyApp extends StatelessWidget {
     return GoRouter(
       initialLocation: Routes.splash,
       routes: [
-        // 🔹 Auth
+        // Auth Routes
         GoRoute(path: Routes.splash, builder: (_, __) => const SplashScreen()),
         GoRoute(path: Routes.login, builder: (_, __) => const LoginScreen()),
-        GoRoute(
-          path: Routes.register,
-          builder: (_, __) => const RegisterScreen(),
-        ),
-
-        // 🔹 Home
+        GoRoute(path: Routes.register, builder: (_, __) => const RegisterScreen()),
         GoRoute(path: Routes.home, builder: (_, __) => const HomeScreen()),
-
-        // 🔹 Live / Test
-        GoRoute(
-          path: Routes.live,
-          builder: (_, __) => const LiveStreamScreen(),
-        ),
-        GoRoute(
-          path: Routes.test,
-          builder: (_, __) => const TestConnectionScreen(),
-        ),
-
-        // 🔹 Events
+        GoRoute(path: Routes.live, builder: (_, __) => const LiveStreamScreen()),
+        GoRoute(path: Routes.test, builder: (_, __) => const TestConnectionScreen()),
         GoRoute(path: Routes.events, builder: (_, __) => const EventsScreen()),
-
-        // 🔹 Bible Study
         GoRoute(
           path: Routes.bible,
           builder: (_, __) => const BibleStudyScreen(),
@@ -238,12 +311,7 @@ class MyApp extends StatelessWidget {
             ),
           ],
         ),
-
-        // 🔹 Worship
-        GoRoute(
-          path: Routes.worship,
-          builder: (_, __) => const WorshipScreen(),
-        ),
+        GoRoute(path: Routes.worship, builder: (_, __) => const WorshipScreen()),
         GoRoute(
           path: '/worship/player',
           builder: (_, state) {
@@ -258,73 +326,47 @@ class MyApp extends StatelessWidget {
           path: '/worship/upload',
           builder: (context, state) => const AdminUploadScreen(),
         ),
-
-        // 🔹 Forums
         GoRoute(path: Routes.forums, builder: (_, __) => const ThreadsScreen()),
-
-        GoRoute(
-          path: '/threads/new',
-          builder: (_, __) => const ThreadFormScreen(),
-        ),
-
+        GoRoute(path: '/threads/new', builder: (_, __) => const ThreadFormScreen()),
         GoRoute(
           path: '/threads/:threadId',
           builder: (context, state) {
             final params = state.extra as Map<String, dynamic>? ?? {};
-            final threadId =
-                int.tryParse(state.pathParameters['threadId'] ?? '') ?? 0;
+            final threadId = int.tryParse(state.pathParameters['threadId'] ?? '') ?? 0;
             final threadTitle = params['title'] as String? ?? 'Thread';
-
-            return ForumDetailScreen(
-              threadId: threadId,
-              threadTitle: threadTitle,
-            );
+            return ForumDetailScreen(threadId: threadId, threadTitle: threadTitle);
           },
         ),
-
         GoRoute(
           path: '/posts/:postId',
           builder: (context, state) {
-            final postId =
-                int.tryParse(state.pathParameters['postId'] ?? '') ?? 0;
-
-            // ✅ Get threadId passed via `extra`
+            final postId = int.tryParse(state.pathParameters['postId'] ?? '') ?? 0;
             final extra = state.extra as Map<String, dynamic>?;
             final threadId = extra?['threadId'] as int? ?? 0;
-
             return PostDetailScreen(threadId: threadId, postId: postId);
           },
         ),
-
         GoRoute(
           path: '/threads/:threadId/new-post',
           builder: (context, state) {
-            final threadId =
-                int.tryParse(state.pathParameters['threadId'] ?? '') ?? 0;
+            final threadId = int.tryParse(state.pathParameters['threadId'] ?? '') ?? 0;
             return PostFormScreen(threadId: threadId, threadTitle: '');
           },
         ),
-
-        // 🔹 Prayer Wall
+        // ✅ No longer wraps PrayerWallScreen in its own scoped
+        // PrayerRepository. That created a *second* instance shadowing
+        // the one already registered in the root MultiProvider above,
+        // so a prayer toggled from anywhere else (e.g. the home feed's
+        // "I prayed" action) never showed up here, and vice versa — two
+        // disconnected caches for what should be one shared list.
+        // PrayerWallScreen now resolves PrayerRepository from the root
+        // provider like every other screen does.
         GoRoute(
           path: Routes.prayerWall,
-          builder: (context, state) {
-            return ChangeNotifierProvider(
-              create: (_) => PrayerRepository(),
-              child: const PrayerWallScreen(),
-            );
-          },
+          builder: (_, __) => const PrayerWallScreen(),
         ),
-
-        // 🔹 Testimonies
-        GoRoute(
-          path: Routes.testimonies,
-          builder: (_, __) => const TestimoniesScreen(),
-        ),
-        GoRoute(
-          path: '/testimonies/add',
-          builder: (_, __) => const AddTestimonyScreen(),
-        ),
+        GoRoute(path: Routes.testimonies, builder: (_, __) => const TestimoniesScreen()),
+        GoRoute(path: '/testimonies/add', builder: (_, __) => const AddTestimonyScreen()),
         GoRoute(
           path: '/testimonies/:id',
           builder: (context, state) {
@@ -332,12 +374,7 @@ class MyApp extends StatelessWidget {
             return TestimonyDetailScreen(id: id);
           },
         ),
-
-        // 🔹 Group Chats
-        GoRoute(
-          path: Routes.groupChats,
-          builder: (_, __) => const GroupChatsScreen(),
-        ),
+        GoRoute(path: Routes.groupChats, builder: (_, __) => const GroupChatsScreen()),
         GoRoute(
           path: '/group-chats/detail',
           builder: (context, state) {
@@ -348,8 +385,6 @@ class MyApp extends StatelessWidget {
             );
           },
         ),
-
-        // 🔹 Anonymous Chat
         GoRoute(
           path: Routes.anonymousChat,
           builder: (context, state) {
@@ -360,64 +395,55 @@ class MyApp extends StatelessWidget {
             );
           },
         ),
-
-        // 🔹 Profile & Settings
-        GoRoute(
-          path: Routes.profile,
-          builder: (context, state) => const ProfileScreen(),
-        ),
-
-        GoRoute(
-          path: Routes.settings,
-          builder: (_, __) => const SettingsScreen(),
-        ),
-
-        // 🔹 Account / Support related routes
-        GoRoute(
-          path: Routes.changePassword,
-          builder: (_, __) => const ChangePasswordScreen(),
-        ),
-        GoRoute(
-          path: Routes.termsPrivacy,
-          builder: (_, __) => const TermsAndPrivacyScreen(),
-        ),
-        GoRoute(
-          path: Routes.helpSupport,
-          builder: (_, __) => const HelpAndSupportScreen(),
-        ),
+        GoRoute(path: Routes.profile, builder: (context, state) => const ProfileScreen()),
+        GoRoute(path: Routes.settings, builder: (_, __) => const SettingsScreen()),
+        GoRoute(path: Routes.changePassword, builder: (_, __) => const ChangePasswordScreen()),
+        GoRoute(path: Routes.termsPrivacy, builder: (_, __) => const TermsAndPrivacyScreen()),
+        GoRoute(path: Routes.helpSupport, builder: (_, __) => const HelpAndSupportScreen()),
       ],
-
       redirect: (BuildContext context, GoRouterState state) {
         final authProvider = context.read<AuthProvider>();
         final isAuthenticated = authProvider.isAuthenticated;
-
         final location = state.uri.toString();
 
-        final isSplash = location == Routes.splash;
-        final isLogin = location == Routes.login;
-        final isRegister = location == Routes.register;
+        final publicRoutes = [Routes.splash, Routes.login, Routes.register];
+        final isPublicRoute = publicRoutes.contains(location);
 
-        if (!isAuthenticated && !isLogin && !isSplash && !isRegister) {
+        if (!isAuthenticated && !isPublicRoute) {
           return Routes.login;
         }
-        if (isAuthenticated && (isLogin || isSplash || isRegister)) {
+        if (isAuthenticated && isPublicRoute && location != Routes.home) {
           return Routes.home;
         }
         return null;
       },
-
       errorBuilder: (context, state) => Scaffold(
         body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('404 - Page Not Found'),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () => context.go(Routes.home),
-                child: const Text('Return Home'),
-              ),
-            ],
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                const SizedBox(height: 20),
+                const Text(
+                  '404 - Page Not Found',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'The page you\'re looking for doesn\'t exist.',
+                  style: TextStyle(color: Colors.grey[600]),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  onPressed: () => context.go(Routes.home),
+                  icon: const Icon(Icons.home),
+                  label: const Text('Return Home'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -48,7 +48,6 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   bool _isLoading = true;
   bool _isConnected = false;
   String _errorMessage = '';
-  final int _connectionRetries = 0;
 
   @override
   void initState() {
@@ -118,6 +117,13 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       return;
     }
 
+    // ✅ FIX: cancel any existing subscriptions before creating new ones.
+    // Without this, calling _retryConnection() (which re-runs
+    // _initializeApp -> _initializeSocketConnection) silently stacks a new
+    // set of listeners on top of the old ones instead of replacing them,
+    // leaking a subscription on every retry.
+    await _cancelSocketSubscriptions();
+
     try {
       await _socketService.initialize();
 
@@ -146,6 +152,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       debugPrint('❌ WebSocket connection failed: $e');
       _startPollingFallback();
     }
+  }
+
+  Future<void> _cancelSocketSubscriptions() async {
+    await _messageSubscription?.cancel();
+    await _typingSubscription?.cancel();
+    await _connectionSubscription?.cancel();
+    await _memberSubscription?.cancel();
+    _messageSubscription = null;
+    _typingSubscription = null;
+    _connectionSubscription = null;
+    _memberSubscription = null;
   }
 
   void _handleIncomingMessages(List<GroupMessage> messages) {
@@ -198,6 +215,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       _startPollingFallback();
     } else {
       _pollingTimer?.cancel();
+      _pollingTimer = null;
     }
   }
 
@@ -208,7 +226,13 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
         final messages = await _messageRepository.fetchLiveMessages();
         if (mounted) {
           setState(() {
+            // ✅ FIX: clear before adding. Previously this only ever
+            // appended, so calling _initializeApp() a second time (e.g.
+            // via the "Retry Connection" button) duplicated every message
+            // already in the list.
+            _messages.clear();
             _messages.addAll(messages);
+            _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
           });
         }
       }
@@ -267,17 +291,28 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     try {
       if (_isConnected) {
         final user = await _authRepository.getCurrentUser();
-        if (user != null) {
-          _socketService.sendMessage(int.tryParse(_groupId) ?? 1, {
-            'groupId': _groupId,
-            'content': content,
-            'senderId': user.id,
-          });
+        if (user == null) {
+          // ✅ FIX: previously this silently dropped the message with no
+          // feedback at all if the user came back null.
+          _showErrorMessage('Could not verify your account. Please log in again.');
+          return;
         }
+        _socketService.sendMessage(int.tryParse(_groupId) ?? 1, {
+          'groupId': _groupId,
+          'content': content,
+          'senderId': user.id,
+        });
       } else {
         // ✅ USE LIVE STREAM MESSAGE SENDING
         final sentMessage = await _messageRepository.sendLiveMessage(content);
-        if (sentMessage != null && mounted) {
+        if (sentMessage == null) {
+          // ✅ FIX: previously a null result was silently ignored - the
+          // input was already cleared below, so the message just vanished
+          // with no indication anything went wrong.
+          _showErrorMessage('Failed to send message. Please try again.');
+          return;
+        }
+        if (mounted) {
           setState(() {
             _messages.add(sentMessage);
           });
@@ -309,6 +344,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     if (!_isTyping && _isConnected) {
       _isTyping = true;
       _socketService.sendTyping(int.tryParse(_groupId) ?? 1, true);
+      _typingTimer?.cancel();
       _typingTimer = Timer(const Duration(seconds: 3), _stopTyping);
     }
   }
@@ -322,6 +358,11 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   }
 
   void _startPollingFallback() {
+    // ✅ FIX: cancel any existing timer first. Both _handleConnectionStatus
+    // and the catch-block in _initializeSocketConnection can call this;
+    // without the guard, a flaky connection could end up with multiple
+    // overlapping periodic timers all polling the network simultaneously.
+    _pollingTimer?.cancel();
     _pollingTimer = Timer.periodic(
       Duration(seconds: Config.messagePollingInterval),
       (_) {
@@ -362,6 +403,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   }
 
   void _showErrorMessage(String message) {
+    // ✅ FIX: guard against calling ScaffoldMessenger after the widget has
+    // been disposed (e.g. an in-flight async call resolving after the user
+    // has already navigated away).
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -372,6 +417,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   }
 
   void _showFeatureDisabledMessage() {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Live chat is currently disabled'),
@@ -475,85 +521,89 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     );
   }
 
+  Widget _buildLiveStatusBar(ThemeData theme) {
+    return Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Row(
+        children: [
+          Icon(
+            _isConnected ? Icons.circle : Icons.circle_outlined,
+            color: _isConnected ? Colors.green : Colors.grey,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _isConnected ? 'LIVE NOW' : 'CONNECTING...',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: _isConnected ? Colors.red : Colors.grey,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Text(
+            _members.isEmpty ? '' : '${_members.length} watching',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withAlpha(153),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoPlayer() {
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: _isPlayerInitialized
+          ? YoutubePlayer(controller: _controller)
+          : Container(
+              color: Colors.black,
+              child: const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _buildTabbedPanel(ThemeData theme) {
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          SizedBox(
+            height: 48,
+            child: TabBar(
+              tabs: const [
+                Tab(text: 'Chat'),
+                Tab(text: 'Members'),
+              ],
+              indicatorColor: theme.colorScheme.primary,
+              labelColor: theme.colorScheme.primary,
+              unselectedLabelColor: theme.colorScheme.onSurface.withAlpha(153),
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [_buildChatTab(theme), _buildMembersTab(theme)],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMobileLayout(ThemeData theme, Size screenSize) {
     return Column(
       children: [
-        AspectRatio(
-          aspectRatio: 16 / 9,
-          child: _isPlayerInitialized
-              ? YoutubePlayer(controller: _controller)
-              : Container(
-                  color: Colors.black,
-                  child: const Center(
-                    child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
-                    ),
-                  ),
-                ),
-        ),
-
-        Container(
-          height: 60,
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Row(
-            children: [
-              Icon(
-                _isConnected ? Icons.circle : Icons.circle_outlined,
-                color: _isConnected ? Colors.green : Colors.grey,
-                size: 16,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _isConnected ? 'LIVE NOW' : 'CONNECTING...',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: _isConnected ? Colors.red : Colors.grey,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Text(
-                _members.isEmpty ? '' : '${_members.length} watching',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withAlpha(153),
-                ),
-              ),
-            ],
-          ),
-        ),
-
+        _buildVideoPlayer(),
+        _buildLiveStatusBar(theme),
         const Divider(height: 1),
-
-        Expanded(
-          child: DefaultTabController(
-            length: 2,
-            child: Column(
-              children: [
-                Container(
-                  height: 48,
-                  child: TabBar(
-                    tabs: const [
-                      Tab(text: 'Chat'),
-                      Tab(text: 'Members'),
-                    ],
-                    indicatorColor: theme.colorScheme.primary,
-                    labelColor: theme.colorScheme.primary,
-                    unselectedLabelColor: theme.colorScheme.onSurface.withAlpha(
-                      153,
-                    ),
-                  ),
-                ),
-
-                Expanded(
-                  child: TabBarView(
-                    children: [_buildChatTab(theme), _buildMembersTab(theme)],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        Expanded(child: _buildTabbedPanel(theme)),
       ],
     );
   }
@@ -565,65 +615,22 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
           flex: 6,
           child: Column(
             children: [
-              Expanded(
-                flex: 3,
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: _isPlayerInitialized
-                      ? YoutubePlayer(controller: _controller)
-                      : Container(
-                          color: Colors.black,
-                          child: const Center(
-                            child: CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.red,
-                              ),
-                            ),
-                          ),
-                        ),
-                ),
-              ),
-
-              Container(
-                height: 60,
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  children: [
-                    Icon(
-                      _isConnected ? Icons.circle : Icons.circle_outlined,
-                      color: _isConnected ? Colors.green : Colors.grey,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _isConnected ? 'LIVE NOW' : 'CONNECTING...',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: _isConnected ? Colors.red : Colors.grey,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      _members.isEmpty ? '' : '${_members.length} watching',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withAlpha(153),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              Expanded(flex: 3, child: _buildVideoPlayer()),
+              _buildLiveStatusBar(theme),
             ],
           ),
         ),
-
         Expanded(
           flex: 4,
           child: Container(
             decoration: BoxDecoration(
               border: Border(left: BorderSide(color: theme.dividerColor)),
             ),
-            child: _buildChatTab(theme),
+            // ✅ FIX: tablet layout previously showed only the chat tab,
+            // with no way at all to view the members list on a
+            // tablet-sized screen. Now uses the same tabbed panel as
+            // mobile and desktop.
+            child: _buildTabbedPanel(theme),
           ),
         ),
       ],
@@ -645,88 +652,15 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
                       maxWidth: screenSize.width * 0.7,
                       maxHeight: screenSize.height * 0.8,
                     ),
-                    child: AspectRatio(
-                      aspectRatio: 16 / 9,
-                      child: _isPlayerInitialized
-                          ? YoutubePlayer(controller: _controller)
-                          : Container(
-                              color: Colors.black,
-                              child: const Center(
-                                child: CircularProgressIndicator(
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.red,
-                                  ),
-                                ),
-                              ),
-                            ),
-                    ),
+                    child: _buildVideoPlayer(),
                   ),
                 ),
               ),
-
-              Container(
-                height: 60,
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Row(
-                  children: [
-                    Icon(
-                      _isConnected ? Icons.circle : Icons.circle_outlined,
-                      color: _isConnected ? Colors.green : Colors.grey,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _isConnected ? 'LIVE NOW' : 'CONNECTING...',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: _isConnected ? Colors.red : Colors.grey,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      _members.isEmpty ? '' : '${_members.length} watching',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withAlpha(153),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildLiveStatusBar(theme),
             ],
           ),
         ),
-
-        SizedBox(
-          width: 400,
-          child: DefaultTabController(
-            length: 2,
-            child: Column(
-              children: [
-                Container(
-                  height: 48,
-                  child: TabBar(
-                    tabs: const [
-                      Tab(text: 'Chat'),
-                      Tab(text: 'Members'),
-                    ],
-                    indicatorColor: theme.colorScheme.primary,
-                    labelColor: theme.colorScheme.primary,
-                    unselectedLabelColor: theme.colorScheme.onSurface.withAlpha(
-                      153,
-                    ),
-                  ),
-                ),
-
-                Expanded(
-                  child: TabBarView(
-                    children: [_buildChatTab(theme), _buildMembersTab(theme)],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        SizedBox(width: 400, child: _buildTabbedPanel(theme)),
       ],
     );
   }

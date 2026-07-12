@@ -7,6 +7,7 @@ import 'package:pensaconnect/repositories/prayer_repository.dart'
     show PrayerRepository;
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../theme/app_style.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -28,141 +29,177 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return Scaffold(
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 60),
-            Hero(
-              tag: 'app-logo',
-              child: Icon(
-                Icons.people_alt_rounded,
-                size: 80,
-                color: theme.colorScheme.primary,
+            // Warm welcome band, using the app's arch motif inverted
+            // to greet you as you arrive.
+            Container(
+              padding: const EdgeInsets.fromLTRB(24, 72, 24, 40),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppColors.inkDusk, AppColors.emberGold],
+                ),
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(40),
+                  bottomRight: Radius.circular(40),
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Welcome to PensaConnect',
-              style: theme.textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Ladies & Gents Wing',
-              style: theme.textTheme.titleMedium?.copyWith(
-                color: theme.colorScheme.secondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 40),
-            Form(
-              key: _formKey,
               child: Column(
                 children: [
-                  TextFormField(
-                    controller: _identifierController,
-                    decoration: const InputDecoration(
-                      labelText: 'Username, Email or Phone Number',
-                      prefixIcon: Icon(Icons.person_outline),
+                  Container(
+                    width: 76,
+                    height: 76,
+                    decoration: ShapeDecoration(
+                      color: Colors.white.withOpacity(0.14),
+                      shape: AppShapes.archBorder(top: 26, bottom: 12),
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your username or email or phone number';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _passwordController,
-                    decoration: InputDecoration(
-                      labelText: 'Password',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscurePassword
-                              ? Icons.visibility_off
-                              : Icons.visibility,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscurePassword = !_obscurePassword;
-                          });
-                        },
+                    child: const Hero(
+                      tag: 'app-logo',
+                      child: Icon(
+                        Icons.people_alt_rounded,
+                        size: 40,
+                        color: Colors.white,
                       ),
                     ),
-                    obscureText: _obscurePassword,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your password';
-                      }
-                      if (value.length < 6) {
-                        return 'Password must be at least 6 characters';
-                      }
-                      return null;
-                    },
                   ),
-                  const SizedBox(height: 24),
-                  if (authProvider.error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(
-                        authProvider.error!,
-                        style: TextStyle(color: theme.colorScheme.error),
-                      ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Welcome back',
+                    style: theme.textTheme.headlineMedium?.copyWith(
+                      color: Colors.white,
                     ),
-                  ElevatedButton(
-                    onPressed: authProvider.isLoading
-                        ? null
-                        : () async {
-                            if (_formKey.currentState!.validate()) {
-                              final success = await authProvider.login(
-                                _identifierController.text.trim(),
-                                _passwordController.text.trim(),
-                              );
-
-                              if (success) {
-                                if (!mounted) return;
-
-                                // 🔹 Get the logged-in user ID from authProvider or login response
-                                final loggedInUserId = authProvider
-                                    .currentUser
-                                    ?.id; // adjust based on your AuthProvider
-
-                                if (loggedInUserId != null) {
-                                  // 🔹 Set the current user ID in PrayerRepository
-                                  final prayerRepo = context
-                                      .read<PrayerRepository>();
-                                  prayerRepo.setCurrentUserId(loggedInUserId);
-                                }
-
-                                context.go('/home');
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text("Login failed")),
-                                );
-                              }
-                            }
-                          },
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: authProvider.isLoading
-                        ? const CircularProgressIndicator()
-                        : const Text('Login'),
+                    textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 16),
-                  TextButton(
-                    onPressed: () => context.push('/register'),
-                    child: const Text('Create an account'),
+                  const SizedBox(height: 6),
+                  Text(
+                    'PensaConnect · Ladies & Gents Wing',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white.withOpacity(0.85),
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: _identifierController,
+                      decoration: const InputDecoration(
+                        labelText: 'Username, email or phone number',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your username, email or phone number';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _passwordController,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                        ),
+                      ),
+                      obscureText: _obscurePassword,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your password';
+                        }
+                        if (value.length < 6) {
+                          return 'Password must be at least 6 characters';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    if (authProvider.error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Text(
+                          authProvider.error!,
+                          style: TextStyle(color: theme.colorScheme.error),
+                        ),
+                      ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: authProvider.isLoading
+                            ? null
+                            : () async {
+                                if (_formKey.currentState!.validate()) {
+                                  final success = await authProvider.login(
+                                    _identifierController.text.trim(),
+                                    _passwordController.text.trim(),
+                                  );
+
+                                  if (success) {
+                                    if (!mounted) return;
+
+                                    // Get the logged-in user ID from authProvider.
+                                    final loggedInUserId =
+                                        authProvider.currentUser?.id;
+
+                                    if (loggedInUserId != null) {
+                                      final prayerRepo = context
+                                          .read<PrayerRepository>();
+                                      prayerRepo.setCurrentUserId(
+                                        loggedInUserId,
+                                      );
+                                    }
+
+                                    context.go('/home');
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          "We couldn't log you in — check your details and try again.",
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                        child: authProvider.isLoading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Log in'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () => context.push('/register'),
+                      child: const Text('New here? Create an account'),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],

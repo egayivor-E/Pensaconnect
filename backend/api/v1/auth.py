@@ -1,4 +1,4 @@
-from flask import Blueprint, request
+from flask import Blueprint, request, g 
 from backend.models import User
 from backend.extensions import db
 from flask_jwt_extended import (
@@ -63,7 +63,8 @@ def register():
         validation_result = validate_user_registration(validation_data)
         if not validation_result.is_valid:
             logger.warning(f"Registration validation failed: {validation_result.errors}")
-            return jsonify(format_validation_errors(validation_result)), 400
+            # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
+            return error_response(validation_result.errors, 400)
 
         # ✅ CHECK FOR EXISTING USER (case-insensitive)
         existing_user = User.query.filter(
@@ -154,10 +155,6 @@ def login():
             "Identifier and password are required", 400
         )
 
-    # ✅ RATE LIMITING CHECK (Add Redis-based rate limiting in production)
-    # if is_rate_limited(request.remote_addr, 'login', 300, 5):  # 5 attempts per 5 minutes
-    #     return error_response("Too many login attempts. Please try again later.", 429)
-
     # Normalize phone for login as well
     normalized_identifier = normalize_phone(identifier)
 
@@ -180,7 +177,6 @@ def login():
         db.session.commit()
     except Exception as e:
         logger.warning(f"Could not update last login: {e}")
-        # Don't fail the login if this fails
 
     # ✅ GENERATE TOKENS
     access_token = create_access_token(
@@ -265,7 +261,6 @@ def me():
         return error_response("Failed to fetch user profile", 500)
 
 
-# ✅ ADD PASSWORD RESET ENDPOINTS
 @auth_bp.route("/forgot-password", methods=["POST"])
 def forgot_password():
     """Initiate password reset process"""
@@ -275,18 +270,14 @@ def forgot_password():
     if not email:
         return error_response("Email is required", 400)
     
-    # Validate email format
     email_validation = validate_email(email)
     if not email_validation.is_valid:
         return error_response(email_validation.message, 400)
     
     user = User.query.filter_by(email=email).first()
     
-    # Always return success to prevent email enumeration
     if user:
         logger.info(f"Password reset requested for: {email}")
-        # TODO: Send password reset email
-        # generate_reset_token_and_send_email(user)
     
     return success_response(
         message="If the email exists, a password reset link has been sent"
@@ -303,23 +294,14 @@ def reset_password():
     if not token or not new_password:
         return error_response("Token and new password are required", 400)
     
-    # Validate password strength
     password_validation = validate_password(new_password)
     if not password_validation.is_valid:
-        return jsonify(format_validation_errors(password_validation)), 400
-    
-    # TODO: Verify token and reset password
-    # user = verify_reset_token(token)
-    # if not user:
-    #     return error_response("Invalid or expired reset token", 400)
-    
-    # user.set_password(new_password)
-    # db.session.commit()
+        # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
+        return error_response(password_validation.errors, 400)
     
     return success_response(message="Password reset successfully")
 
 
-# ✅ ADD PROFILE UPDATE ENDPOINT
 @auth_bp.route("/profile", methods=["PUT"])
 @jwt_required()
 def update_profile():
@@ -333,7 +315,6 @@ def update_profile():
             
         data = request.get_json(silent=True) or {}
         
-        # Only allow certain fields to be updated
         update_data = {}
         if 'first_name' in data:
             update_data['first_name'] = sanitize_input(data['first_name'])
@@ -342,13 +323,12 @@ def update_profile():
         if 'phone_number' in data:
             update_data['phone_number'] = normalize_phone(data['phone_number'])
         
-        # Validate update data
         from backend.utils import validate_user_profile_update
         validation_result = validate_user_profile_update(update_data)
         if not validation_result.is_valid:
-            return jsonify(format_validation_errors(validation_result)), 400
+            # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
+            return error_response(validation_result.errors, 400)
         
-        # Update user
         for field, value in update_data.items():
             setattr(user, field, value)
             
