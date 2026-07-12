@@ -2,7 +2,7 @@ from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.models import PrayerRequest, Prayer, PrayerStatus, Activity
 from backend.extensions import db
-from .utils import success_response, error_response
+from .utils import success_response, error_response, broadcast_new_activity
 from datetime import datetime
 
 prayers_bp = Blueprint("prayers", __name__, url_prefix="/prayers")
@@ -122,6 +122,7 @@ def create_prayer():
             )
             db.session.add(activity)
             db.session.commit()
+            broadcast_new_activity(activity)
 
         return success_response(prayer_instance.to_dict(), "Prayer request created", 201)
     except Exception as e:
@@ -252,6 +253,10 @@ def toggle_prayer(prayer_id: int):
                 )
                 db.session.add(activity)
                 db.session.commit()
+                # ✅ Only reached when a genuinely new Activity row was just
+                # committed (never on a re-toggle of an already-logged
+                # prayer) — so this can never push a duplicate feed entry.
+                broadcast_new_activity(activity)
 
         updated_request = PrayerRequest.query.get(prayer_id)
         return success_response(
