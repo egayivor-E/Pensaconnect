@@ -353,14 +353,17 @@ class MyApp extends StatelessWidget {
             return PostFormScreen(threadId: threadId, threadTitle: '');
           },
         ),
+        // ✅ No longer wraps PrayerWallScreen in its own scoped
+        // PrayerRepository. That created a *second* instance shadowing
+        // the one already registered in the root MultiProvider above,
+        // so a prayer toggled from anywhere else (e.g. the home feed's
+        // "I prayed" action) never showed up here, and vice versa — two
+        // disconnected caches for what should be one shared list.
+        // PrayerWallScreen now resolves PrayerRepository from the root
+        // provider like every other screen does.
         GoRoute(
           path: Routes.prayerWall,
-          builder: (context, state) {
-            return ChangeNotifierProvider(
-              create: (_) => PrayerRepository(),
-              child: const PrayerWallScreen(),
-            );
-          },
+          builder: (_, __) => const PrayerWallScreen(),
         ),
         GoRoute(path: Routes.testimonies, builder: (_, __) => const TestimoniesScreen()),
         GoRoute(path: '/testimonies/add', builder: (_, __) => const AddTestimonyScreen()),
