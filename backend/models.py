@@ -1420,6 +1420,13 @@ class GroupChat(BaseModel):
     max_members = db.Column(db.Integer, default=100)
     tags = db.Column(db.JSON, default=lambda: [])
 
+    # 'group' (many members, joinable, has roles/admins) or 'direct' (exactly
+    # 2 members, created via the DM get-or-create endpoint, no join/leave).
+    # Reuses the whole GroupChat/GroupMember/GroupMessage stack — and every
+    # socket room, read-receipt, and typing-indicator code path that comes
+    # with it — instead of standing up a parallel Conversation model.
+    chat_type = db.Column(db.String(10), default="group", nullable=False, index=True)
+
     created_by_id = db.Column(db.BigInteger, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     created_by = db.relationship('User', back_populates='group_chats_created', foreign_keys=[created_by_id])
 
@@ -1446,6 +1453,7 @@ class GroupChat(BaseModel):
             "is_public": self.is_public,
             "max_members": self.max_members,
             "tags": self.tags,
+            "chat_type": self.chat_type,
             "created_by_id": self.created_by_id,
             "member_count": len([m for m in self.members if m.is_active]),
             "created_by": {
