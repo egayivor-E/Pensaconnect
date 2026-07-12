@@ -36,6 +36,10 @@ class Activity {
   // forum post). Nullable — most activity types have no image and the
   // feed card falls back to the icon-in-circle treatment.
   final String? imageUrl;
+  // ✅ When present, this activity gets a "reel" — an autoplaying,
+  // muted-by-default video card instead of a static image. If both
+  // imageUrl and videoUrl are set, the video takes priority.
+  final String? videoUrl;
   Activity({
     required this.id,
     required this.title,
@@ -49,12 +53,14 @@ class Activity {
     this.targetId,
     this.hasLiked = false,
     this.imageUrl,
+    this.videoUrl,
   });
   /// Returns a "5m ago" style string
   String get timeAgo => timeago.format(createdAt);
   bool get hasAuthorAvatar =>
       authorAvatarUrl != null && authorAvatarUrl!.isNotEmpty;
   bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
+  bool get hasVideo => videoUrl != null && videoUrl!.isNotEmpty;
   factory Activity.fromJson(Map<String, dynamic> json) {
     // Matches Activity.to_dict(include_user=True) on the backend:
     // { ..., "user": { "id", "username", "fullName", "profilePicture" } }
@@ -79,6 +85,7 @@ class Activity {
       targetId: (json['targetId'] as num?)?.toInt(),
       hasLiked: json['hasLiked'] as bool? ?? false,
       imageUrl: json['imageUrl'] as String?,
+      videoUrl: json['videoUrl'] as String?,
     );
   }
   Map<String, dynamic> toJson() {
@@ -93,6 +100,7 @@ class Activity {
       if (targetId != null) 'targetId': targetId,
       'hasLiked': hasLiked,
       if (imageUrl != null) 'imageUrl': imageUrl,
+      if (videoUrl != null) 'videoUrl': videoUrl,
       if (authorName != null)
         'user': {
           'fullName': authorName,
