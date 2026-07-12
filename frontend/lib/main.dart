@@ -15,7 +15,7 @@ import 'package:pensaconnect/repositories/testimony_repository.dart';
 import 'package:pensaconnect/screens/CreateStudyPlanScreen.dart';
 import 'package:pensaconnect/screens/admin_upload_screen.dart';
 import 'package:pensaconnect/services/api_service.dart';
-import 'package:pensaconnect/services/socketio_service.dart'; // ✅ ADD THIS IMPORT
+import 'package:pensaconnect/services/socketio_service.dart';
 import 'package:provider/provider.dart';
 import 'providers/threads_provider.dart';
 
@@ -97,11 +97,12 @@ Future<void> main() async {
   await ApiService.init();
   print("✅ MAIN: ApiService.init() completed");
 
-  // ✅ Initialize Socket.IO Service
+  // ✅ Initialize Socket.IO Service - Use singleton instance
   print("🔄 Initializing Socket.IO Service...");
+  final socketService = SocketIoService(); // ✅ Get singleton instance
   try {
-    await SocketIoService().initialize();
-    print("✅ Socket.IO Service initialized");
+    await socketService.initialize();
+    print("✅ Socket.IO Service initialized successfully");
   } catch (e) {
     print("❌ Socket.IO Service initialization failed: $e");
   }
@@ -136,11 +137,20 @@ Future<void> main() async {
 
         Provider<ForumRepository>(create: (_) => ForumRepository()),
 
-        // ✅ GroupChatRepository depends on Dio & AuthRepository
-        Provider<GroupChatRepository>(
-          create: (context) => GroupChatRepository(
-            context.read<Dio>(),
-            context.read<AuthRepository>(),
+        // ✅ Socket.IO Service Provider - SINGLE INSTANCE
+        Provider<SocketIoService>(create: (_) => socketService),
+
+        // ✅ GroupChatRepository depends on Dio, AuthRepository & SocketService
+        ProxyProvider3<
+          Dio,
+          AuthRepository,
+          SocketIoService,
+          GroupChatRepository
+        >(
+          update: (_, dio, auth, socket, __) => GroupChatRepository(
+            dio,
+            auth,
+            socket, // ✅ Pass the socket service
           ),
         ),
 
@@ -153,9 +163,6 @@ Future<void> main() async {
             groupRepo: context.read<GroupChatRepository>(),
           ),
         ),
-
-        // ✅ Socket.IO Service Provider
-        Provider<SocketIoService>(create: (_) => SocketIoService()),
       ],
       child: MyApp(autoLoggedIn: autoLoggedIn),
     ),

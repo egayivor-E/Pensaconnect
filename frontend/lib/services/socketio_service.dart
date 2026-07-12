@@ -20,6 +20,8 @@ class SocketIoService {
   // ================================
 
   final Map<int, List<GroupMessage>> _messageCache = {};
+  final Map<int, Set<int>> _messageIds = {};
+  final Map<int, Set<String>> _messageContentHashes = {};
   final Map<int, List<dynamic>> _memberCache = {};
   final Map<int, io.Socket> _sockets = {};
   final Map<int, StreamController<List<GroupMessage>>> _messageControllers = {};
@@ -41,7 +43,6 @@ class SocketIoService {
     if (_isServiceInitialized) return;
 
     try {
-      // Verify configuration
       if (Config.websocketUrl.isEmpty) {
         throw Exception('WebSocket URL not configured');
       }
@@ -64,12 +65,25 @@ class SocketIoService {
     if (!_messageControllers.containsKey(groupId)) {
       _messageControllers[groupId] =
           StreamController<List<GroupMessage>>.broadcast();
+
+      _messageIds[groupId] = <int>{};
+      _messageContentHashes[groupId] = <String>{};
+
+      if (_messageCache.containsKey(groupId)) {
+        final cached = _messageCache[groupId]!;
+        if (cached.isNotEmpty) {
+          debugPrint(
+            '📦 Delivering ${cached.length} cached messages for group $groupId',
+          );
+          _messageControllers[groupId]!.add(cached);
+        }
+      }
+
       _connectToGroup(groupId);
     }
     return _messageControllers[groupId]!.stream;
   }
 
-  // ✅ ADDED: Member stream
   Stream<List<dynamic>> watchGroupMembers(int groupId) {
     if (!_memberControllers.containsKey(groupId)) {
       _memberControllers[groupId] = StreamController<List<dynamic>>.broadcast();
@@ -85,17 +99,11 @@ class SocketIoService {
     return _typingControllers[groupId]!.stream;
   }
 
-  // Connection status stream
   Stream<bool> watchConnectionStatus(int groupId) {
     final controller = StreamController<bool>.broadcast();
-
-    // Initial status
     controller.add(_sockets[groupId]?.connected ?? false);
-
-    // Listen for connection changes
     _sockets[groupId]?.onConnect((_) => controller.add(true));
     _sockets[groupId]?.onDisconnect((_) => controller.add(false));
-
     return controller.stream;
   }
 
@@ -109,22 +117,28 @@ class SocketIoService {
     try {
       debugPrint('🔌 Connecting Socket.IO for group $groupId...');
 
-      // Cleanup any previous connection
       _cleanupGroupConnection(groupId);
 
-      // Create socket
+      final token = await AuthService().getToken();
+
       final options = io.OptionBuilder()
-          .setTransports(['websocket'])
-          .disableAutoConnect()
-          .setReconnectionAttempts(Config.maxConnectionRetries)
-          .setReconnectionDelay(Config.connectionRetryDelay * 1000)
+          .setTransports(['websocket', 'polling'])
+          .setPath('/socket.io')
+          .setExtraHeaders(
+            token != null && token.isNotEmpty
+                ? {'Authorization': 'Bearer $token'}
+                : {},
+          )
+          .setQuery({'token': token})
+          .enableReconnection()
+          .setReconnectionAttempts(10)
+          .setReconnectionDelay(1000)
+          .setReconnectionDelayMax(5000)
           .setTimeout(30000)
+          .disableAutoConnect()
           .build();
 
       final socket = io.io(Config.websocketUrl, options);
-
-      // Attach auth token
-      final token = await AuthService().getToken();
       if (token != null && token.isNotEmpty) {
         socket.io.options?['query'] = {'token': token};
         debugPrint('🔑 Auth token attached for Socket.IO');
@@ -138,12 +152,12 @@ class SocketIoService {
       socket.onConnect((_) {
         debugPrint('✅ Socket.IO Connected for group $groupId');
 
-        // Complete connection
+        _messageIds[groupId] = <int>{};
+        _messageContentHashes[groupId] = <String>{};
+
         if (!_connectionCompleters[groupId]!.isCompleted) {
           _connectionCompleters[groupId]!.complete(true);
         }
-
-        // Auto join group room
         socket.emit('join_group', {'groupId': groupId});
       });
 
@@ -176,7 +190,7 @@ class SocketIoService {
       // ======== SERVER EVENTS ========
       socket.on('joined', (data) {
         debugPrint('✅ Joined group room: $data');
-        _connectToGroupMembers(groupId); // Init members stream
+        _connectToGroupMembers(groupId);
       });
 
       socket.on('new_message', (data) {
@@ -184,9 +198,35 @@ class SocketIoService {
 
         try {
           if (data is Map<String, dynamic>) {
+            final isHistorical =
+                data['historical'] == true || data['is_historical'] == true;
+
+            if (isHistorical) {
+              debugPrint(
+                '📜 Historical message received - already loaded via HTTP, skipping',
+              );
+              return;
+            }
+
             final message = GroupMessage.fromJson(data);
+
             debugPrint(
-              '✅ Parsed message - ID: ${message.id}, Sender: ${message.senderId}, Content: ${message.content}',
+              '📩 Message from user ${message.senderId}: "${message.content}" (ID: ${message.id})',
+            );
+
+            if (_messageIds[groupId]?.contains(message.id) == true) {
+              debugPrint('🔄 Duplicate message ${message.id} ignored');
+              return;
+            }
+
+            final contentHash = _generateContentHash(message);
+            if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
+              debugPrint('🔄 Duplicate message by content hash, skipping');
+              return;
+            }
+
+            debugPrint(
+              '✅ Parsed new message - ID: ${message.id}, Sender: ${message.senderId}, Content: ${message.content}',
             );
             _handleIncomingMessage(groupId, message);
           } else {
@@ -221,14 +261,12 @@ class SocketIoService {
 
       socket.on('connected', (data) {
         debugPrint('🔌 Connected event received: $data');
-        // Handle connection event
         if (data is Map && data['status'] == 'success') {
           debugPrint('✅ WebSocket connection successful');
           debugPrint('📌 Assigned SID: ${data['sid']}');
         }
       });
 
-      // ======== CONNECT ========
       socket.connect();
     } catch (e) {
       debugPrint('❌ Socket.IO setup failed: $e');
@@ -236,7 +274,6 @@ class SocketIoService {
     }
   }
 
-  // ✅ ADDED: Wait for connection method
   Future<bool> waitForConnection(int groupId, {int timeoutSeconds = 10}) async {
     final socket = _sockets[groupId];
     if (socket == null) {
@@ -244,17 +281,14 @@ class SocketIoService {
       return false;
     }
 
-    // If already connected, return immediately
     if (socket.connected) {
       return true;
     }
 
-    // Use existing completer or create new one
     if (_connectionCompleters[groupId] == null) {
       _connectionCompleters[groupId] = Completer<bool>();
     }
 
-    // Set up timeout
     final completer = _connectionCompleters[groupId]!;
     final timer = Timer(Duration(seconds: timeoutSeconds), () {
       if (!completer.isCompleted) {
@@ -274,12 +308,10 @@ class SocketIoService {
     }
   }
 
-  // ✅ ADDED: Member connection management
   void _connectToGroupMembers(int groupId) {
     final socket = _sockets[groupId];
     if (socket == null || !socket.connected) return;
 
-    // Listen for updated members list
     socket.on('members_updated', (data) {
       try {
         if (data is Map && data['groupId'] == groupId) {
@@ -292,19 +324,17 @@ class SocketIoService {
       }
     });
 
-    // Individual user join
     socket.on('user_joined', (data) {
       try {
         if (data is Map && data['groupId'] == groupId) {
           debugPrint('👤 User joined group $groupId: $data');
-          _requestMemberList(groupId); // always refresh members
+          _requestMemberList(groupId);
         }
       } catch (e) {
         debugPrint('❌ Error handling user_joined: $e');
       }
     });
 
-    // Individual user leave
     socket.on('user_left', (data) {
       try {
         if (data is Map && data['groupId'] == groupId) {
@@ -316,11 +346,9 @@ class SocketIoService {
       }
     });
 
-    // Request initial members
     _requestMemberList(groupId);
   }
 
-  // ✅ ADDED: Member list management
   void _requestMemberList(int groupId) {
     final socket = _sockets[groupId];
     if (socket != null && socket.connected) {
@@ -331,58 +359,56 @@ class SocketIoService {
 
   void _handleMemberUpdates(int groupId, List<dynamic> members) {
     try {
-      // Update cache
       _memberCache[groupId] = members;
-
-      // Push to stream
       _memberControllers[groupId]?.add(members);
-
       debugPrint('👥 Members updated for group $groupId: ${members.length}');
     } catch (e) {
       debugPrint('❌ Error handling member updates: $e');
       _logError('member_updates', e, groupId: groupId);
     }
   }
+
   // ================================
   // MESSAGE HANDLING
   // ================================
 
+  String _generateContentHash(GroupMessage message) {
+    return '${message.senderId}:${message.content}:${message.createdAt.millisecondsSinceEpoch ~/ 10000}';
+  }
+
   void _handleIncomingMessage(int groupId, GroupMessage message) {
     try {
-      // ✅ FIXED: Improved message validation
       if (!_isValidMessage(message)) {
         debugPrint('⚠️ Invalid message received, ignoring: ${message.id}');
-        debugPrint(
-          '⚠️ Message details: content="${message.content}", senderId=${message.senderId}, createdAt=${message.createdAt}',
-        );
         return;
       }
 
-      // Get current messages from cache
+      if (_messageIds[groupId]?.contains(message.id) == true) {
+        debugPrint('🔄 Duplicate message ${message.id} already exists, skipping');
+        return;
+      }
+
+      final contentHash = _generateContentHash(message);
+      if (_messageContentHashes[groupId]?.contains(contentHash) == true) {
+        debugPrint('🔄 Duplicate message by content hash, skipping');
+        return;
+      }
+
       final currentMessages = _messageCache[groupId] ?? [];
+      final updatedMessages = List<GroupMessage>.from(currentMessages)..add(message);
+      updatedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
-      // Check for duplicates
-      if (currentMessages.any((m) => m.id == message.id)) {
-        debugPrint('⚠️ Duplicate message received: ${message.id}');
-        return;
-      }
-
-      // Append the new message
-      final updatedMessages = List<GroupMessage>.from(currentMessages)
-        ..add(message);
-
-      // Update cache (limit size for memory management)
-      if (updatedMessages.length > 1000) {
-        updatedMessages.removeRange(0, 200); // Keep last 800 messages
-      }
       _messageCache[groupId] = updatedMessages;
+      _messageIds[groupId]?.add(message.id);
+      _messageContentHashes[groupId]?.add(contentHash);
 
-      // Push to stream
-      _messageControllers[groupId]?.add(updatedMessages);
-
-      debugPrint(
-        '💬 Message received for group $groupId: ${message.content} (${message.createdAt})',
-      );
+      final controller = _messageControllers[groupId];
+      if (controller != null && !controller.isClosed) {
+        controller.add(updatedMessages);
+        debugPrint(
+          '💬 New message delivered to group $groupId: ${message.content} (from user ${message.senderId})',
+        );
+      }
     } catch (e) {
       debugPrint('❌ Error handling incoming message: $e');
       _logError('message_handling', e, groupId: groupId);
@@ -390,7 +416,12 @@ class SocketIoService {
   }
 
   bool _isValidMessage(GroupMessage message) {
-    // ✅ FIXED: More flexible validation
+    if (message.id == null || message.id == 0) {
+      return message.content.isNotEmpty &&
+          message.senderId != null &&
+          message.senderId != 0 &&
+          message.createdAt != null;
+    }
     return message.id != null &&
         message.id != 0 &&
         message.content.isNotEmpty &&
@@ -400,23 +431,50 @@ class SocketIoService {
   }
 
   // ================================
+  // CACHE MANAGEMENT
+  // ================================
+
+  void setInitialMessages(int groupId, List<GroupMessage> messages) {
+    final messageIds = _messageIds[groupId] ?? <int>{};
+    final contentHashes = _messageContentHashes[groupId] ?? <String>{};
+
+    for (final msg in messages) {
+      messageIds.add(msg.id);
+      contentHashes.add(_generateContentHash(msg));
+    }
+    _messageIds[groupId] = messageIds;
+    _messageContentHashes[groupId] = contentHashes;
+
+    _messageCache[groupId] = List.from(messages);
+    _messageCache[groupId]?.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    debugPrint(
+      '📦 Set initial ${messages.length} messages for group $groupId (${messageIds.length} IDs, ${contentHashes.length} hashes tracked)',
+    );
+
+    final controller = _messageControllers[groupId];
+    if (controller != null && !controller.isClosed) {
+      controller.add(_messageCache[groupId]!);
+    }
+  }
+
+  List<GroupMessage>? getCachedMessages(int groupId) {
+    return _messageCache[groupId];
+  }
+
+  // ================================
   // MESSAGE READ HANDLING
   // ================================
 
   void _handleMessageRead(int groupId, int messageId, int userId) {
     try {
-      debugPrint(
-        '📖 Message $messageId read by user $userId in group $groupId',
-      );
-
-      // Update local cache to mark message as read
+      debugPrint('📖 Message $messageId read by user $userId in group $groupId');
       final messages = _messageCache[groupId];
       if (messages != null) {
         final messageIndex = messages.indexWhere((m) => m.id == messageId);
         if (messageIndex != -1) {
           final message = messages[messageIndex];
           final updatedReadBy = List<dynamic>.from(message.readBy);
-
           if (!updatedReadBy.contains(userId)) {
             updatedReadBy.add(userId);
             debugPrint('✅ User $userId read message $messageId');
@@ -440,8 +498,6 @@ class SocketIoService {
       if (isTyping) {
         if (!updated.contains(userId)) {
           updated.add(userId);
-
-          // Auto-remove after 3 seconds if still typing
           Timer(const Duration(seconds: 3), () {
             if (_typingUsers[groupId]?.contains(userId) == true) {
               _updateTyping(groupId, userId, false);
@@ -454,7 +510,6 @@ class SocketIoService {
 
       _typingUsers[groupId] = updated;
       _typingControllers[groupId]?.add(updated);
-
       debugPrint('💬 Typing update for group $groupId: $updated');
     } catch (e) {
       debugPrint('❌ Error updating typing indicator: $e');
@@ -468,11 +523,8 @@ class SocketIoService {
   void _handleDisconnection(int groupId) {
     _typingUsers[groupId]?.clear();
     _typingControllers[groupId]?.add([]);
-
-    // Reset connection completer
     _connectionCompleters.remove(groupId);
 
-    // Schedule reconnection if needed
     if (_connectionAttempts[groupId]! < Config.maxConnectionRetries) {
       _scheduleReconnection(groupId);
     }
@@ -481,7 +533,6 @@ class SocketIoService {
   void _handleConnectionError(int groupId, String error) {
     _connectionAttempts[groupId] = (_connectionAttempts[groupId] ?? 0) + 1;
 
-    // Complete connection promise with failure
     if (_connectionCompleters[groupId] != null &&
         !_connectionCompleters[groupId]!.isCompleted) {
       _connectionCompleters[groupId]!.complete(false);
@@ -492,14 +543,11 @@ class SocketIoService {
       _messageControllers[groupId]?.addError(
         'Connection failed after ${Config.maxConnectionRetries} attempts',
       );
-    } else {
-      _scheduleReconnection(groupId);
     }
   }
 
   void _scheduleReconnection(int groupId) {
     _reconnectionTimers[groupId]?.cancel();
-
     _reconnectionTimers[groupId] = Timer(
       Duration(seconds: Config.connectionRetryDelay),
       () {
@@ -518,10 +566,8 @@ class SocketIoService {
   }
 
   // ================================
-  // PUBLIC METHODS
+  // PUBLIC METHODS - FIXED WITH PROPER USER ID
   // ================================
-
-  // =================== SEND MESSAGE ===================
 
   Future<void> sendMessage(
     int groupId,
@@ -529,31 +575,62 @@ class SocketIoService {
   ) async {
     final socket = _sockets[groupId];
     if (socket == null)
-      // ignore: curly_braces_in_flow_control_structures
       throw Exception('Socket not initialized for group $groupId');
 
-    // Wait for connection
     if (!socket.connected) {
       final connected = await waitForConnection(groupId);
       if (!connected)
         throw Exception('Socket connection timeout for group $groupId');
     }
 
+    // ✅ FIXED: Get user from AuthService
     final user = AuthService().currentUser;
     final userId = user?['id'];
-    if (userId == null) throw Exception('User not authenticated');
+    
+    // ✅ If user is null, try to get from AuthProvider
+    if (userId == null) {
+      try {
+        final authProvider = AuthProvider();
+        final currentUser = authProvider.currentUser;
+        if (currentUser != null) {
+          final userData = currentUser.toJson();
+          final enhancedMessage = Map<String, dynamic>.from(messageData)
+            ..addAll({
+              'senderId': userData['id'],
+              'sentAt': DateTime.now().toIso8601String(),
+              'clientId': 'flutter_${DateTime.now().millisecondsSinceEpoch}',
+              'sender': {
+                'id': userData['id'],
+                'username': userData['username'] ?? 'unknown',
+                'full_name': userData['full_name'] ?? 'Unknown User',
+                'profile_picture': userData['profile_picture'],
+              }
+            });
+          socket.emit('send_message', enhancedMessage);
+          debugPrint('📤 Sent message to group $groupId with user ID: ${userData['id']}');
+          return;
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not get user from AuthProvider: $e');
+      }
+      throw Exception('User not authenticated - cannot send message');
+    }
 
     final enhancedMessage = Map<String, dynamic>.from(messageData)
       ..addAll({
         'senderId': userId,
         'sentAt': DateTime.now().toIso8601String(),
         'clientId': 'flutter_${DateTime.now().millisecondsSinceEpoch}',
+        'sender': {
+          'id': userId,
+          'username': user?['username'] ?? 'unknown',
+          'full_name': user?['full_name'] ?? 'Unknown User',
+          'profile_picture': user?['profile_picture'],
+        }
       });
 
     socket.emit('send_message', enhancedMessage);
-    debugPrint(
-      '📤 Sent message to group $groupId: ${enhancedMessage['content']}',
-    );
+    debugPrint('📤 Sent message to group $groupId with user ID: $userId');
   }
 
   void sendTyping(int groupId, bool isTyping) {
@@ -561,19 +638,37 @@ class SocketIoService {
 
     final socket = _sockets[groupId];
     if (socket == null || !socket.connected) {
-      debugPrint(
-        '⏳ Socket not connected, skipping typing indicator for group $groupId',
-      );
+      debugPrint('⏳ Socket not connected, skipping typing indicator for group $groupId');
       return;
     }
 
-    final userId = AuthService().currentUser?['id'] ?? 0;
-    if (userId == 0) {
+    // ✅ FIXED: Get user from AuthService
+    final user = AuthService().currentUser;
+    final userId = user?['id'];
+    
+    // ✅ If user is null, try AuthProvider
+    if (userId == null) {
+      try {
+        final authProvider = AuthProvider();
+        final currentUser = authProvider.currentUser;
+        if (currentUser != null) {
+          final userData = currentUser.toJson();
+          final event = isTyping ? 'user_typing' : 'user_stop_typing';
+          socket.emit(event, {
+            'userId': userData['id'],
+            'groupId': groupId,
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+          debugPrint('💬 Sent typing event [$event] for user ${userData['id']} in group $groupId');
+          return;
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not get user from AuthProvider: $e');
+      }
       debugPrint('⚠️ User ID not available for typing indicator');
       return;
     }
 
-    // Emit the correct event based on typing state
     final event = isTyping ? 'user_typing' : 'user_stop_typing';
     socket.emit(event, {
       'userId': userId,
@@ -581,16 +676,17 @@ class SocketIoService {
       'timestamp': DateTime.now().toIso8601String(),
     });
 
-    debugPrint(
-      '💬 Sent typing event [$event] for user $userId in group $groupId',
-    );
+    debugPrint('💬 Sent typing event [$event] for user $userId in group $groupId');
   }
 
   void markRead(int groupId, int messageId) {
     final socket = _sockets[groupId];
     if (socket != null && socket.connected) {
-      final userId = AuthService().currentUser?['id'] ?? 0;
-      if (userId == 0) {
+      // ✅ FIXED: Get user from AuthService
+      final user = AuthService().currentUser;
+      final userId = user?['id'];
+      
+      if (userId == null) {
         debugPrint('⚠️ User ID not available for mark read');
         return;
       }
@@ -604,7 +700,6 @@ class SocketIoService {
     }
   }
 
-  // ✅ ADDED: Connection debug method
   void debugConnectionStatus(int groupId) {
     final socket = _sockets[groupId];
     debugPrint('🔍 Socket.IO Debug for group $groupId:');
@@ -615,12 +710,27 @@ class SocketIoService {
     debugPrint('   - WebSocket URL: ${Config.websocketUrl}');
     debugPrint('   - Live Chat Enabled: ${Config.enableLiveChat}');
 
+    // ✅ FIXED: Get user from AuthService
     final user = AuthService().currentUser;
-    debugPrint('   - User ID: ${user?['id']}');
-    debugPrint('   - Username: ${user?['username']}');
+    if (user != null) {
+      debugPrint('   - User ID: ${user['id']}');
+      debugPrint('   - Username: ${user['username']}');
+    } else {
+      debugPrint('   - User ID: NOT FOUND - Authentication issue!');
+      // ✅ Try AuthProvider as fallback
+      try {
+        final authProvider = AuthProvider();
+        final currentUser = authProvider.currentUser;
+        if (currentUser != null) {
+          debugPrint('   - AuthProvider User ID: ${currentUser.id}');
+          debugPrint('   - AuthProvider Username: ${currentUser.username}');
+        }
+      } catch (e) {
+        debugPrint('   - AuthProvider error: $e');
+      }
+    }
   }
 
-  // ✅ ADDED: Member utility methods
   List<dynamic> getCachedMembers(int groupId) {
     return _memberCache[groupId] ?? [];
   }
@@ -628,10 +738,6 @@ class SocketIoService {
   int getMemberCount(int groupId) {
     return _memberCache[groupId]?.length ?? 0;
   }
-
-  // ================================
-  // CONNECTION STATUS & UTILITIES
-  // ================================
 
   bool isConnected(int groupId) {
     return _sockets[groupId]?.connected ?? false;
@@ -653,7 +759,6 @@ class SocketIoService {
     _connectionCompleters.remove(groupId);
   }
 
-  // ✅ ADDED: Member cleanup
   void disposeGroupMembers(int groupId) {
     _memberControllers[groupId]?.close();
     _memberControllers.remove(groupId);
@@ -663,7 +768,6 @@ class SocketIoService {
   void disposeGroup(int groupId) {
     debugPrint('🔌 Disposing Socket.IO for group $groupId');
 
-    // Leave group
     final user = AuthService().currentUser;
     final userId = user?['id'];
 
@@ -676,7 +780,6 @@ class SocketIoService {
 
     _cleanupGroupConnection(groupId);
 
-    // Clean up resources
     _sockets.remove(groupId);
     _messageControllers[groupId]?.close();
     _typingControllers[groupId]?.close();
@@ -689,6 +792,9 @@ class SocketIoService {
     _reconnectionTimers.remove(groupId);
     _memberCache.remove(groupId);
     _connectionCompleters.remove(groupId);
+    _messageCache.remove(groupId);
+    _messageIds.remove(groupId);
+    _messageContentHashes.remove(groupId);
   }
 
   void disposeAll() {
@@ -699,6 +805,8 @@ class SocketIoService {
     }
 
     _messageCache.clear();
+    _messageIds.clear();
+    _messageContentHashes.clear();
     _memberCache.clear();
     _isServiceInitialized = false;
   }
