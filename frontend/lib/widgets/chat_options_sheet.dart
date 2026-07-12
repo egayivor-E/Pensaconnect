@@ -12,6 +12,15 @@ class ChatOptionsSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
+            leading: const Icon(Icons.chat_bubble_outline, color: Colors.green),
+            title: const Text("New Message"),
+            subtitle: const Text("Send a direct message to someone"),
+            onTap: () {
+              Navigator.pop(context);
+              context.push("/messages/new");
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.group, color: Colors.blue),
             title: const Text("Group Chats"),
             subtitle: const Text("Join and chat with your group"),
