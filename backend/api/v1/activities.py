@@ -1,6 +1,7 @@
 from flask import Blueprint
+from sqlalchemy import func
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from backend.models import Activity, Prayer, TestimonyLike, ForumLike
+from backend.models import Activity, Prayer, TestimonyLike, ForumLike, ForumComment
 from backend.extensions import db
 from .utils import success_response
 
@@ -62,6 +63,47 @@ def _build_liked_target_keys(activities, current_user_id):
     return liked_target_keys
 
 
+def _build_target_counts(activities):
+    # ✅ Batched like/comment counts for post activities, same shape and
+    # reasoning as _build_liked_target_keys above: group target ids by
+    # type, run one grouped-count query per type, and hand back a dict
+    # keyed by (target_type, target_id) for O(1) lookup in
+    # Activity.to_dict(). Only "post" is populated today since that's
+    # the only target type the Home feed currently needs counts for.
+    post_ids = set()
+    for a in activities:
+        if a.target_type == "post" and a.target_id is not None:
+            post_ids.add(a.target_id)
+
+    target_counts = {}
+    if not post_ids:
+        return target_counts
+
+    like_rows = (
+        db.session.query(ForumLike.post_id, func.count(ForumLike.id))
+        .filter(ForumLike.post_id.in_(post_ids))
+        .group_by(ForumLike.post_id)
+        .all()
+    )
+    like_counts = {post_id: count for post_id, count in like_rows}
+
+    comment_rows = (
+        db.session.query(ForumComment.post_id, func.count(ForumComment.id))
+        .filter(ForumComment.post_id.in_(post_ids))
+        .group_by(ForumComment.post_id)
+        .all()
+    )
+    comment_counts = {post_id: count for post_id, count in comment_rows}
+
+    for post_id in post_ids:
+        target_counts[("post", post_id)] = (
+            like_counts.get(post_id, 0),
+            comment_counts.get(post_id, 0),
+        )
+
+    return target_counts
+
+
 @activities_bp.route("/recent", methods=["GET"])
 @jwt_required()
 def get_recent_activities():
@@ -83,6 +125,7 @@ def get_recent_activities():
     # the DB itself once per row.
     current_user_id = get_jwt_identity()
     liked_target_keys = _build_liked_target_keys(activities, current_user_id)
+    target_counts = _build_target_counts(activities)
 
     # ✅ include_user=True so each activity carries the acting user's
     # id/username/fullName/profilePicture for the feed avatar.
@@ -90,9 +133,14 @@ def get_recent_activities():
     # user already liked/prayed for its target, letting the frontend
     # hydrate like state on load instead of assuming everything is
     # unliked until interacted with this session.
+    # ✅ target_counts so post activities carry likeCount/commentCount.
     return success_response(
         [
-            a.to_dict(include_user=True, liked_target_keys=liked_target_keys)
+            a.to_dict(
+                include_user=True,
+                liked_target_keys=liked_target_keys,
+                target_counts=target_counts,
+            )
             for a in activities
         ]
     )
