@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:pensaconnect/repositories/forum_repository.dart';
+import 'package:provider/provider.dart';
 import '../models/forum_model.dart';
 import '../utils/role_utils.dart';
 
@@ -59,6 +61,14 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   Future<void> _toggleLike() async {
     await _repo.toggleLike(widget.postId);
     _reload();
+  }
+
+  bool _canManagePost(ForumPost post) {
+    final auth = context.read<AuthProvider>();
+    final currentUser = auth.currentUser;
+    if (currentUser == null) return false;
+    if (currentUser.id == post.authorId) return true;
+    return auth.hasAnyRole(const ['admin', 'moderator']);
   }
 
   Future<void> _approve() async {
@@ -167,14 +177,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                               tooltip: 'Approve',
                             ),
                           ),
-                          RoleGuard(
-                            roles: const ['admin'],
-                            child: IconButton(
+                          if (_canManagePost(post))
+                            IconButton(
                               onPressed: _delete,
                               icon: const Icon(Icons.delete),
                               tooltip: 'Delete',
                             ),
-                          ),
                         ],
                       ),
 
