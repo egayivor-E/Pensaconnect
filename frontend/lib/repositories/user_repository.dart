@@ -88,6 +88,32 @@ class UserRepository {
     }
   }
 
+  /// Paginated list of users — used by the "New Message" picker to find
+  /// someone to start a direct chat with.
+  Future<List<User>> listUsers({int page = 1, int perPage = 30}) async {
+    try {
+      final response = await ApiService.get(
+        'users/',
+        queryParams: {'page': page, 'per_page': perPage},
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final usersJson = (data is Map<String, dynamic> && data['data'] is List)
+            ? data['data'] as List
+            : (data is List ? data : const []);
+        return usersJson
+            .map<User>((u) => User.fromJson(u as Map<String, dynamic>))
+            .toList();
+      } else {
+        debugPrint("❌ Failed to list users: ${response.statusCode}");
+        return [];
+      }
+    } catch (e) {
+      debugPrint("❌ Error listing users: $e");
+      return [];
+    }
+  }
+
   static String getProfilePictureUrl(String? relativePath) {
     if (relativePath == null || relativePath.isEmpty) {
       return '${ApiService.baseUrl}/uploads/default-avatar.png';
