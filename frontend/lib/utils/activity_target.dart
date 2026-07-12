@@ -8,7 +8,8 @@ import 'package:flutter/material.dart';
 /// | testimony         | POST /testimonies/:id/like     | /testimonies/:id      |
 /// | forum_thread       | POST /threads/:id/react        | /threads/:id          |
 /// | prayer_request     | POST /prayers/:id/toggle_prayer| (list only, no route) |
-/// | post (blog) / event | none yet                      | none yet              |
+/// | post (forum post)  | POST /forums/posts/:id/like    | /posts/:id            |
+/// | event               | none yet                      | none yet              |
 ///
 /// Centralized here so the mapping only needs updating in one place as
 /// more endpoints/screens are added — the feed card just asks "can I
@@ -78,9 +79,22 @@ ActivityTargetInfo activityTargetInfo(String? targetType) {
         canLike: true,
         canOpenDetail: false,
       );
+    case 'post':
+      // A forum post shared to the Home feed. Uses the same like
+      // endpoint as any other forum post (POST /forums/posts/:id/like)
+      // and opens the dedicated post detail screen.
+      return const ActivityTargetInfo(
+        label: 'Like',
+        activeLabel: 'Liked',
+        icon: Icons.thumb_up_outlined,
+        activeIcon: Icons.thumb_up,
+        activeColor: Colors.blueAccent,
+        canLike: true,
+        canOpenDetail: true,
+      );
     default:
-      // Covers 'post', 'event', and null — no like/comment endpoint or
-      // detail screen exists for these yet, so the card only offers Share.
+      // Covers 'event' and null — no like/comment endpoint or detail
+      // screen exists for these yet, so the card only offers Share.
       return ActivityTargetInfo._none;
   }
 }
