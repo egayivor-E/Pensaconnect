@@ -802,7 +802,7 @@ class Activity(BaseModel):
         return f"<Activity id={self.id} title={self.title} user_id={self.user_id}>"
 
     # Convert to dictionary for API
-    def to_dict(self, include_user=False, current_user_id=None):
+    def to_dict(self, include_user=False, liked_target_keys=None):
         data = {
             "id": self.id,
             "title": self.title,
@@ -828,39 +828,22 @@ class Activity(BaseModel):
         # ✅ Tells the client whether the *requesting* user has already
         # liked/prayed for whatever this activity points at, so the feed
         # can be hydrated with correct like state on load instead of
-        # starting every session assuming nothing is liked. Looked up
-        # per (target_type, target_id) against the real like/prayer
-        # table for that content type — an Activity row has no like
-        # state of its own, it's just a log entry.
-        if current_user_id is not None and self.target_id is not None:
-            data["hasLiked"] = self._current_user_has_liked(current_user_id)
+        # starting every session assuming nothing is liked.
+        #
+        # `liked_target_keys` is a precomputed set of (target_type,
+        # target_id) tuples the caller already knows the current user
+        # has liked — built with a handful of batched `IN (...)` queries
+        # in get_recent_activities, not one query per activity here.
+        # This method deliberately does NOT query the DB itself: doing
+        # that here (e.g. one Prayer/TestimonyLike/ForumLike lookup per
+        # call) is what makes an N-row feed cost N extra queries. Pass
+        # the precomputed set in instead so this stays an O(1) lookup.
+        if liked_target_keys is not None and self.target_id is not None:
+            data["hasLiked"] = (
+                self.target_type,
+                self.target_id,
+            ) in liked_target_keys
         return data
-
-    def _current_user_has_liked(self, current_user_id):
-        if self.target_type == "prayer_request":
-            return (
-                Prayer.query.filter_by(
-                    user_id=current_user_id, prayer_request_id=self.target_id
-                ).first()
-                is not None
-            )
-        if self.target_type == "testimony":
-            return (
-                TestimonyLike.query.filter_by(
-                    user_id=current_user_id, testimony_id=self.target_id
-                ).first()
-                is not None
-            )
-        if self.target_type == "forum_thread":
-            return (
-                ForumLike.query.filter_by(
-                    user_id=current_user_id,
-                    thread_id=self.target_id,
-                    reaction_type="like",
-                ).first()
-                is not None
-            )
-        return False
 
     # Helper for recent activities
     @classmethod
