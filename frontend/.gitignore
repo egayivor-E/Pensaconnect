@@ -50,3 +50,7 @@ app.*.map.json
 
 # UN-IGNORE the specific file needed by Flutter assets:
 !assets/.env
+# Android build outputs
+/android/app/build/
+/android/build/
+/android/.gradle/
