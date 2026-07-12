@@ -792,6 +792,13 @@ class Activity(BaseModel):
     target_type = Column(String(30))
     target_id = Column(Integer)
 
+    # ✅ Optional thumbnail for the feed card — the first image attached
+    # to whatever this activity is about (e.g. a forum post's first
+    # image attachment). Nullable: most activity types (prayers,
+    # threads, testimonies) have no image and fall back to the existing
+    # icon-in-circle treatment.
+    image_url = Column(String(500))
+
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     # Relationship with User
@@ -817,6 +824,7 @@ class Activity(BaseModel):
             "userId": self.user_id,
             "targetType": self.target_type,
             "targetId": self.target_id,
+            "imageUrl": self.image_url,
         }
         if include_user and self.user:
             data["user"] = {
