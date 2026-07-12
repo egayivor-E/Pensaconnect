@@ -3,7 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 # Import the new EventReminder model
 from backend.models import Event, EventAttendee, EventReminder, EventType, User, Activity
 from backend.extensions import db
-from .utils import success_response, error_response
+from .utils import success_response, error_response, broadcast_new_activity
 from datetime import datetime, timezone 
 import json # Import json for JSON handling if needed
 
@@ -104,6 +104,7 @@ def create_event():
             )
             db.session.add(activity)
             db.session.commit()
+            broadcast_new_activity(activity)
         except Exception:
             db.session.rollback()
 
