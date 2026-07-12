@@ -223,18 +223,35 @@ def toggle_prayer(prayer_id: int):
 
         # Log an Activity only when the user prayed (not when un-praying), so
         # toggling off doesn't spam the feed with removal events.
+        #
+        # ✅ Deduped per (user, prayer_request): without this check, toggling
+        # prayed -> unprayed -> prayed again for the same request inserted a
+        # fresh Activity row every time, so the global feed filled up with
+        # multiple near-identical "Prayed for a Request" rows for the same
+        # user+request. This also broke the frontend's like state, which
+        # tracked "liked" by the Activity row's id — a new row on every
+        # re-pray meant the old id's "liked" flag no longer matched anything
+        # once the feed refreshed, making the like appear to vanish. Logging
+        # at most once per user+request keeps the feed entry (and the id the
+        # frontend keys off of) stable across repeated toggles.
         if did_pray:
-            activity = Activity(
-                title="Prayed for a Request",
-                subtitle=prayer_request.title,
-                icon="pray",
-                color="blue",
+            already_logged = Activity.query.filter_by(
                 user_id=user_id,
                 target_type="prayer_request",
                 target_id=prayer_request.id,
-            )
-            db.session.add(activity)
-            db.session.commit()
+            ).first()
+            if not already_logged:
+                activity = Activity(
+                    title="Prayed for a Request",
+                    subtitle=prayer_request.title,
+                    icon="pray",
+                    color="blue",
+                    user_id=user_id,
+                    target_type="prayer_request",
+                    target_id=prayer_request.id,
+                )
+                db.session.add(activity)
+                db.session.commit()
 
         updated_request = PrayerRequest.query.get(prayer_id)
         return success_response(
