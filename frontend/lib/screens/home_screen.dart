@@ -723,60 +723,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // --- Media: a video becomes an autoplaying "reel"; otherwise
-          // fall back to a static image thumbnail if there is one.
-          // Both are tappable to open the full, uncropped media in a
-          // dedicated viewer where it can also be downloaded. ---
-          if (activity.hasVideo)
-            _FeedReelPlayer(
-              activityId: activity.id,
-              url: _resolveAvatarUrl(activity.videoUrl)!,
-              accentColor: activity.color,
-              onExpand: () => _openMediaViewer(
-                url: _resolveAvatarUrl(activity.videoUrl)!,
-                isVideo: true,
-                accentColor: activity.color,
-              ),
-            )
-          else if (activity.hasImage)
-            GestureDetector(
-              onTap: () => _openMediaViewer(
-                url: _resolveAvatarUrl(activity.imageUrl)!,
-                isVideo: false,
-                accentColor: activity.color,
-              ),
-              child: AspectRatio(
-                aspectRatio: 16 / 10,
-                child: Image.network(
-                  _resolveAvatarUrl(activity.imageUrl)!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    color: activity.color.withOpacity(0.08),
-                    alignment: Alignment.center,
-                    child: Icon(
-                      Icons.broken_image_outlined,
-                      color: activity.color,
-                      size: 32,
-                    ),
-                  ),
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return Container(
-                      color: activity.color.withOpacity(0.06),
-                      alignment: Alignment.center,
-                      child: const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    );
-                },
-              ),
-            ),
-          ),
-
-          // --- Post content: tap opens the real content (if any),
-          // double-tap likes it (if likeable) ---
+          // --- Post content: title + subtitle text (moved above the
+          // media, Facebook-style, so the caption always reads first) ---
           GestureDetector(
             onTap: () => _openActivityTarget(activity),
             onDoubleTap: () => _handleDoubleTapLike(activity),
@@ -811,28 +759,144 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                 ),
-                IgnorePointer(
-                  child: AnimatedScale(
-                    scale: showBurst ? 1.0 : 0.6,
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOutBack,
-                    child: AnimatedOpacity(
-                      opacity: showBurst ? 1.0 : 0.0,
+                if (!activity.hasImage && !activity.hasVideo)
+                  IgnorePointer(
+                    child: AnimatedScale(
+                      scale: showBurst ? 1.0 : 0.6,
                       duration: const Duration(milliseconds: 250),
-                      child: Icon(
-                        info.activeIcon,
-                        color: Colors.white,
-                        size: 72,
-                        shadows: const [
-                          Shadow(color: Colors.black38, blurRadius: 12),
-                        ],
+                      curve: Curves.easeOutBack,
+                      child: AnimatedOpacity(
+                        opacity: showBurst ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 250),
+                        child: Icon(
+                          info.activeIcon,
+                          color: Colors.white,
+                          size: 72,
+                          shadows: const [
+                            Shadow(color: Colors.black38, blurRadius: 12),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
               ],
             ),
           ),
+
+          // --- Media: shown at (roughly) its natural proportions,
+          // Facebook-style — the whole image/video is always visible,
+          // never cropped, scaled to the card width and capped at a
+          // sensible max height so a tall portrait or wide panorama
+          // doesn't blow out the feed. A video becomes an autoplaying
+          // "reel"; otherwise fall back to an image thumbnail if there
+          // is one. Both are tappable to open the full media in a
+          // dedicated viewer where it can also be downloaded. ---
+          if (activity.hasVideo)
+            GestureDetector(
+              onDoubleTap: () => _handleDoubleTapLike(activity),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  _FeedReelPlayer(
+                    activityId: activity.id,
+                    url: _resolveAvatarUrl(activity.videoUrl)!,
+                    accentColor: activity.color,
+                    onExpand: () => _openMediaViewer(
+                      url: _resolveAvatarUrl(activity.videoUrl)!,
+                      isVideo: true,
+                      accentColor: activity.color,
+                    ),
+                  ),
+                  IgnorePointer(
+                    child: AnimatedScale(
+                      scale: showBurst ? 1.0 : 0.6,
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOutBack,
+                      child: AnimatedOpacity(
+                        opacity: showBurst ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 250),
+                        child: Icon(
+                          info.activeIcon,
+                          color: Colors.white,
+                          size: 72,
+                          shadows: const [
+                            Shadow(color: Colors.black38, blurRadius: 12),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (activity.hasImage)
+            GestureDetector(
+              onTap: () => _openMediaViewer(
+                url: _resolveAvatarUrl(activity.imageUrl)!,
+                isVideo: false,
+                accentColor: activity.color,
+              ),
+              onDoubleTap: () => _handleDoubleTapLike(activity),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    constraints: const BoxConstraints(
+                      minHeight: 160,
+                      maxHeight: 420,
+                    ),
+                    width: double.infinity,
+                    color: activity.color.withOpacity(0.06),
+                    child: Image.network(
+                      _resolveAvatarUrl(activity.imageUrl)!,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        height: 200,
+                        color: activity.color.withOpacity(0.08),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.broken_image_outlined,
+                          color: activity.color,
+                          size: 32,
+                        ),
+                      ),
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return Container(
+                          height: 200,
+                          color: activity.color.withOpacity(0.06),
+                          alignment: Alignment.center,
+                          child: const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  IgnorePointer(
+                    child: AnimatedScale(
+                      scale: showBurst ? 1.0 : 0.6,
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOutBack,
+                      child: AnimatedOpacity(
+                        opacity: showBurst ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 250),
+                        child: Icon(
+                          info.activeIcon,
+                          color: Colors.white,
+                          size: 72,
+                          shadows: const [
+                            Shadow(color: Colors.black38, blurRadius: 12),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           if (info.canLike || info.canOpenDetail) ...[
             Divider(
@@ -1790,8 +1854,8 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
 /// Opened when a feed image or video is tapped. Shows the media at its
 /// real proportions — `BoxFit.contain` for the image, natural aspect
 /// ratio for the video — so nothing is cropped or overlapping the way
-/// the feed card's `BoxFit.cover` thumbnail necessarily is. Also exposes
-/// a download/open action via `url_launcher`: on web this opens the raw
+/// the feed card's thumbnail necessarily can be. Also exposes a
+/// download/open action via `url_launcher`: on web this opens the raw
 /// media URL in a new tab, which the browser downloads or displays
 /// depending on the file type and the user's settings; on mobile it
 /// opens the file externally. There's no bundled file-saving package
