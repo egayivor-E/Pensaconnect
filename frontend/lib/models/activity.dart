@@ -40,6 +40,15 @@ class Activity {
   // muted-by-default video card instead of a static image. If both
   // imageUrl and videoUrl are set, the video takes priority.
   final String? videoUrl;
+  // ✅ Like/comment counts for whatever this activity points at (only
+  // populated for target types the backend batches counts for today —
+  // "post"). Null means "not provided", not "zero", so the UI can
+  // choose to hide the count entirely rather than show a false 0.
+  final int? likeCount;
+  final int? commentCount;
+  // ✅ For target_type == "post": the forum thread the post lives in,
+  // so the feed can deep link straight to it.
+  final int? threadId;
   Activity({
     required this.id,
     required this.title,
@@ -54,6 +63,9 @@ class Activity {
     this.hasLiked = false,
     this.imageUrl,
     this.videoUrl,
+    this.likeCount,
+    this.commentCount,
+    this.threadId,
   });
   /// Returns a "5m ago" style string
   String get timeAgo => timeago.format(createdAt);
@@ -86,6 +98,9 @@ class Activity {
       hasLiked: json['hasLiked'] as bool? ?? false,
       imageUrl: json['imageUrl'] as String?,
       videoUrl: json['videoUrl'] as String?,
+      likeCount: (json['likeCount'] as num?)?.toInt(),
+      commentCount: (json['commentCount'] as num?)?.toInt(),
+      threadId: (json['threadId'] as num?)?.toInt(),
     );
   }
   Map<String, dynamic> toJson() {
@@ -101,6 +116,9 @@ class Activity {
       'hasLiked': hasLiked,
       if (imageUrl != null) 'imageUrl': imageUrl,
       if (videoUrl != null) 'videoUrl': videoUrl,
+      if (likeCount != null) 'likeCount': likeCount,
+      if (commentCount != null) 'commentCount': commentCount,
+      if (threadId != null) 'threadId': threadId,
       if (authorName != null)
         'user': {
           'fullName': authorName,
