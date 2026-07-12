@@ -97,6 +97,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     context.go('/login');
   }
 
+  // ✅ FIX: /profile is now reached via context.go() from the drawer and
+  // home avatar (see AppDrawer/home_screen fixes), which replaces the
+  // whole navigation stack instead of pushing on top of it — so there's
+  // often nothing left to pop, which is why no back arrow was showing and
+  // the hardware/system back gesture had nowhere sensible to go. This
+  // mirrors the same canPop-or-go-home fallback already used by
+  // GroupChatsScreen.
+  void _handleBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/home');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -107,69 +122,88 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (_user == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Profile')),
+        appBar: AppBar(
+          title: const Text('Profile'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Back',
+            onPressed: _handleBack,
+          ),
+        ),
         body: Center(
           child: Text('No profile available', style: theme.textTheme.bodyLarge),
         ),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_isOwnProfile ? 'My Profile' : '${_user!.getFullName()}'),
-        actions: _isOwnProfile
-            ? [IconButton(onPressed: _logout, icon: const Icon(Icons.logout))]
-            : null,
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth > 800;
-          final card = _buildProfileCard(context, _user!, isWide);
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_isOwnProfile ? 'My Profile' : '${_user!.getFullName()}'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Back',
+            onPressed: _handleBack,
+          ),
+          actions: _isOwnProfile
+              ? [IconButton(onPressed: _logout, icon: const Icon(Icons.logout))]
+              : null,
+        ),
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 800;
+            final card = _buildProfileCard(context, _user!, isWide);
 
-          return RefreshIndicator(
-            onRefresh: _isOwnProfile ? _loadCurrentUser : () async {},
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.symmetric(
-                horizontal: isWide ? 48 : 16,
-                vertical: 24,
-              ),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1100),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      card,
-                      if (_isOwnProfile) ...[
-                        const SizedBox(height: 20),
-                        _buildStatsAndBadges(context),
+            return RefreshIndicator(
+              onRefresh: _isOwnProfile ? _loadCurrentUser : () async {},
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isWide ? 48 : 16,
+                  vertical: 24,
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1100),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        card,
+                        if (_isOwnProfile) ...[
+                          const SizedBox(height: 20),
+                          _buildStatsAndBadges(context),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
+        floatingActionButton: _isOwnProfile
+            ? FloatingActionButton.extended(
+                onPressed: () async {
+                  final updated = await Navigator.of(context).push<User?>(
+                    MaterialPageRoute(
+                      builder: (_) => EditProfileScreen(user: _user!),
+                    ),
+                  );
+                  if (updated != null && mounted) {
+                    setState(() => _user = updated);
+                  }
+                },
+                icon: const Icon(Icons.edit),
+                label: const Text('Edit Profile'),
+              )
+            : null,
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       ),
-      floatingActionButton: _isOwnProfile
-          ? FloatingActionButton.extended(
-              onPressed: () async {
-                final updated = await Navigator.of(context).push<User?>(
-                  MaterialPageRoute(
-                    builder: (_) => EditProfileScreen(user: _user!),
-                  ),
-                );
-                if (updated != null && mounted) {
-                  setState(() => _user = updated);
-                }
-              },
-              icon: const Icon(Icons.edit),
-              label: const Text('Edit Profile'),
-            )
-          : null,
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 
