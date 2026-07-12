@@ -9,6 +9,8 @@ import 'package:pensaconnect/utils/forum_event_bus.dart';
 import 'package:pensaconnect/utils/role_utils.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:video_player/video_player.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/forum_model.dart';
 import '../repositories/forum_repository.dart';
 import 'package:pensaconnect/utils/forum_event_bus.dart' as forum_bus;
@@ -685,19 +687,35 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     }
   }
 
+  // ✅ Images and videos now open in an in-app viewer (zoomable image /
+  // playable video, same idea as the home feed's media viewer) instead of
+  // handing off to the browser or an external app — that made "viewing"
+  // an attachment feel like leaving the app rather than reading a post.
+  // Documents (pdf/docx/txt/...) still open externally since there's no
+  // in-app renderer for those here.
+  void _openMediaViewer(ForumAttachment a, {required bool isVideo}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _ForumMediaViewerScreen(
+          url: ForumRepository.getAttachmentUrl(a.url),
+          fileName: a.fileName,
+          isVideo: isVideo,
+        ),
+      ),
+    );
+  }
+
   /// Renders one attachment as a `size` x `size` tile: the real thumbnail
-  /// for images, a video-style placeholder for videos, and a file icon +
-  /// name for everything else (pdf/docx/txt). All three are tappable and
-  /// open the file (via the browser/OS) rather than trying to force
-  /// non-image files through Image.network, which is what made them show
-  /// up blank/broken before.
+  /// for images, a real first-frame thumbnail for videos, and a file icon +
+  /// name for everything else (pdf/docx/txt). Images and videos open an
+  /// in-app viewer; documents open externally via the OS/browser.
   Widget _buildAttachmentTile(ForumAttachment a, {double size = 96}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final tileSurface = isDark ? const Color(0xFF332A4D) : AppColors.warmLinen;
 
     if (_isImageAttachment(a)) {
       return GestureDetector(
-        onTap: () => _openAttachment(a),
+        onTap: () => _openMediaViewer(a, isVideo: false),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: Image.network(
@@ -736,19 +754,12 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
 
     if (_isVideoAttachment(a)) {
       return GestureDetector(
-        onTap: () => _openAttachment(a),
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            color: AppColors.inkDusk,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          alignment: Alignment.center,
-          child: const Icon(
-            Icons.play_circle_fill_rounded,
-            color: AppColors.emberGold,
-            size: 36,
+        onTap: () => _openMediaViewer(a, isVideo: true),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: _AttachmentVideoThumb(
+            url: ForumRepository.getAttachmentUrl(a.url),
+            size: size,
           ),
         ),
       );
@@ -1517,6 +1528,241 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// VIDEO ATTACHMENT THUMBNAIL
+// ==========================================
+
+/// A `size` x `size` tile showing the video's real first frame (paused)
+/// with a play badge on top, instead of a flat placeholder box — replaces
+/// the old solid-color-plus-icon tile with something that actually looks
+/// like the video it represents.
+class _AttachmentVideoThumb extends StatefulWidget {
+  final String url;
+  final double size;
+
+  const _AttachmentVideoThumb({required this.url, required this.size});
+
+  @override
+  State<_AttachmentVideoThumb> createState() => _AttachmentVideoThumbState();
+}
+
+class _AttachmentVideoThumbState extends State<_AttachmentVideoThumb> {
+  VideoPlayerController? _controller;
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _controller = controller;
+    try {
+      await controller.initialize();
+      // Land on the first frame and stay paused — this is a thumbnail,
+      // not an autoplaying preview.
+      await controller.seekTo(Duration.zero);
+      if (!mounted) return;
+      setState(() => _ready = true);
+    } catch (e) {
+      debugPrint('Video thumbnail failed to load: $e');
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: widget.size,
+      height: widget.size,
+      color: AppColors.inkDusk,
+      child: Stack(
+        alignment: Alignment.center,
+        fit: StackFit.expand,
+        children: [
+          if (_ready && _controller != null)
+            FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: _controller!.value.size.width,
+                height: _controller!.value.size.height,
+                child: VideoPlayer(_controller!),
+              ),
+            )
+          else if (_failed)
+            const Icon(Icons.videocam_off_outlined, color: AppColors.roseQuartz)
+          else
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.emberGold),
+            ),
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.black.withOpacity(0.35),
+            ),
+            padding: const EdgeInsets.all(6),
+            child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 20),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// IN-APP MEDIA VIEWER
+// ==========================================
+
+/// Full-screen viewer opened when an image or video attachment is tapped.
+/// Images get a zoomable `InteractiveViewer`; videos get a real player with
+/// tap-to-play/pause. Both keep a "download/open" action for anyone who
+/// wants the file itself, but viewing no longer requires leaving the app.
+class _ForumMediaViewerScreen extends StatefulWidget {
+  final String url;
+  final String fileName;
+  final bool isVideo;
+
+  const _ForumMediaViewerScreen({
+    required this.url,
+    required this.fileName,
+    required this.isVideo,
+  });
+
+  @override
+  State<_ForumMediaViewerScreen> createState() => _ForumMediaViewerScreenState();
+}
+
+class _ForumMediaViewerScreenState extends State<_ForumMediaViewerScreen> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isVideo) _setUpVideo();
+  }
+
+  Future<void> _setUpVideo() async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _controller = controller;
+    try {
+      await controller.initialize();
+      if (!mounted) return;
+      setState(() => _initialized = true);
+      controller.play();
+    } catch (e) {
+      debugPrint('Media viewer video failed to load: $e');
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  Future<void> _downloadOrOpen() async {
+    final uri = Uri.parse(widget.url);
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't open that link.")),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          widget.fileName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white, fontSize: 15),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Download / open',
+            onPressed: _downloadOrOpen,
+          ),
+        ],
+      ),
+      body: Center(child: widget.isVideo ? _buildVideo() : _buildImage()),
+    );
+  }
+
+  Widget _buildImage() {
+    return InteractiveViewer(
+      minScale: 0.8,
+      maxScale: 4,
+      child: Image.network(
+        widget.url,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) => const Icon(
+          Icons.broken_image_outlined,
+          color: AppColors.roseQuartz,
+          size: 48,
+        ),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const CircularProgressIndicator(color: Colors.white70);
+        },
+      ),
+    );
+  }
+
+  Widget _buildVideo() {
+    if (_failed) {
+      return const Icon(Icons.videocam_off_outlined, color: AppColors.roseQuartz, size: 48);
+    }
+    if (!_initialized || _controller == null) {
+      return const CircularProgressIndicator(color: Colors.white70);
+    }
+    final controller = _controller!;
+    return AspectRatio(
+      aspectRatio: controller.value.aspectRatio,
+      child: GestureDetector(
+        onTap: () => setState(() {
+          controller.value.isPlaying ? controller.pause() : controller.play();
+        }),
+        child: Stack(
+          alignment: Alignment.center,
+          fit: StackFit.expand,
+          children: [
+            VideoPlayer(controller),
+            AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) => controller.value.isPlaying
+                  ? const SizedBox.shrink()
+                  : const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 64),
+            ),
+          ],
+        ),
       ),
     );
   }
