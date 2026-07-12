@@ -225,9 +225,9 @@ class ForumRepository {
     debugPrint('✅ Comment added successfully to post $postId');
   }
 
-  Future<void> deleteComment(int commentId) async {
+  Future<void> deleteComment(int postId, int commentId) async {
     try {
-      await _api.deleteComment(commentId);
+      await _api.deleteComment(postId, commentId);
       debugPrint("✅ Comment $commentId deleted successfully");
     } catch (e) {
       debugPrint("❌ Failed to delete comment $commentId: $e");
