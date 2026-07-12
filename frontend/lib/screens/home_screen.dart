@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:pensaconnect/services/api_service.dart';
 import 'package:pensaconnect/services/auth_service.dart';
 
@@ -40,6 +41,14 @@ class _HomeScreenState extends State<HomeScreen> {
   // pushed route when the auth state changes).
   int? _loadedForUserId;
   late final VoidCallback _authListener;
+
+  // ✅ Dedicated connection just for live "new_activity" pushes, separate
+  // from SocketIoService (which is scoped to per-group-chat rooms and has
+  // no notion of a standing, app-wide connection). Kept deliberately small
+  // and self-contained here rather than extending that shared service, to
+  // avoid touching its already-intricate reconnect/typing/room logic for
+  // an unrelated feature.
+  io.Socket? _activitySocket;
 
   // --- Feed engagement ---
   // ✅ Keyed by the underlying (targetType, targetId) the activity points
@@ -122,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _authListener = _onAuthChanged;
     AuthService().addListener(_authListener);
     _loadData();
+    _connectActivitySocket();
   }
 
   void _onAuthChanged() {
@@ -135,6 +145,10 @@ class _HomeScreenState extends State<HomeScreen> {
         '🔄 HomeScreen: auth changed ($_loadedForUserId → $newUserId), reloading',
       );
       _loadData();
+      // Re-auth the socket too — it was opened with the previous user's
+      // (or no) token, and a stale/absent auth header would leave it
+      // silently unable to authenticate against the new session.
+      _connectActivitySocket();
     }
   }
 
@@ -213,11 +227,73 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // ✅ Opens a standing connection just to receive "new_activity" broadcasts
+  // (see backend/api/v1/utils.py's broadcast_new_activity) so activity
+  // created elsewhere shows up here live, without pulling to refresh.
+  // Safe to call more than once — no-ops if already connected.
+  Future<void> _connectActivitySocket() async {
+    if (!Config.enableLiveChat) return;
+
+    final token = await ApiService.getToken();
+    if (token == null) return; // no session yet — _onAuthChanged will retry
+
+    _activitySocket?.offAny();
+    _activitySocket?.disconnect();
+    _activitySocket?.dispose();
+
+    final options = io.OptionBuilder()
+        .setTransports(['websocket', 'polling'])
+        .setPath('/socket.io')
+        .setExtraHeaders({'Authorization': 'Bearer $token'})
+        .setQuery({'token': token})
+        .enableReconnection()
+        .setReconnectionAttempts(10)
+        .setReconnectionDelay(1000)
+        .setReconnectionDelayMax(5000)
+        .disableAutoConnect()
+        .build();
+
+    final socket = io.io(Config.websocketUrl, options);
+    _activitySocket = socket;
+
+    socket.on('new_activity', (data) {
+      try {
+        final Map<String, dynamic> json = data is List
+            ? Map<String, dynamic>.from(data.first as Map)
+            : Map<String, dynamic>.from(data as Map);
+        _handleIncomingActivity(Activity.fromJson(json));
+      } catch (e) {
+        debugPrint('❌ HomeScreen: failed to parse pushed activity: $e');
+      }
+    });
+
+    socket.onConnect((_) => debugPrint('✅ HomeScreen: activity socket connected'));
+    socket.onConnectError((e) => debugPrint('❌ HomeScreen: activity socket connect error: $e'));
+    socket.onDisconnect((_) => debugPrint('🔌 HomeScreen: activity socket disconnected'));
+
+    socket.connect();
+  }
+
+  // Merges one freshly-pushed activity into the feed. Deliberately checks
+  // for an existing id before touching state at all — a duplicate push
+  // (e.g. a stray re-emit, or a race with a pull-to-refresh that already
+  // fetched the same row) must never insert a second card for it.
+  void _handleIncomingActivity(Activity activity) {
+    if (!mounted) return;
+    if (_activities.any((a) => a.id == activity.id)) return;
+    setState(() {
+      _activities = [activity, ..._activities];
+    });
+  }
+
   @override
   void dispose() {
     AuthService().removeListener(_authListener);
     _searchController.dispose();
     _heartBurstTimer?.cancel();
+    _activitySocket?.offAny();
+    _activitySocket?.disconnect();
+    _activitySocket?.dispose();
     super.dispose();
   }
 
