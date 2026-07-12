@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:pensaconnect/services/api_service.dart';
@@ -280,11 +281,21 @@ class _HomeScreenState extends State<HomeScreen> {
   // for an existing id before touching state at all — a duplicate push
   // (e.g. a stray re-emit, or a race with a pull-to-refresh that already
   // fetched the same row) must never insert a second card for it.
+  //
+  // ✅ Also hydrates the liked state from the activity's own `hasLiked`
+  // flag in the SAME setState that adds the card. Previously this method
+  // only touched `_activities`, so a pushed activity that the current
+  // user had already liked (e.g. liked from another device/tab) would
+  // render with an unliked heart until the next full _loadData() — the
+  // post was rendering before its like state had actually loaded.
   void _handleIncomingActivity(Activity activity) {
     if (!mounted) return;
     if (_activities.any((a) => a.id == activity.id)) return;
     setState(() {
       _activities = [activity, ..._activities];
+      if (activity.hasLiked && activity.targetId != null) {
+        _likedTargetKeys.add(_targetKey(activity));
+      }
     });
   }
 
@@ -425,6 +436,28 @@ class _HomeScreenState extends State<HomeScreen> {
         : Config.baseUrl;
     final normalizedPath = path.startsWith('/') ? path : '/$path';
     return '$base$normalizedPath';
+  }
+
+  // Opens the full-size media viewer for a feed image or video — tapping
+  // the cropped card thumbnail alone was a dead end before (no way to see
+  // the whole, uncropped image or save it). BoxFit.contain here means
+  // nothing gets cut off or overlaps the frame the way the card's
+  // BoxFit.cover thumbnail can.
+  void _openMediaViewer({
+    required String url,
+    required bool isVideo,
+    required Color accentColor,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _MediaViewerScreen(
+          url: url,
+          isVideo: isVideo,
+          accentColor: accentColor,
+        ),
+      ),
+    );
   }
 
   // Opens the real content an activity refers to, when we have somewhere
@@ -635,42 +668,56 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
 
           // --- Media: a video becomes an autoplaying "reel"; otherwise
-          // fall back to a static image thumbnail if there is one ---
+          // fall back to a static image thumbnail if there is one.
+          // Both are tappable to open the full, uncropped media in a
+          // dedicated viewer where it can also be downloaded. ---
           if (activity.hasVideo)
             _FeedReelPlayer(
               activityId: activity.id,
               url: _resolveAvatarUrl(activity.videoUrl)!,
               accentColor: activity.color,
+              onExpand: () => _openMediaViewer(
+                url: _resolveAvatarUrl(activity.videoUrl)!,
+                isVideo: true,
+                accentColor: activity.color,
+              ),
             )
           else if (activity.hasImage)
-            AspectRatio(
-              aspectRatio: 16 / 10,
-              child: Image.network(
-                _resolveAvatarUrl(activity.imageUrl)!,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => Container(
-                  color: activity.color.withOpacity(0.08),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Icons.broken_image_outlined,
-                    color: activity.color,
-                    size: 32,
-                  ),
-                ),
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) return child;
-                  return Container(
-                    color: activity.color.withOpacity(0.06),
+            GestureDetector(
+              onTap: () => _openMediaViewer(
+                url: _resolveAvatarUrl(activity.imageUrl)!,
+                isVideo: false,
+                accentColor: activity.color,
+              ),
+              child: AspectRatio(
+                aspectRatio: 16 / 10,
+                child: Image.network(
+                  _resolveAvatarUrl(activity.imageUrl)!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: activity.color.withOpacity(0.08),
                     alignment: Alignment.center,
-                    child: const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                    child: Icon(
+                      Icons.broken_image_outlined,
+                      color: activity.color,
+                      size: 32,
                     ),
-                  );
+                  ),
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      color: activity.color.withOpacity(0.06),
+                      alignment: Alignment.center,
+                      child: const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
                 },
               ),
             ),
+          ),
 
           // --- Post content: tap opens the real content (if any),
           // double-tap likes it (if likeable) ---
@@ -1434,11 +1481,13 @@ class _FeedReelPlayer extends StatefulWidget {
   final int activityId;
   final String url;
   final Color accentColor;
+  final VoidCallback onExpand;
 
   const _FeedReelPlayer({
     required this.activityId,
     required this.url,
     required this.accentColor,
+    required this.onExpand,
   });
 
   @override
@@ -1603,6 +1652,22 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
                     ),
                   ),
                 ),
+                Positioned(
+                  right: 10,
+                  top: 10,
+                  child: GestureDetector(
+                    onTap: widget.onExpand,
+                    child: const CircleAvatar(
+                      backgroundColor: Colors.black45,
+                      radius: 16,
+                      child: Icon(
+                        Icons.fullscreen_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1612,3 +1677,157 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
   }
 }
 
+
+// ==========================================
+// FULL-SCREEN MEDIA VIEWER
+// ==========================================
+
+/// Opened when a feed image or video is tapped. Shows the media at its
+/// real proportions — `BoxFit.contain` for the image, natural aspect
+/// ratio for the video — so nothing is cropped or overlapping the way
+/// the feed card's `BoxFit.cover` thumbnail necessarily is. Also exposes
+/// a download/open action via `url_launcher`: on web this opens the raw
+/// media URL in a new tab, which the browser downloads or displays
+/// depending on the file type and the user's settings; on mobile it
+/// opens the file externally. There's no bundled file-saving package
+/// (e.g. dio + path_provider) in this project yet, so this is the
+/// lightest correct option without adding a new dependency.
+class _MediaViewerScreen extends StatefulWidget {
+  final String url;
+  final bool isVideo;
+  final Color accentColor;
+
+  const _MediaViewerScreen({
+    required this.url,
+    required this.isVideo,
+    required this.accentColor,
+  });
+
+  @override
+  State<_MediaViewerScreen> createState() => _MediaViewerScreenState();
+}
+
+class _MediaViewerScreenState extends State<_MediaViewerScreen> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isVideo) _setUpVideo();
+  }
+
+  Future<void> _setUpVideo() async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _controller = controller;
+    try {
+      await controller.initialize();
+      if (!mounted) return;
+      await controller.setLooping(true);
+      setState(() => _initialized = true);
+      controller.play();
+    } catch (e) {
+      debugPrint('Media viewer video failed to load: $e');
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  Future<void> _downloadOrOpen() async {
+    final uri = Uri.parse(widget.url);
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't open that link.")),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Download / open',
+            onPressed: _downloadOrOpen,
+          ),
+        ],
+      ),
+      body: Center(
+        child: widget.isVideo ? _buildVideo() : _buildImage(),
+      ),
+    );
+  }
+
+  Widget _buildImage() {
+    return InteractiveViewer(
+      minScale: 0.8,
+      maxScale: 4,
+      child: Image.network(
+        widget.url,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) => Icon(
+          Icons.broken_image_outlined,
+          color: widget.accentColor,
+          size: 48,
+        ),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const CircularProgressIndicator(color: Colors.white70);
+        },
+      ),
+    );
+  }
+
+  Widget _buildVideo() {
+    if (_failed) {
+      return Icon(
+        Icons.videocam_off_outlined,
+        color: widget.accentColor,
+        size: 48,
+      );
+    }
+    if (!_initialized || _controller == null) {
+      return const CircularProgressIndicator(color: Colors.white70);
+    }
+    final controller = _controller!;
+    return AspectRatio(
+      aspectRatio: controller.value.aspectRatio,
+      child: GestureDetector(
+        onTap: () => setState(() {
+          controller.value.isPlaying ? controller.pause() : controller.play();
+        }),
+        child: Stack(
+          alignment: Alignment.center,
+          fit: StackFit.expand,
+          children: [
+            VideoPlayer(controller),
+            AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) => controller.value.isPlaying
+                  ? const SizedBox.shrink()
+                  : const Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 64,
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
