@@ -185,7 +185,7 @@ class TestimonyRepository {
     }
   }
 
-  Future<int> countUserTestimonies(String userId) async {
+  Future<int> countUserTestimonies(int userId) async {
     final res = await ApiService.get("$endpoint/?user_id=$userId");
     final body = json.decode(res.body);
 
