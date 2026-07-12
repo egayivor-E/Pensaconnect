@@ -538,7 +538,16 @@ class _HomeScreenState extends State<HomeScreen> {
   // Routes a like to whichever real endpoint backs this activity's
   // target — there's no "like an activity" endpoint, because an
   // Activity is a log entry, not content of its own. Optimistically
-  // flips the heart, then rolls back if the API call fails.
+  // flips the heart AND adjusts the visible count, then rolls both back
+  // if the API call fails.
+  //
+  // ✅ Previously this only toggled `_likedTargetKeys` (the heart icon).
+  // `activity.likeCount` was never touched, so the "Like · 12" label sat
+  // frozen at whatever the last full feed fetch returned — tapping like
+  // flipped the heart but the number next to it didn't move until a
+  // pull-to-refresh. Now the specific Activity instance in `_activities`
+  // is replaced with an updated copy every time, same as the heart, so
+  // both change in the same frame and both roll back together on error.
   Future<void> _handleLike(Activity activity) async {
     final info = activityTargetInfo(activity.targetType);
     if (!info.canLike || activity.targetId == null) return;
@@ -546,9 +555,19 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_actionInFlight.contains(key)) return;
 
     final wasLiked = _likedTargetKeys.contains(key);
+    final index = _activities.indexWhere((a) => a.id == activity.id);
+
+    void applyCountDelta(int delta) {
+      if (index == -1) return;
+      final current = _activities[index];
+      final newCount = ((current.likeCount ?? 0) + delta).clamp(0, 1 << 30);
+      _activities[index] = current.copyWith(likeCount: newCount);
+    }
+
     setState(() {
       _actionInFlight.add(key);
       wasLiked ? _likedTargetKeys.remove(key) : _likedTargetKeys.add(key);
+      applyCountDelta(wasLiked ? -1 : 1);
     });
 
     try {
@@ -573,6 +592,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         wasLiked ? _likedTargetKeys.add(key) : _likedTargetKeys.remove(key);
+        applyCountDelta(wasLiked ? 1 : -1);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
