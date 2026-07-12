@@ -459,7 +459,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
 
     try {
       final repo = context.read<ForumRepository>();
-      await repo.addComment(
+      final attachmentErrors = await repo.addComment(
         threadId: widget.threadId,
         postId: postId,
         content: text,
@@ -473,14 +473,31 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
       await _fetchCommentsForPost(postId);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Comment posted'),
-            backgroundColor: Colors.green[600],
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
+        if (attachmentErrors.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Comment posted'),
+              backgroundColor: Colors.green[600],
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        } else {
+          // Comment saved, but one or more files didn't make it — say so
+          // instead of letting the attachment vanish with no explanation.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Comment posted, but ${attachmentErrors.length} file(s) '
+                "didn't upload: ${attachmentErrors.join('; ')}",
+              ),
+              backgroundColor: Colors.orange[800],
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        }
       }
 
       // update posts list counts (best-effort): re-fetch posts to keep counts accurate
@@ -741,6 +758,66 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     );
   }
 
+  static const _pendingImageExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'};
+  static const _pendingVideoExtensions = {'mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v'};
+
+  String _extOf(PlatformFile f) => (f.extension ?? '').toLowerCase();
+
+  /// Thumbnail for a file the user has picked but not yet uploaded.
+  /// Only ever hands actual image bytes/paths to Image.memory/Image.file —
+  /// videos and documents get an icon instead, since decoding a PDF or
+  /// video through Image.* throws at paint time and blanks the screen
+  /// (the exact bug already fixed for the new-post form; comments had
+  /// the same gap).
+  Widget _buildPendingAttachmentThumb(PlatformFile f) {
+    final ext = _extOf(f);
+    final isImage = _pendingImageExtensions.contains(ext);
+    final isVideo = _pendingVideoExtensions.contains(ext);
+
+    if (isImage) {
+      Widget? image;
+      if (kIsWeb && f.bytes != null) {
+        image = Image.memory(f.bytes!, fit: BoxFit.cover);
+      } else if (!kIsWeb && f.path != null) {
+        image = Image.file(File(f.path!), fit: BoxFit.cover);
+      }
+      return Container(
+        width: 56,
+        height: 56,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: Colors.grey[200],
+        ),
+        child: image ?? const Icon(Icons.image_outlined),
+      );
+    }
+
+    return Container(
+      width: 56,
+      height: 56,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        color: isVideo ? Colors.black87 : Colors.grey[200],
+      ),
+      alignment: Alignment.center,
+      child: isVideo
+          ? const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 26)
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_iconForDocument(f.name), size: 20, color: Colors.grey[700]),
+                const SizedBox(height: 2),
+                Text(
+                  ext.isEmpty ? '?' : ext,
+                  style: TextStyle(fontSize: 9, color: Colors.grey[700]),
+                ),
+              ],
+            ),
+    );
+  }
+
   Widget _buildPostCard(ForumPost post, int index) {
     _ensurePerPostState(post.id);
 
@@ -979,33 +1056,16 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                   const SizedBox(height: 8),
                   if (attachments.isNotEmpty)
                     SizedBox(
-                      height: 60,
+                      height: 64,
                       child: ListView(
                         scrollDirection: Axis.horizontal,
                         children: attachments.map((f) {
                           return Padding(
                             padding: const EdgeInsets.only(right: 8.0),
                             child: Stack(
+                              clipBehavior: Clip.none,
                               children: [
-                                Container(
-                                  width: 56,
-                                  height: 56,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    color: Colors.grey[200],
-                                  ),
-                                  child: kIsWeb && f.bytes != null
-                                      ? Image.memory(
-                                          f.bytes!,
-                                          fit: BoxFit.cover,
-                                        )
-                                      : (f.path != null
-                                            ? Image.file(
-                                                File(f.path!),
-                                                fit: BoxFit.cover,
-                                              )
-                                            : const SizedBox()),
-                                ),
+                                _buildPendingAttachmentThumb(f),
                                 Positioned(
                                   right: -6,
                                   top: -6,
@@ -1016,9 +1076,15 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                                       });
                                     },
                                     child: Container(
-                                      decoration: const BoxDecoration(
+                                      decoration: BoxDecoration(
                                         shape: BoxShape.circle,
                                         color: Colors.white,
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(0.15),
+                                            blurRadius: 4,
+                                          ),
+                                        ],
                                       ),
                                       child: const Icon(
                                         Icons.close,
@@ -1234,7 +1300,25 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.threadTitle),
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.threadTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (!_isLoadingPosts && _posts.isNotEmpty)
+              Text(
+                '${_posts.length} post${_posts.length == 1 ? '' : 's'}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+          ],
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
