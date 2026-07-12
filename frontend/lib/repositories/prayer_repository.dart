@@ -92,27 +92,31 @@ class PrayerRepository extends ChangeNotifier {
   }
 
   Future<void> togglePrayerById(int prayerId) async {
-    try {
-      final endpoint = "prayers/$prayerId/toggle_prayer";
-      final res = await ApiService.post(endpoint, {});
+    // ✅ Previously swallowed every failure (both the non-2xx branch,
+    // which ApiService.post can't actually reach since it throws before
+    // returning, and the catch-all below) — callers had no way to know
+    // the toggle didn't take. Now it rethrows so e.g. the home feed's
+    // optimistic "I prayed" heart can roll back instead of staying
+    // lit for a request that never landed.
+    final endpoint = "prayers/$prayerId/toggle_prayer";
+    final res = await ApiService.post(endpoint, {});
 
-      if (res.statusCode == 200 || res.statusCode == 201) {
-        final index = _requests.indexWhere((r) => r.id == prayerId);
-        if (index != -1) {
-          final req = _requests[index];
-          final increment = !req.hasPrayed;
-          _requests[index] = req.copyWith(
-            prayersCount: req.prayersCount + (increment ? 1 : -1),
-            hasPrayed: increment,
-          );
-          notifyListeners();
-        }
-      } else {
-        debugPrint("❌ togglePrayer failed: ${res.statusCode}");
-      }
-    } catch (e) {
-      debugPrint("❌ togglePrayer error: $e");
+    final index = _requests.indexWhere((r) => r.id == prayerId);
+    if (index != -1) {
+      final req = _requests[index];
+      final increment = !req.hasPrayed;
+      _requests[index] = req.copyWith(
+        prayersCount: req.prayersCount + (increment ? 1 : -1),
+        hasPrayed: increment,
+      );
+      notifyListeners();
     }
+    // If this activity isn't in the currently-loaded `_requests` page
+    // (e.g. toggled from the home feed before the Prayer Wall has ever
+    // been opened this session), there's nothing local to update — the
+    // server call above is still the source of truth, and the Prayer
+    // Wall will pick up the real count next time it fetches.
+    debugPrint("✅ Prayer toggled for request $prayerId (status ${res.statusCode})");
   }
 
   Future<void> deleteRequest(int prayerId) async {
