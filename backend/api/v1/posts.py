@@ -2,7 +2,7 @@ from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.models import Post, PostCategory, ForumThread, User, Activity
 from backend.extensions import db
-from .utils import success_response, error_response
+from .utils import success_response, error_response, broadcast_new_activity
 from datetime import datetime
 posts_bp = Blueprint("posts", __name__, url_prefix="/posts")
 
@@ -111,6 +111,7 @@ def create_post():
         )
         db.session.add(activity)
         db.session.commit()
+        broadcast_new_activity(activity)
     except Exception:
         db.session.rollback()
     return success_response(post.to_dict(), "Post created", 201)
