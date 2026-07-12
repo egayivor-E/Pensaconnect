@@ -802,7 +802,7 @@ class Activity(BaseModel):
         return f"<Activity id={self.id} title={self.title} user_id={self.user_id}>"
 
     # Convert to dictionary for API
-    def to_dict(self, include_user=False):
+    def to_dict(self, include_user=False, current_user_id=None):
         data = {
             "id": self.id,
             "title": self.title,
@@ -825,7 +825,42 @@ class Activity(BaseModel):
                 "fullName": self.user.get_full_name() if hasattr(self.user, "get_full_name") else None,
                 "profilePicture": getattr(self.user, "profile_picture", None),
             }
+        # ✅ Tells the client whether the *requesting* user has already
+        # liked/prayed for whatever this activity points at, so the feed
+        # can be hydrated with correct like state on load instead of
+        # starting every session assuming nothing is liked. Looked up
+        # per (target_type, target_id) against the real like/prayer
+        # table for that content type — an Activity row has no like
+        # state of its own, it's just a log entry.
+        if current_user_id is not None and self.target_id is not None:
+            data["hasLiked"] = self._current_user_has_liked(current_user_id)
         return data
+
+    def _current_user_has_liked(self, current_user_id):
+        if self.target_type == "prayer_request":
+            return (
+                Prayer.query.filter_by(
+                    user_id=current_user_id, prayer_request_id=self.target_id
+                ).first()
+                is not None
+            )
+        if self.target_type == "testimony":
+            return (
+                TestimonyLike.query.filter_by(
+                    user_id=current_user_id, testimony_id=self.target_id
+                ).first()
+                is not None
+            )
+        if self.target_type == "forum_thread":
+            return (
+                ForumLike.query.filter_by(
+                    user_id=current_user_id,
+                    thread_id=self.target_id,
+                    reaction_type="like",
+                ).first()
+                is not None
+            )
+        return False
 
     # Helper for recent activities
     @classmethod
