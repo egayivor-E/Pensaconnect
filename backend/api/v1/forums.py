@@ -19,7 +19,7 @@ from backend.models import (
     User,
     Activity,
 )
-from .utils import success_response, error_response
+from .utils import success_response, error_response, broadcast_new_activity
 
 forums_bp = Blueprint("forums", __name__, url_prefix="/forums")
 
@@ -150,6 +150,7 @@ def create_thread():
         )
         db.session.add(activity)
         db.session.commit()
+        broadcast_new_activity(activity)
     except Exception:
         db.session.rollback()
 
