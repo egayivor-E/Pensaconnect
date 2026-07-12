@@ -32,6 +32,10 @@ class Activity {
   // unliked every session. Defaults to false for older/cached payloads
   // that predate this field.
   final bool hasLiked;
+  // ✅ Optional media thumbnail (e.g. the first image attached to a
+  // forum post). Nullable — most activity types have no image and the
+  // feed card falls back to the icon-in-circle treatment.
+  final String? imageUrl;
   Activity({
     required this.id,
     required this.title,
@@ -44,11 +48,13 @@ class Activity {
     this.targetType,
     this.targetId,
     this.hasLiked = false,
+    this.imageUrl,
   });
   /// Returns a "5m ago" style string
   String get timeAgo => timeago.format(createdAt);
   bool get hasAuthorAvatar =>
       authorAvatarUrl != null && authorAvatarUrl!.isNotEmpty;
+  bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
   factory Activity.fromJson(Map<String, dynamic> json) {
     // Matches Activity.to_dict(include_user=True) on the backend:
     // { ..., "user": { "id", "username", "fullName", "profilePicture" } }
@@ -72,6 +78,7 @@ class Activity {
       targetType: json['targetType'] as String?,
       targetId: (json['targetId'] as num?)?.toInt(),
       hasLiked: json['hasLiked'] as bool? ?? false,
+      imageUrl: json['imageUrl'] as String?,
     );
   }
   Map<String, dynamic> toJson() {
@@ -85,6 +92,7 @@ class Activity {
       if (targetType != null) 'targetType': targetType,
       if (targetId != null) 'targetId': targetId,
       'hasLiked': hasLiked,
+      if (imageUrl != null) 'imageUrl': imageUrl,
       if (authorName != null)
         'user': {
           'fullName': authorName,
