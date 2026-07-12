@@ -85,6 +85,45 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
     }
   }
 
+  Future<void> _openDiscover() async {
+    await context.push('/group-chats/discover');
+    // A join on the discover screen adds a group this screen doesn't know
+    // about yet — refresh on return so it shows up without a manual pull.
+    if (mounted) _loadGroups(force: true);
+  }
+
+  Future<void> _createGroup() async {
+    final result = await showDialog<_CreateGroupResult>(
+      context: context,
+      builder: (_) => const _CreateGroupDialog(),
+    );
+    if (result == null || !mounted) return;
+
+    try {
+      final groupRepo = context.read<GroupChatRepository>();
+      final group = await groupRepo.createGroup(
+        name: result.name,
+        description: result.description,
+        isPublic: result.isPublic,
+      );
+      if (!mounted) return;
+      _loadGroups(force: true);
+      context.push(
+        '/group-chats/detail',
+        extra: {'groupId': group.id, 'groupName': group.name},
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to create group: ${e.toString()}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -112,6 +151,11 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
           title: const Text('Group Chats'),
           actions: [
             IconButton(
+              icon: const Icon(Icons.explore_outlined),
+              onPressed: _openDiscover,
+              tooltip: 'Discover groups',
+            ),
+            IconButton(
               icon: const Icon(Icons.refresh_rounded),
               onPressed: () => _loadGroups(force: true),
               tooltip: 'Refresh groups',
@@ -120,6 +164,11 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
           ],
         ),
         body: _buildBody(theme),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _createGroup,
+          icon: const Icon(Icons.add),
+          label: const Text('Create group'),
+        ),
       ),
     );
   }
@@ -322,6 +371,23 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                 color: theme.colorScheme.onSurface.withOpacity(0.5),
               ),
             ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _openDiscover,
+                  icon: const Icon(Icons.explore_outlined, size: 18),
+                  label: const Text('Discover'),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _createGroup,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Create'),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -356,5 +422,98 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
   @override
   void dispose() {
     super.dispose();
+  }
+}
+
+class _CreateGroupResult {
+  final String name;
+  final String description;
+  final bool isPublic;
+
+  _CreateGroupResult({
+    required this.name,
+    required this.description,
+    required this.isPublic,
+  });
+}
+
+/// Minimal name/description/visibility form — matches the fields
+/// [GroupChatRepository.createGroup] actually accepts, nothing more.
+class _CreateGroupDialog extends StatefulWidget {
+  const _CreateGroupDialog();
+
+  @override
+  State<_CreateGroupDialog> createState() => _CreateGroupDialogState();
+}
+
+class _CreateGroupDialogState extends State<_CreateGroupDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  bool _isPublic = true;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Create group'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _nameController,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Group name'),
+              validator: (v) {
+                final value = v?.trim() ?? '';
+                if (value.length < 3) return 'At least 3 characters';
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _descriptionController,
+              decoration: const InputDecoration(labelText: 'Description (optional)'),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Public'),
+              subtitle: const Text('Anyone can find and join'),
+              value: _isPublic,
+              onChanged: (v) => setState(() => _isPublic = v),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!(_formKey.currentState?.validate() ?? false)) return;
+            Navigator.of(context).pop(
+              _CreateGroupResult(
+                name: _nameController.text.trim(),
+                description: _descriptionController.text.trim(),
+                isPublic: _isPublic,
+              ),
+            );
+          },
+          child: const Text('Create'),
+        ),
+      ],
+    );
   }
 }
