@@ -445,6 +445,12 @@ class _HomeScreenState extends State<HomeScreen> {
           extra: {'title': activity.title},
         );
         break;
+      case 'post':
+        context.push(
+          '/posts/${activity.targetId}',
+          extra: {'threadId': activity.threadId ?? 0},
+        );
+        break;
     }
   }
 
@@ -471,6 +477,9 @@ class _HomeScreenState extends State<HomeScreen> {
           break;
         case 'forum_thread':
           await ForumRepository().toggleLikeThread(activity.targetId!);
+          break;
+        case 'post':
+          await ForumRepository().toggleLike(activity.targetId!);
           break;
         case 'prayer_request':
           await PrayerRepository().togglePrayerById(activity.targetId!);
@@ -508,6 +517,15 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() => _heartBurstKey = null);
     });
+  }
+
+  // Appends a count to an action bar label when one was provided by the
+  // backend (e.g. "Like" -> "Like · 12"). Omits it entirely when null
+  // rather than showing a potentially-wrong "0" for target types the
+  // backend doesn't batch counts for yet.
+  String _withCount(String label, int? count) {
+    if (count == null || count <= 0) return label;
+    return '$label · $count';
   }
 
   void _shareActivity(Activity activity) {
@@ -727,7 +745,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     Expanded(
                       child: _ActionBarButton(
                         icon: isLiked ? info.activeIcon : info.icon,
-                        label: isLiked ? info.activeLabel : info.label,
+                        label: _withCount(
+                          isLiked ? info.activeLabel : info.label,
+                          activity.likeCount,
+                        ),
                         color: isLiked ? info.activeColor : null,
                         highlighted: isLiked,
                         loading: isInFlight,
@@ -738,7 +759,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Expanded(
                       child: _ActionBarButton(
                         icon: Icons.mode_comment_outlined,
-                        label: 'Comment',
+                        label: _withCount('Comment', activity.commentCount),
                         onTap: () => _openActivityTarget(activity),
                       ),
                     ),
