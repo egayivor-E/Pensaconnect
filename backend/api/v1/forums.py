@@ -335,12 +335,22 @@ def create_post():
         db.session.commit()
 
         # ✅ Log + broadcast an Activity so this post shows up in the live
-        # Home feed. Uses the first *image* attachment (if any) as the
-        # feed card's thumbnail — videos and documents still attach fine,
-        # they just don't get a thumbnail (feed falls back to the icon).
+        # Home feed. If there's a video attachment, that becomes the
+        # feed card's "reel" (autoplaying video); otherwise the first
+        # image (if any) becomes a static thumbnail. Both ride along in
+        # meta_data — no schema change needed.
         first_image = next(
             (a for a in post.attachments if is_image_file(a.file_name)), None
         )
+        first_video = next(
+            (a for a in post.attachments if is_video_file(a.file_name)), None
+        )
+        media_meta = {}
+        if first_video:
+            media_meta["video_url"] = first_video.to_dict()["url"]
+        if first_image:
+            media_meta["image_url"] = first_image.to_dict()["url"]
+
         activity = Activity(
             title=f"{current_user.get_full_name()} shared a new post",
             subtitle=(post.content or post.title)[:140],
@@ -349,7 +359,7 @@ def create_post():
             user_id=current_user.id,
             target_type="post",
             target_id=post.id,
-            meta_data={"image_url": first_image.to_dict()["url"]} if first_image else None,
+            meta_data=media_meta or None,
         )
         db.session.add(activity)
         db.session.commit()
