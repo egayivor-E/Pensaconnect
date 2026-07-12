@@ -67,6 +67,32 @@ class Activity {
     this.commentCount,
     this.threadId,
   });
+
+  /// Only exposes the fields the feed actually needs to update in place
+  /// after a local action (currently: optimistic like toggling). Not a
+  /// general-purpose copyWith — deliberately narrow so it can't silently
+  /// drop a field a future caller forgets to pass through.
+  Activity copyWith({bool? hasLiked, int? likeCount}) {
+    return Activity(
+      id: id,
+      title: title,
+      subtitle: subtitle,
+      icon: icon,
+      color: color,
+      createdAt: createdAt,
+      authorName: authorName,
+      authorAvatarUrl: authorAvatarUrl,
+      targetType: targetType,
+      targetId: targetId,
+      hasLiked: hasLiked ?? this.hasLiked,
+      imageUrl: imageUrl,
+      videoUrl: videoUrl,
+      likeCount: likeCount ?? this.likeCount,
+      commentCount: commentCount,
+      threadId: threadId,
+    );
+  }
+
   /// Returns a "5m ago" style string
   String get timeAgo => timeago.format(createdAt);
   bool get hasAuthorAvatar =>
