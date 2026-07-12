@@ -58,6 +58,7 @@ import 'screens/help_support_screen.dart';
 import 'providers/auth_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/auth_service.dart';
+import 'theme/app_style.dart';
 
 class Routes {
   static const splash = '/splash';
@@ -81,7 +82,85 @@ class Routes {
   static const helpSupport = '/help-support';
 }
 
+/// Shown the instant the Dart entrypoint runs — before dotenv, ApiService,
+/// auto-login, or the socket connection have even started. Those calls are
+/// awaited sequentially in main() and can take a long time on a cold
+/// backend (e.g. Render's free tier spinning back up), and nothing was
+/// painted until they all finished. That left the browser tab on a blank
+/// grey <body> with zero feedback for as long as 30-60s. This widget has
+/// no dependency on GoRouter, providers, or the network, so it always
+/// paints on the very first frame — main() swaps it out for the real
+/// MyApp (or the error screen) once setup actually completes.
+class _BootSplash extends StatelessWidget {
+  const _BootSplash();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [AppColors.inkDusk, AppColors.emberGold],
+            ),
+          ),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: ShapeDecoration(
+                    color: Colors.white.withOpacity(0.14),
+                    shape: AppShapes.archBorder(top: 40, bottom: 20),
+                  ),
+                  child: const Icon(
+                    Icons.people_alt_rounded,
+                    size: 60,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Text(
+                  'PensaConnect',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.displayMedium?.copyWith(color: Colors.white),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Ladies & Gents Wing',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Colors.white.withOpacity(0.85),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 48),
+                const SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
+  // Paint something immediately — see _BootSplash doc comment above.
+  runApp(const _BootSplash());
+
   // ✅ Web-compatible error handling
   FlutterError.onError = (FlutterErrorDetails details) {
     developer.log(
