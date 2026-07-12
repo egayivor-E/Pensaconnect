@@ -817,10 +817,11 @@ class Activity(BaseModel):
             "userId": self.user_id,
             "targetType": self.target_type,
             "targetId": self.target_id,
-            # ✅ No dedicated column — piggybacks on the existing
+            # ✅ No dedicated columns — piggybacks on the existing
             # meta_data JSON field so no migration is needed. Most
-            # activity types have no image and this is just None.
+            # activity types have neither and both come back null.
             "imageUrl": (self.meta_data or {}).get("image_url"),
+            "videoUrl": (self.meta_data or {}).get("video_url"),
         }
         if include_user and self.user:
             data["user"] = {
