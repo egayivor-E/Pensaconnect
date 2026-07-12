@@ -349,7 +349,7 @@ def create_post():
             user_id=current_user.id,
             target_type="post",
             target_id=post.id,
-            image_url=first_image.to_dict()["url"] if first_image else None,
+            meta_data={"image_url": first_image.to_dict()["url"]} if first_image else None,
         )
         db.session.add(activity)
         db.session.commit()
