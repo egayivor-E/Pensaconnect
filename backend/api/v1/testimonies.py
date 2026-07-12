@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.extensions import db
 from backend.models import Testimony, TestimonyComment, TestimonyLike, User, Activity
+from .utils import broadcast_new_activity
 
 # Blueprint registered under /api/v1/testimonies
 testimonies_bp = Blueprint("testimonies", __name__, url_prefix="/testimonies")
@@ -52,6 +53,7 @@ def create_testimony():
             )
             db.session.add(activity)
             db.session.commit()
+            broadcast_new_activity(activity)
         except Exception:
             db.session.rollback()
 
