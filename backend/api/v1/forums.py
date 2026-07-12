@@ -354,27 +354,43 @@ def create_post():
         db.session.add(post)
         db.session.flush()  # get post.id for attachments
 
+        # ✅ Track upload failures instead of silently `continue`-ing past
+        # them. Previously a failed Supabase upload (missing bucket, bad
+        # creds, network hiccup) just vanished — the post still saved
+        # successfully with zero attachments and nothing told the client
+        # an image was dropped. Now every failure is recorded and handed
+        # back in the response so the UI can surface it.
+        attachment_errors = []
         if "files" in request.files:
             for f in request.files.getlist("files"):
-                if allowed_file(f.filename):
-                    filename = secure_filename(f.filename)
-                    try:
-                        public_url, storage_path = _save_attachment_file(f, "posts")
-                    except Exception as e:
-                        logger.error(f"Forum attachment upload failed: {e}")
-                        continue
-                    attachment = ForumAttachment(
-                        file_url=public_url,
-                        file_type=f.mimetype,
-                        post_id=post.id,
-                        # file_path now holds the Supabase storage path
-                        # (bucket-relative), not a local disk path — used
-                        # for deletion cleanup, not for serving.
-                        file_path=storage_path,
-                        file_name=filename,
-                        mime_type=f.mimetype,
+                if not f.filename:
+                    continue
+                if not allowed_file(f.filename):
+                    attachment_errors.append(
+                        {"file_name": f.filename, "error": "Unsupported file type"}
                     )
-                    db.session.add(attachment)
+                    continue
+                filename = secure_filename(f.filename)
+                try:
+                    public_url, storage_path = _save_attachment_file(f, "posts")
+                except Exception as e:
+                    logger.error(f"Forum attachment upload failed: {e}")
+                    attachment_errors.append(
+                        {"file_name": f.filename, "error": str(e)}
+                    )
+                    continue
+                attachment = ForumAttachment(
+                    file_url=public_url,
+                    file_type=f.mimetype,
+                    post_id=post.id,
+                    # file_path now holds the Supabase storage path
+                    # (bucket-relative), not a local disk path — used
+                    # for deletion cleanup, not for serving.
+                    file_path=storage_path,
+                    file_name=filename,
+                    mime_type=f.mimetype,
+                )
+                db.session.add(attachment)
 
         db.session.commit()
 
@@ -382,14 +398,16 @@ def create_post():
         # Home feed. If there's a video attachment, that becomes the
         # feed card's "reel" (autoplaying video); otherwise the first
         # image (if any) becomes a static thumbnail. Both ride along in
-        # meta_data — no schema change needed.
+        # meta_data — no schema change needed. thread_id always rides
+        # along too (not just when media is present) so every "post"
+        # activity can deep-link back to the thread it lives in.
         first_image = next(
             (a for a in post.attachments if is_image_file(a.file_name)), None
         )
         first_video = next(
             (a for a in post.attachments if is_video_file(a.file_name)), None
         )
-        media_meta = {}
+        media_meta = {"thread_id": post.thread_id}
         if first_video:
             media_meta["video_url"] = first_video.to_dict()["url"]
         if first_image:
@@ -403,14 +421,18 @@ def create_post():
             user_id=current_user.id,
             target_type="post",
             target_id=post.id,
-            meta_data=media_meta or None,
+            meta_data=media_meta,
         )
         db.session.add(activity)
         db.session.commit()
         broadcast_new_activity(activity)
 
+        response_data = post.to_dict(include_attachments=True)
+        if attachment_errors:
+            response_data["attachment_errors"] = attachment_errors
+
         # FIX: Change from 200 to 201
-        return success_response(post.to_dict(include_attachments=True), 201)  # ✅ Changed to 201
+        return success_response(response_data, 201)  # ✅ Changed to 201
 
     # JSON body
     data = request.get_json() or {}
@@ -442,6 +464,7 @@ def create_post():
         user_id=current_user.id,
         target_type="post",
         target_id=post.id,
+        meta_data={"thread_id": post.thread_id},
     )
     db.session.add(activity)
     db.session.commit()
@@ -528,28 +551,41 @@ def add_comment(post_id):
         db.session.add(comment)
         db.session.flush()
 
+        attachment_errors = []
         if "files" in request.files:
             for f in request.files.getlist("files"):
-                if allowed_file(f.filename):
-                    filename = secure_filename(f.filename)
-                    try:
-                        public_url, storage_path = _save_attachment_file(f, "comments")
-                    except Exception as e:
-                        logger.error(f"Forum attachment upload failed: {e}")
-                        continue
-                    attachment = ForumAttachment(
-                        file_url=public_url,
-                        file_type=f.mimetype,
-                        comment_id=comment.id,
-                        file_path=storage_path,
-                        file_name=filename,
-                        mime_type=f.mimetype,
+                if not f.filename:
+                    continue
+                if not allowed_file(f.filename):
+                    attachment_errors.append(
+                        {"file_name": f.filename, "error": "Unsupported file type"}
                     )
-                    db.session.add(attachment)
+                    continue
+                filename = secure_filename(f.filename)
+                try:
+                    public_url, storage_path = _save_attachment_file(f, "comments")
+                except Exception as e:
+                    logger.error(f"Forum attachment upload failed: {e}")
+                    attachment_errors.append(
+                        {"file_name": f.filename, "error": str(e)}
+                    )
+                    continue
+                attachment = ForumAttachment(
+                    file_url=public_url,
+                    file_type=f.mimetype,
+                    comment_id=comment.id,
+                    file_path=storage_path,
+                    file_name=filename,
+                    mime_type=f.mimetype,
+                )
+                db.session.add(attachment)
 
         db.session.commit()
+        response_data = comment.to_dict(include_attachments=True)
+        if attachment_errors:
+            response_data["attachment_errors"] = attachment_errors
         # FIX: Change from 200 to 201
-        return success_response(comment.to_dict(include_attachments=True), 201)  # ✅ Changed to 201
+        return success_response(response_data, 201)  # ✅ Changed to 201
 
     # JSON body
     data = request.get_json() or {}
