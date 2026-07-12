@@ -27,6 +27,11 @@ _supabase_client: Client | None = None
 # Name of the public storage bucket created in the Supabase dashboard
 WORSHIP_MEDIA_BUCKET = "worship-media"
 
+# Bucket for forum post/comment attachments (images, videos, docs).
+# Create this as a public bucket in the Supabase dashboard, same as
+# worship-media.
+FORUM_MEDIA_BUCKET = "forum-media"
+
 
 def get_supabase_client() -> Client:
     """
