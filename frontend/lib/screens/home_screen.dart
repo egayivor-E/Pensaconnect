@@ -380,9 +380,17 @@ class _HomeScreenState extends State<HomeScreen> {
   // Compact quick-action chip used in the horizontal row that replaces
   // a full-page icon grid — same feature data, much lower visual weight
   // so the activity feed can be the star of the screen.
+  //
+  // ✅ Icons are solid app-icon style rather than a flat glyph on a
+  // translucent tinted circle: a diagonal gradient (the feature's color
+  // into a deeper shade of itself) gives real fill, a soft colored drop
+  // shadow lifts it off the background, and a faint top highlight arc
+  // reads as a glossy/rounded surface — the same visual grammar as an
+  // iOS/Android home-screen icon, not a Material "chip".
   Widget _buildQuickAction(BuildContext context, Map<String, dynamic> feature) {
     final theme = Theme.of(context);
     final color = feature['color'] as Color;
+    final deepColor = Color.lerp(color, Colors.black, 0.28)!;
 
     return InkWell(
       borderRadius: BorderRadius.circular(20),
@@ -398,11 +406,51 @@ class _HomeScreenState extends State<HomeScreen> {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
                   shape: BoxShape.circle,
-                  border: Border.all(color: color.withOpacity(0.2)),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [color, deepColor],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withOpacity(0.4),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
                 ),
-                child: Icon(feature['icon'] as IconData, color: color, size: 25),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Soft glossy highlight near the top — purely
+                    // decorative, gives the fill a rounded/dimensional
+                    // feel instead of a flat color disc.
+                    Positioned(
+                      top: 7,
+                      child: Container(
+                        width: 28,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.white.withOpacity(0.32),
+                              Colors.white.withOpacity(0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      feature['icon'] as IconData,
+                      color: Colors.white,
+                      size: 25,
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 6),
               Text(
@@ -1035,47 +1083,61 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
 
-                    // --- Search ---
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      sliver: SliverToBoxAdapter(
-                        child: _buildSearchField(theme),
-                      ),
-                    ),
-
-                    // --- Quick-actions row ---
-                    SliverPadding(
-                      padding: const EdgeInsets.only(top: 20),
-                      sliver: SliverToBoxAdapter(
-                        child: SizedBox(
-                          height: 92,
-                          child: _loading
-                              ? const _QuickActionsSkeleton()
-                              : filteredFeatures.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    'No matching features',
-                                    style: theme.textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: theme.colorScheme.onSurface
-                                              .withOpacity(0.5),
+                    // --- Search + quick actions: pinned so they stay
+                    // put while the feed scrolls underneath, instead of
+                    // disappearing off the top like the greeting does. ---
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _StickyControlsDelegate(
+                        backgroundColor: Color.alphaBlend(
+                          theme.colorScheme.surfaceVariant.withOpacity(0.25),
+                          theme.scaffoldBackgroundColor,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                              child: SizedBox(
+                                height: 52,
+                                child: _buildSearchField(theme),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(0, 16, 0, 10),
+                              child: SizedBox(
+                                height: 92,
+                                child: _loading
+                                    ? const _QuickActionsSkeleton()
+                                    : filteredFeatures.isEmpty
+                                    ? Center(
+                                        child: Text(
+                                          'No matching features',
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                                color: theme
+                                                    .colorScheme.onSurface
+                                                    .withOpacity(0.5),
+                                              ),
                                         ),
-                                  ),
-                                )
-                              : ListView.separated(
-                                  scrollDirection: Axis.horizontal,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                  ),
-                                  itemCount: filteredFeatures.length,
-                                  separatorBuilder: (_, __) =>
-                                      const SizedBox(width: 8),
-                                  itemBuilder: (context, index) =>
-                                      _buildQuickAction(
-                                        context,
-                                        filteredFeatures[index],
+                                      )
+                                    : ListView.separated(
+                                        scrollDirection: Axis.horizontal,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                        ),
+                                        itemCount: filteredFeatures.length,
+                                        separatorBuilder: (_, __) =>
+                                            const SizedBox(width: 8),
+                                        itemBuilder: (context, index) =>
+                                            _buildQuickAction(
+                                              context,
+                                              filteredFeatures[index],
+                                            ),
                                       ),
-                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -1225,6 +1287,57 @@ class _FadeSlideInState extends State<_FadeSlideIn>
 // ==========================================
 // SHIMMER LOADING SKELETONS
 // ==========================================
+
+// ==========================================
+// PINNED SEARCH + QUICK ACTIONS
+// ==========================================
+
+/// Keeps the search field and quick-actions row fixed at the top of the
+/// scroll view (below the greeting, which is free to scroll away) instead
+/// of them disappearing along with the feed. Uses a fixed [height] rather
+/// than measuring the child, since SliverPersistentHeader needs a known
+/// extent up front — the child's own Padding/SizedBox values here were
+/// chosen to add up to exactly that height.
+class _StickyControlsDelegate extends SliverPersistentHeaderDelegate {
+  static const double height = 182;
+
+  final Widget child;
+  final Color backgroundColor;
+
+  _StickyControlsDelegate({required this.child, required this.backgroundColor});
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: backgroundColor,
+      // A hairline shadow only once something has scrolled underneath —
+      // gives the pinned bar a sense of floating above the feed rather
+      // than looking like a static, disconnected background the whole
+      // time (which is how it'd read with an always-on shadow).
+      decoration: overlapsContent
+          ? BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            )
+          : null,
+      child: child,
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _StickyControlsDelegate oldDelegate) => true;
+}
 
 class _QuickActionsSkeleton extends StatelessWidget {
   const _QuickActionsSkeleton();
