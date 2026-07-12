@@ -522,6 +522,121 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     );
   }
 
+  // ---------------------------
+  // Attachment tiles (shared by posts + comments)
+  // ---------------------------
+  bool _isImageAttachment(ForumAttachment a) =>
+      a.mimeType.toLowerCase().startsWith('image/');
+  bool _isVideoAttachment(ForumAttachment a) =>
+      a.mimeType.toLowerCase().startsWith('video/');
+
+  IconData _iconForDocument(String fileName) {
+    final ext = fileName.contains('.') ? fileName.split('.').last.toLowerCase() : '';
+    switch (ext) {
+      case 'pdf':
+        return Icons.picture_as_pdf_outlined;
+      case 'doc':
+      case 'docx':
+        return Icons.description_outlined;
+      case 'txt':
+        return Icons.article_outlined;
+      default:
+        return Icons.insert_drive_file_outlined;
+    }
+  }
+
+  Future<void> _openAttachment(ForumAttachment a) async {
+    try {
+      final repo = context.read<ForumRepository>();
+      await repo.openAttachment(a);
+    } catch (e) {
+      debugPrint('Could not open attachment ${a.fileName}: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open ${a.fileName}')),
+        );
+      }
+    }
+  }
+
+  /// Renders one attachment as a `size` x `size` tile: the real thumbnail
+  /// for images, a video-style placeholder for videos, and a file icon +
+  /// name for everything else (pdf/docx/txt). All three are tappable and
+  /// open the file (via the browser/OS) rather than trying to force
+  /// non-image files through Image.network, which is what made them show
+  /// up blank/broken before.
+  Widget _buildAttachmentTile(ForumAttachment a, {double size = 96}) {
+    if (_isImageAttachment(a)) {
+      return GestureDetector(
+        onTap: () => _openAttachment(a),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(
+            ForumRepository.getAttachmentUrl(a.url),
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(
+              width: size,
+              height: size,
+              color: Colors.grey[300],
+              child: const Icon(Icons.broken_image),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_isVideoAttachment(a)) {
+      return GestureDetector(
+        onTap: () => _openAttachment(a),
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.play_circle_fill_rounded,
+            color: Colors.white,
+            size: 36,
+          ),
+        ),
+      );
+    }
+
+    // Fallback: pdf/docx/txt/etc — a file icon + truncated name.
+    return GestureDetector(
+      onTap: () => _openAttachment(a),
+      child: Container(
+        width: size,
+        height: size,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(_iconForDocument(a.fileName), size: 28, color: Colors.grey[700]),
+            const SizedBox(height: 4),
+            Text(
+              a.fileName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 10, color: Colors.grey[700]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPostCard(ForumPost post, int index) {
     _ensurePerPostState(post.id);
 
@@ -608,34 +723,12 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                       ),
                       if (post.attachments.isNotEmpty) ...[
                         const SizedBox(height: 10),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(0),
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: post.attachments.map((a) {
-                              return GestureDetector(
-                                onTap: () {
-                                  debugPrint('Open attachment ${a.url}');
-                                },
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Image.network(
-                                    a.url,
-                                    width: 96,
-                                    height: 96,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
-                                      width: 96,
-                                      height: 96,
-                                      color: Colors.grey[300],
-                                      child: const Icon(Icons.broken_image),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: post.attachments
+                              .map((a) => _buildAttachmentTile(a))
+                              .toList(),
                         ),
                       ],
                     ],
@@ -899,23 +992,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                 child: Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: comment.attachments.map((a) {
-                    return ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.network(
-                        a.url,
-                        width: 56,
-                        height: 56,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          width: 56,
-                          height: 56,
-                          color: Colors.grey[300],
-                          child: const Icon(Icons.broken_image),
-                        ),
-                      ),
-                    );
-                  }).toList(),
+                  children: comment.attachments
+                      .map((a) => _buildAttachmentTile(a, size: 56))
+                      .toList(),
                 ),
               ),
             if (comment.createdAt != null)
