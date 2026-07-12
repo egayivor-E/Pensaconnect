@@ -26,11 +26,29 @@ class _PostFormScreenState extends State<PostFormScreen> {
   final _repo = ForumRepository();
   bool _isLoading = false;
 
+  static const _imageExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'};
+  static const _videoExtensions = {'mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v'};
+
+  bool _isImage(PlatformFile f) =>
+      _imageExtensions.contains((f.extension ?? '').toLowerCase());
+  bool _isVideo(PlatformFile f) =>
+      _videoExtensions.contains((f.extension ?? '').toLowerCase());
+
   Future<void> _pickFiles() async {
-    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    // Photos/videos/docs — matches the backend's ALLOWED_EXTENSIONS in
+    // forums.py, so nothing picked here gets silently rejected server-side.
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: [
+        ..._imageExtensions,
+        ..._videoExtensions,
+        'pdf', 'docx', 'txt',
+      ],
+    );
     if (result != null && result.files.isNotEmpty) {
       setState(() {
-        _attachments = result.files.toList();
+        _attachments = [..._attachments, ...result.files];
       });
     }
   }
@@ -43,7 +61,7 @@ class _PostFormScreenState extends State<PostFormScreen> {
     try {
       final success = await _repo.createPost(
         threadId: widget.threadId,
-        title: "threadTitle", // ✅ still pass empty string if backend expects it
+        title: widget.threadTitle,
         content: _contentCtrl.text,
         attachments: _attachments,
       );
@@ -87,8 +105,8 @@ class _PostFormScreenState extends State<PostFormScreen> {
               const SizedBox(height: 12),
               ElevatedButton.icon(
                 onPressed: _isLoading ? null : _pickFiles,
-                icon: const Icon(Icons.attach_file),
-                label: const Text("Add attachments"),
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: const Text("Add photos, videos, or files"),
               ),
               if (_attachments.isNotEmpty)
                 Padding(
@@ -103,7 +121,21 @@ class _PostFormScreenState extends State<PostFormScreen> {
                   children: _attachments
                       .map(
                         (file) => ListTile(
-                          leading: const Icon(Icons.insert_drive_file),
+                          leading: _isImage(file) && file.path != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.file(
+                                    File(file.path!),
+                                    width: 44,
+                                    height: 44,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              : Icon(
+                                  _isVideo(file)
+                                      ? Icons.videocam_outlined
+                                      : Icons.insert_drive_file,
+                                ),
                           title: Text(file.name),
                           trailing: IconButton(
                             icon: const Icon(Icons.close),
