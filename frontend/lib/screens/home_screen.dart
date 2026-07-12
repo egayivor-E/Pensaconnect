@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'package:video_player/video_player.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import 'package:pensaconnect/services/api_service.dart';
 import 'package:pensaconnect/services/auth_service.dart';
 
@@ -614,8 +616,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // --- Media thumbnail (e.g. first image on a forum post) ---
-          if (activity.hasImage)
+          // --- Media: a video becomes an autoplaying "reel"; otherwise
+          // fall back to a static image thumbnail if there is one ---
+          if (activity.hasVideo)
+            _FeedReelPlayer(
+              activityId: activity.id,
+              url: _resolveAvatarUrl(activity.videoUrl)!,
+              accentColor: activity.color,
+            )
+          else if (activity.hasImage)
             AspectRatio(
               aspectRatio: 16 / 10,
               child: Image.network(
@@ -1393,3 +1402,192 @@ class _ActionBarButton extends StatelessWidget {
     );
   }
 }
+
+/// A feed-card video "reel" — muted-autoplay-on-scroll, like TikTok/IG
+/// Reels: it plays automatically when enough of the card is on screen,
+/// pauses the instant it scrolls away (so many reels in a long feed
+/// don't all fight for CPU/bandwidth at once), and starts muted with a
+/// tap-to-unmute control since autoplaying sound in a social feed is a
+/// bad surprise.
+class _FeedReelPlayer extends StatefulWidget {
+  final int activityId;
+  final String url;
+  final Color accentColor;
+
+  const _FeedReelPlayer({
+    required this.activityId,
+    required this.url,
+    required this.accentColor,
+  });
+
+  @override
+  State<_FeedReelPlayer> createState() => _FeedReelPlayerState();
+}
+
+class _FeedReelPlayerState extends State<_FeedReelPlayer> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _failed = false;
+  bool _muted = true;
+  bool _isVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _setUp();
+  }
+
+  Future<void> _setUp() async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _controller = controller;
+    try {
+      await controller.initialize();
+      if (!mounted) return;
+      await controller.setLooping(true);
+      await controller.setVolume(0); // muted by default, like reels
+      setState(() => _initialized = true);
+      if (_isVisible) controller.play();
+    } catch (e) {
+      debugPrint('Reel video failed to load: $e');
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  void _onVisibilityChanged(VisibilityInfo info) {
+    // >60% of the card on screen = "in view" for autoplay purposes —
+    // matches the usual reel/story feel without being so twitchy that a
+    // half-scrolled card starts and stops repeatedly.
+    final visible = info.visibleFraction > 0.6;
+    if (visible == _isVisible) return;
+    _isVisible = visible;
+    final controller = _controller;
+    if (controller == null || !_initialized) return;
+    if (visible) {
+      controller.play();
+    } else {
+      controller.pause();
+    }
+  }
+
+  void _toggleMute() {
+    final controller = _controller;
+    if (controller == null) return;
+    setState(() {
+      _muted = !_muted;
+      controller.setVolume(_muted ? 0 : 1);
+    });
+  }
+
+  void _togglePlayPause() {
+    final controller = _controller;
+    if (controller == null || !_initialized) return;
+    setState(() {
+      if (controller.value.isPlaying) {
+        controller.pause();
+      } else {
+        controller.play();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed) {
+      return AspectRatio(
+        aspectRatio: 16 / 10,
+        child: Container(
+          color: widget.accentColor.withOpacity(0.08),
+          alignment: Alignment.center,
+          child: Icon(
+            Icons.videocam_off_outlined,
+            color: widget.accentColor,
+            size: 32,
+          ),
+        ),
+      );
+    }
+
+    return VisibilityDetector(
+      key: Key('reel-${widget.activityId}'),
+      onVisibilityChanged: _onVisibilityChanged,
+      child: AspectRatio(
+        aspectRatio: 16 / 10,
+        child: GestureDetector(
+          onTap: _togglePlayPause,
+          child: Container(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (_initialized && _controller != null)
+                  AnimatedBuilder(
+                    animation: _controller!,
+                    builder: (context, child) => Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        FittedBox(
+                          fit: BoxFit.cover,
+                          child: SizedBox(
+                            width: _controller!.value.size.width,
+                            height: _controller!.value.size.height,
+                            child: VideoPlayer(_controller!),
+                          ),
+                        ),
+                        // Reflects the controller's *actual* play state —
+                        // which can change from autoplay-on-scroll (not
+                        // just the manual tap-to-toggle), so this has to
+                        // listen to the controller itself rather than
+                        // rely on local setState calls.
+                        if (!_controller!.value.isPlaying)
+                          const Center(
+                            child: Icon(
+                              Icons.play_arrow_rounded,
+                              color: Colors.white,
+                              size: 56,
+                            ),
+                          ),
+                      ],
+                    ),
+                  )
+                else
+                  const Center(
+                    child: SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  right: 10,
+                  bottom: 10,
+                  child: GestureDetector(
+                    onTap: _toggleMute,
+                    child: CircleAvatar(
+                      backgroundColor: Colors.black45,
+                      radius: 16,
+                      child: Icon(
+                        _muted ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
