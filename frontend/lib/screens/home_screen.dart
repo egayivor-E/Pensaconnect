@@ -149,6 +149,10 @@ class _HomeScreenState extends State<HomeScreen> {
     User? user;
     List<Activity> activities = [];
     bool activitiesFailed = false;
+    // Rebuilt fresh from each load's `hasLiked` flags below rather than
+    // merged into the old set — the server is the source of truth for
+    // like state, so a refresh should fully replace it, not just add to it.
+    final likedTargetKeys = <String>{};
 
     // ✅ Uses the actual token source (ApiService/secure storage), not
     // SharedPreferences['auth_token'] — nothing ever wrote a token
@@ -177,6 +181,15 @@ class _HomeScreenState extends State<HomeScreen> {
           unique[a.id] = a;
         }
         activities = unique.values.toList();
+        // ✅ Hydrate liked state from the server's per-activity `hasLiked`
+        // flag, keyed the same way _targetKey() does, so a fresh app
+        // launch (or any refresh) shows previously-liked/prayed items as
+        // already liked instead of resetting to "nothing liked" every time.
+        for (final a in activities) {
+          if (a.hasLiked && a.targetId != null) {
+            likedTargetKeys.add(_targetKey(a));
+          }
+        }
       } catch (e) {
         debugPrint('❌ HomeScreen: failed to load activities: $e');
         activitiesFailed = true;
@@ -192,6 +205,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _activitiesFailed = activitiesFailed;
       _loading = false;
       _loadedForUserId = loggedInUserId;
+      if (!activitiesFailed) {
+        _likedTargetKeys
+          ..clear()
+          ..addAll(likedTargetKeys);
+      }
     });
   }
 
