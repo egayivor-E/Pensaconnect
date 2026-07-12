@@ -64,6 +64,8 @@ dependencies:
   timeago: ^3.7.1
   font_awesome_flutter: ^10.10.0
   flutter_vector_icons: ^2.0.0
+  flutter_dotenv: ^6.0.0
+  table_calendar: ^3.2.0
 
   # Firebase
   firebase_core: ^4.2.0
