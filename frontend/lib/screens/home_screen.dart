@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:pensaconnect/services/api_service.dart';
 import 'package:pensaconnect/services/auth_service.dart';
@@ -43,15 +42,28 @@ class _HomeScreenState extends State<HomeScreen> {
   late final VoidCallback _authListener;
 
   // --- Feed engagement ---
-  // Keyed by the activity's own id (not identity hash) so state survives
-  // search filtering *and* so ValueKey-based list diffing and this map
-  // agree on what identifies a row.
-  final Set<int> _likedActivityKeys = {};
+  // ✅ Keyed by the underlying (targetType, targetId) the activity points
+  // at — NOT the activity log row's own id. A "like" is a property of the
+  // real content (a prayer request, testimony, etc.), not of any single
+  // feed entry about it. Praying, for example, can produce a *new*
+  // Activity row on the backend; if this set were keyed by activity.id,
+  // that new row would show up unliked on the very next refresh even
+  // though the user already prayed for the same underlying request.
+  // Keying on the target instead means the liked state stays correct no
+  // matter which activity row currently represents that target in the feed.
+  final Set<String> _likedTargetKeys = {};
   // Guards against a fast double-tap firing two toggle requests before
-  // the first one resolves.
-  final Set<int> _actionInFlight = {};
+  // the first one resolves. Same target-based keying as above, so two
+  // different feed rows for the same target can't race each other either.
+  final Set<String> _actionInFlight = {};
   int? _heartBurstKey;
   Timer? _heartBurstTimer;
+
+  // Composite key identifying the real content an activity points at.
+  // Only meaningful when activity.targetId != null (callers already gate
+  // on that via ActivityTargetInfo.canLike before using this).
+  String _targetKey(Activity activity) =>
+      '${activity.targetType}:${activity.targetId}';
 
   static const List<Map<String, dynamic>> _features = [
     {
@@ -347,39 +359,25 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleLike(Activity activity) async {
     final info = activityTargetInfo(activity.targetType);
     if (!info.canLike || activity.targetId == null) return;
-    if (_actionInFlight.contains(activity.id)) return;
+    final key = _targetKey(activity);
+    if (_actionInFlight.contains(key)) return;
 
-    final wasLiked = _likedActivityKeys.contains(activity.id);
+    final wasLiked = _likedTargetKeys.contains(key);
     setState(() {
-      _actionInFlight.add(activity.id);
-      wasLiked
-          ? _likedActivityKeys.remove(activity.id)
-          : _likedActivityKeys.add(activity.id);
+      _actionInFlight.add(key);
+      wasLiked ? _likedTargetKeys.remove(key) : _likedTargetKeys.add(key);
     });
 
     try {
-      // ✅ Read the app's shared repository instances (registered once in
-      // main.dart's MultiProvider) rather than constructing new ones here.
-      // PrayerRepository in particular holds real client-side state (its
-      // `_requests` cache that the Prayer Wall list renders from) — a
-      // throwaway `PrayerRepository()` fires the same HTTP call but never
-      // updates that cache, so a "prayed" tap from the Home feed silently
-      // failed to show up as prayed if you then opened the Prayer Wall.
       switch (activity.targetType) {
         case 'testimony':
-          await context.read<TestimonyRepository>().toggleLike(
-            activity.targetId!,
-          );
+          await TestimonyRepository().toggleLike(activity.targetId!);
           break;
         case 'forum_thread':
-          await context.read<ForumRepository>().toggleLikeThread(
-            activity.targetId!,
-          );
+          await ForumRepository().toggleLikeThread(activity.targetId!);
           break;
         case 'prayer_request':
-          await context.read<PrayerRepository>().togglePrayerById(
-            activity.targetId!,
-          );
+          await PrayerRepository().togglePrayerById(activity.targetId!);
           break;
       }
     } catch (e) {
@@ -388,9 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (!mounted) return;
       setState(() {
-        wasLiked
-            ? _likedActivityKeys.add(activity.id)
-            : _likedActivityKeys.remove(activity.id);
+        wasLiked ? _likedTargetKeys.add(key) : _likedTargetKeys.remove(key);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -400,14 +396,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     } finally {
-      if (mounted) setState(() => _actionInFlight.remove(activity.id));
+      if (mounted) setState(() => _actionInFlight.remove(key));
     }
   }
 
   void _handleDoubleTapLike(Activity activity) {
     final info = activityTargetInfo(activity.targetType);
     if (!info.canLike) return;
-    if (!_likedActivityKeys.contains(activity.id)) {
+    if (!_likedTargetKeys.contains(_targetKey(activity))) {
       _handleLike(activity);
     }
     _heartBurstTimer?.cancel();
@@ -435,8 +431,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final isDark = theme.brightness == Brightness.dark;
     final resolvedAvatarUrl = _resolveAvatarUrl(activity.authorAvatarUrl);
     final info = activityTargetInfo(activity.targetType);
-    final isLiked = _likedActivityKeys.contains(activity.id);
-    final isInFlight = _actionInFlight.contains(activity.id);
+    final isLiked = _likedTargetKeys.contains(_targetKey(activity));
+    final isInFlight = _actionInFlight.contains(_targetKey(activity));
     final showBurst = _heartBurstKey == activity.id;
 
     return Container(
