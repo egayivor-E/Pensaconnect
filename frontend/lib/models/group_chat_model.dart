@@ -14,6 +14,7 @@ class GroupChat {
   final bool isPublic;
   final int maxMembers;
   final List<String> tags;
+  final String chatType; // 'group' or 'direct'
   final int createdById;
   final int memberCount;
   final DateTime createdAt;
@@ -36,6 +37,7 @@ class GroupChat {
     required this.isPublic,
     required this.maxMembers,
     required this.tags,
+    this.chatType = 'group',
     required this.createdById,
     required this.memberCount,
     required this.createdAt,
@@ -45,6 +47,8 @@ class GroupChat {
     this.createdBy,
     this.members,
   });
+
+  bool get isDirect => chatType == 'direct';
 
   factory GroupChat.fromJson(Map<String, dynamic> json) {
     return GroupChat(
@@ -58,6 +62,8 @@ class GroupChat {
 
       // FIXED: Handle tags which can be Map or List
       tags: _parseTags(json['tags']),
+
+      chatType: json['chat_type'] as String? ?? 'group',
 
       createdById: json['created_by_id'] as int,
       memberCount: json['member_count'] as int? ?? 0,
@@ -133,6 +139,7 @@ class GroupChat {
       'is_public': isPublic,
       'max_members': maxMembers,
       'tags': tags,
+      'chat_type': chatType,
       'created_by_id': createdById,
       'member_count': memberCount,
       'created_at': createdAt.toIso8601String(),
