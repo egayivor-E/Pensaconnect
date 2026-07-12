@@ -12,6 +12,7 @@ import 'package:file_picker/file_picker.dart';
 import '../models/forum_model.dart';
 import '../repositories/forum_repository.dart';
 import 'package:pensaconnect/utils/forum_event_bus.dart' as forum_bus;
+import '../theme/app_style.dart';
 
 class ForumDetailScreen extends StatefulWidget {
   final int threadId;
@@ -75,15 +76,19 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   // from their name. This directly fixes "every avatar looks identical" —
   // no backend change needed, and it's honest (not fabricated data, just
   // a deterministic color pick).
+  // ✅ A brand-derived palette instead of a generic rainbow — every tone
+  // here is pulled from or blended with the app's own "golden hour
+  // fellowship" tokens (ember gold, verdant sage, rose quartz, ink dusk),
+  // so avatars feel like they belong to this app rather than any app.
   static const List<Color> _avatarPalette = [
-    Color(0xFF7C4DFF), // purple
-    Color(0xFF26A69A), // teal
-    Color(0xFFFF7043), // orange
-    Color(0xFF42A5F5), // blue
-    Color(0xFFEC407A), // pink
-    Color(0xFF66BB6A), // green
-    Color(0xFF5C6BC0), // indigo
-    Color(0xFFFFA726), // amber
+    AppColors.emberGold,
+    AppColors.verdantSage,
+    AppColors.roseQuartz,
+    Color(0xFF8A6FB8), // dusk violet — between inkDusk and roseQuartz
+    Color(0xFFC77B3F), // toasted amber — deeper ember
+    Color(0xFF3E8E86), // teal sage — cooler cousin of verdantSage
+    AppColors.inkDusk,
+    Color(0xFFD1A24A), // candlelight — lighter ember
   ];
 
   Color _colorForName(String name) {
@@ -687,11 +692,14 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   /// non-image files through Image.network, which is what made them show
   /// up blank/broken before.
   Widget _buildAttachmentTile(ForumAttachment a, {double size = 96}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tileSurface = isDark ? const Color(0xFF332A4D) : AppColors.warmLinen;
+
     if (_isImageAttachment(a)) {
       return GestureDetector(
         onTap: () => _openAttachment(a),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           child: Image.network(
             ForumRepository.getAttachmentUrl(a.url),
             width: size,
@@ -700,9 +708,27 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
             errorBuilder: (_, __, ___) => Container(
               width: size,
               height: size,
-              color: Colors.grey[300],
-              child: const Icon(Icons.broken_image),
+              color: tileSurface,
+              alignment: Alignment.center,
+              child: Icon(Icons.broken_image_outlined, color: AppColors.roseQuartz),
             ),
+            loadingBuilder: (context, child, progress) {
+              if (progress == null) return child;
+              return Container(
+                width: size,
+                height: size,
+                color: tileSurface,
+                alignment: Alignment.center,
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.emberGold,
+                  ),
+                ),
+              );
+            },
           ),
         ),
       );
@@ -715,13 +741,13 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
           width: size,
           height: size,
           decoration: BoxDecoration(
-            color: Colors.black87,
-            borderRadius: BorderRadius.circular(12),
+            color: AppColors.inkDusk,
+            borderRadius: BorderRadius.circular(14),
           ),
           alignment: Alignment.center,
           child: const Icon(
             Icons.play_circle_fill_rounded,
-            color: Colors.white,
+            color: AppColors.emberGold,
             size: 36,
           ),
         ),
@@ -736,27 +762,28 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
         height: size,
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
-          color: Colors.grey[200],
-          borderRadius: BorderRadius.circular(12),
+          color: tileSurface,
+          borderRadius: BorderRadius.circular(14),
         ),
         alignment: Alignment.center,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(_iconForDocument(a.fileName), size: 28, color: Colors.grey[700]),
+            Icon(_iconForDocument(a.fileName), size: 28, color: AppColors.emberGold),
             const SizedBox(height: 4),
             Text(
               a.fileName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 10, color: Colors.grey[700]),
+              style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
             ),
           ],
         ),
       ),
     );
   }
+
 
   static const _pendingImageExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'};
   static const _pendingVideoExtensions = {'mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v'};
@@ -773,6 +800,8 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     final ext = _extOf(f);
     final isImage = _pendingImageExtensions.contains(ext);
     final isVideo = _pendingVideoExtensions.contains(ext);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tileSurface = isDark ? const Color(0xFF332A4D) : AppColors.warmLinen;
 
     if (isImage) {
       Widget? image;
@@ -787,9 +816,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color: Colors.grey[200],
+          color: tileSurface,
         ),
-        child: image ?? const Icon(Icons.image_outlined),
+        child: image ?? Icon(Icons.image_outlined, color: AppColors.emberGold),
       );
     }
 
@@ -799,19 +828,19 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        color: isVideo ? Colors.black87 : Colors.grey[200],
+        color: isVideo ? AppColors.inkDusk : tileSurface,
       ),
       alignment: Alignment.center,
       child: isVideo
-          ? const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 26)
+          ? const Icon(Icons.play_circle_fill_rounded, color: AppColors.emberGold, size: 26)
           : Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(_iconForDocument(f.name), size: 20, color: Colors.grey[700]),
+                Icon(_iconForDocument(f.name), size: 20, color: AppColors.emberGold),
                 const SizedBox(height: 2),
                 Text(
                   ext.isEmpty ? '?' : ext,
-                  style: TextStyle(fontSize: 9, color: Colors.grey[700]),
+                  style: TextStyle(fontSize: 9, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
                 ),
               ],
             ),
@@ -836,12 +865,14 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: authorColor.withOpacity(0.15)),
+      // The app's signature "chapel doorway" arch — restoring the shared
+      // cardTheme shape instead of overriding it with a generic rounded
+      // rectangle, so this screen actually matches the rest of the app.
+      shape: AppShapes.archBorder().copyWith(
+        side: BorderSide(color: authorColor.withOpacity(0.18)),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(14, 20, 14, 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -859,8 +890,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                           Flexible(
                             child: Text(
                               post.authorName,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                 color: authorColor,
                               ),
                               overflow: TextOverflow.ellipsis,
@@ -875,9 +905,8 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                       if (post.createdAt != null)
                         Text(
                           _formatDate(post.createdAt!),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.55),
                           ),
                         ),
                     ],
@@ -885,7 +914,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                 ),
                 if (_canManage(post.authorId))
                   PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, size: 20),
+                    icon: Icon(Icons.more_vert, size: 20, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
                     onSelected: (value) {
                       if (value == 'delete') _deletePost(post);
                     },
@@ -894,9 +923,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                         value: 'delete',
                         child: Row(
                           children: [
-                            Icon(Icons.delete_outline, color: Colors.red, size: 18),
+                            Icon(Icons.delete_outline, color: Color(0xFFC94C40), size: 18),
                             SizedBox(width: 8),
-                            Text('Delete post', style: TextStyle(color: Colors.red)),
+                            Text('Delete post', style: TextStyle(color: Color(0xFFC94C40))),
                           ],
                         ),
                       ),
@@ -919,7 +948,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                     children: [
                       Text(
                         post.content,
-                        style: const TextStyle(fontSize: 16, height: 1.4),
+                        style: Theme.of(context).textTheme.bodyLarge,
                       ),
                       if (post.attachments.isNotEmpty) ...[
                         const SizedBox(height: 10),
@@ -943,7 +972,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                       curve: Curves.elasticOut,
                       child: const Icon(
                         Icons.favorite,
-                        color: Colors.redAccent,
+                        color: AppColors.roseQuartz,
                         size: 84,
                         shadows: [Shadow(color: Colors.black26, blurRadius: 12)],
                       ),
@@ -966,7 +995,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: post.likedByMe
-                          ? Colors.red.withOpacity(0.12)
+                          ? AppColors.roseQuartz.withOpacity(0.16)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(20),
                     ),
@@ -977,7 +1006,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                           duration: const Duration(milliseconds: 200),
                           child: Icon(
                             post.likedByMe ? Icons.favorite : Icons.favorite_border,
-                            color: post.likedByMe ? Colors.redAccent : Colors.grey,
+                            color: post.likedByMe
+                                ? AppColors.roseQuartz
+                                : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                             size: 20,
                           ),
                         ),
@@ -985,7 +1016,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                         Text(
                           '${post.likeCount}',
                           style: TextStyle(
-                            color: post.likedByMe ? Colors.redAccent : Colors.grey[700],
+                            color: post.likedByMe
+                                ? AppColors.roseQuartz
+                                : Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -999,19 +1032,36 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                   onTap: () => _toggleCommentsForPost(post.id),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isVisible
+                          ? AppColors.verdantSage.withOpacity(0.14)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
                     child: Row(
                       children: [
-                        const Icon(Icons.chat_bubble_outline, size: 18, color: Colors.grey),
+                        Icon(
+                          Icons.chat_bubble_outline,
+                          size: 18,
+                          color: isVisible
+                              ? AppColors.verdantSage
+                              : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           '${post.commentsCount}',
-                          style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            color: isVisible
+                                ? AppColors.verdantSage
+                                : Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                         const SizedBox(width: 6),
                         Icon(
                           isVisible ? Icons.expand_less : Icons.expand_more,
                           size: 18,
-                          color: Colors.grey,
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                         ),
                       ],
                     ),
@@ -1025,22 +1075,24 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
               firstChild: const SizedBox.shrink(),
               secondChild: Column(
                 children: [
-                  const Divider(),
+                  Divider(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.08)),
                   if (isLoadingComments)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Center(child: CircularProgressIndicator()),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Center(
+                        child: CircularProgressIndicator(color: AppColors.emberGold),
+                      ),
                     )
                   else if (comments.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       child: Column(
                         children: [
-                          Icon(Icons.mode_comment_outlined, color: Colors.grey[400], size: 28),
+                          Icon(Icons.mode_comment_outlined, color: AppColors.verdantSage.withOpacity(0.5), size: 28),
                           const SizedBox(height: 6),
-                          const Text(
+                          Text(
                             'No comments yet. Be the first to comment!',
-                            style: TextStyle(color: Colors.grey),
+                            style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.55)),
                           ),
                         ],
                       ),
@@ -1078,7 +1130,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                                     child: Container(
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
-                                        color: Colors.white,
+                                        color: Theme.of(context).cardTheme.color ?? Colors.white,
                                         boxShadow: [
                                           BoxShadow(
                                             color: Colors.black.withOpacity(0.15),
@@ -1089,7 +1141,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                                       child: const Icon(
                                         Icons.close,
                                         size: 18,
-                                        color: Colors.red,
+                                        color: Color(0xFFC94C40),
                                       ),
                                     ),
                                   ),
@@ -1104,12 +1156,13 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                   Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.attach_file),
+                        icon: Icon(Icons.attach_file, color: AppColors.emberGold),
                         onPressed: () => _pickAttachmentsForPost(post.id),
                       ),
                       Expanded(
                         child: TextField(
                           controller: controller,
+                          style: Theme.of(context).textTheme.bodyMedium,
                           decoration: InputDecoration(
                             hintText: 'Write a comment...',
                             border: OutlineInputBorder(
@@ -1117,7 +1170,9 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                               borderSide: BorderSide.none,
                             ),
                             filled: true,
-                            fillColor: Colors.grey.withOpacity(0.08),
+                            fillColor: Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFF332A4D)
+                                : AppColors.warmLinen,
                             isDense: true,
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 14,
@@ -1130,14 +1185,14 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                       ),
                       const SizedBox(width: 8),
                       isPosting
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 36,
                               height: 36,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.emberGold),
                             )
                           : IconButton(
                               icon: const Icon(Icons.send),
-                              color: Theme.of(context).primaryColor,
+                              color: AppColors.emberGold,
                               onPressed: () => _postCommentForPost(post.id),
                             ),
                     ],
@@ -1156,23 +1211,24 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
   }
 
   Widget _buildCommentItem(ForumComment comment) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6),
       elevation: 0,
-      color: Colors.grey.withOpacity(0.06),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      color: isDark ? const Color(0xFF332A4D) : AppColors.warmLinen,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ListTile(
         leading: _buildAvatar(comment.authorAvatar, comment.authorName, radius: 16),
         title: Text(
           comment.authorName,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontSize: 14,
             color: _colorForName(comment.authorName),
           ),
         ),
         trailing: _canManage(comment.authorId)
             ? IconButton(
-                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
+                icon: Icon(Icons.delete_outline, size: 18, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4)),
                 tooltip: 'Delete comment',
                 onPressed: () => _deleteComment(comment),
               )
@@ -1181,7 +1237,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 6),
-            Text(comment.content),
+            Text(comment.content, style: Theme.of(context).textTheme.bodyMedium),
             if (comment.attachments.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -1198,7 +1254,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
                   _formatDate(comment.createdAt!),
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5)),
                 ),
               ),
           ],
@@ -1225,18 +1281,28 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.wifi_off, size: 80, color: Colors.grey[400]),
+              Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.roseQuartz.withOpacity(0.14),
+                ),
+                alignment: Alignment.center,
+                child: const Icon(Icons.wifi_off_rounded, size: 40, color: AppColors.roseQuartz),
+              ),
               const SizedBox(height: 20),
               Text(
                 'Connection Issue',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(color: Colors.grey[700]),
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
               const SizedBox(height: 12),
               Text(
                 _errorMessage ?? 'Unable to connect to server',
                 textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                ),
               ),
               const SizedBox(height: 16),
               ElevatedButton.icon(
@@ -1247,7 +1313,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
               const SizedBox(height: 8),
               Text(
                 'Attempt ${_retryCount}/$_maxRetries',
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.45), fontSize: 12),
               ),
             ],
           ),
@@ -1263,14 +1329,25 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.forum_outlined, size: 80, color: Colors.grey[400]),
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.emberGold.withOpacity(0.14),
+              ),
+              alignment: Alignment.center,
+              child: const Icon(Icons.forum_outlined, size: 40, color: AppColors.emberGold),
+            ),
             const SizedBox(height: 20),
-            const Text('No Posts Yet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            Text('No Posts Yet', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Be the first to start a discussion in this thread!',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+              ),
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
@@ -1350,7 +1427,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const CircularProgressIndicator(),
+                      CircularProgressIndicator(color: AppColors.emberGold),
                       if (_errorMessage != null) ...[
                         const SizedBox(height: 16),
                         Padding(
@@ -1358,7 +1435,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                           child: Text(
                             _errorMessage!,
                             textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey[600]),
+                            style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6)),
                           ),
                         ),
                       ],
@@ -1370,6 +1447,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
               : _posts.isEmpty
               ? RefreshIndicator(
                   onRefresh: _fetchPosts,
+                  color: AppColors.emberGold,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: [
@@ -1382,6 +1460,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                 )
               : RefreshIndicator(
                   onRefresh: _fetchPosts,
+                  color: AppColors.emberGold,
                   child: ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(16),
@@ -1390,7 +1469,10 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                   ),
                 ),
 
-          // ✅ "New post" live banner
+          // ✅ "New post" live banner — the ink-dusk-to-ember-gold gradient
+          // is the same "golden hour" motif used on the splash screen, so
+          // the live moment feels like part of this app's identity rather
+          // than a stock Material snackbar.
           AnimatedPositioned(
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
@@ -1404,7 +1486,11 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary,
+                    gradient: const LinearGradient(
+                      colors: [AppColors.inkDusk, AppColors.emberGold],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
                     borderRadius: BorderRadius.circular(30),
                     boxShadow: const [
                       BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4)),
