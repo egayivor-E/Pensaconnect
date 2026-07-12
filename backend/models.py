@@ -802,7 +802,7 @@ class Activity(BaseModel):
         return f"<Activity id={self.id} title={self.title} user_id={self.user_id}>"
 
     # Convert to dictionary for API
-    def to_dict(self, include_user=False, liked_target_keys=None):
+    def to_dict(self, include_user=False, liked_target_keys=None, target_counts=None):
         data = {
             "id": self.id,
             "title": self.title,
@@ -822,7 +822,23 @@ class Activity(BaseModel):
             # activity types have neither and both come back null.
             "imageUrl": (self.meta_data or {}).get("image_url"),
             "videoUrl": (self.meta_data or {}).get("video_url"),
+            # ✅ For target_type == "post", the thread it lives in — piggy-
+            # backs on meta_data (set at post-creation time) so the feed
+            # can deep link to the right forum thread/post without an
+            # extra lookup.
+            "threadId": (self.meta_data or {}).get("thread_id"),
         }
+        # ✅ Like/comment counts for the activity's target, precomputed by
+        # the caller in a handful of batched queries (see
+        # _build_target_counts in activities.py) and passed in as
+        # {(target_type, target_id): (like_count, comment_count)}. Kept
+        # out of this method's own querying for the same N+1 reasons as
+        # liked_target_keys below.
+        if target_counts is not None and self.target_id is not None:
+            counts = target_counts.get((self.target_type, self.target_id))
+            if counts is not None:
+                data["likeCount"] = counts[0]
+                data["commentCount"] = counts[1]
         if include_user and self.user:
             data["user"] = {
                 "id": self.user.id,
