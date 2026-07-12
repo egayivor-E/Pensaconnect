@@ -33,7 +33,7 @@ class _AnonymousChatScreenState extends State<AnonymousChatScreen> {
   }
 
   Future<void> _initializeEnv() async {
-    await dotenv.load(); // Load environment variables
+    await dotenv.load(fileName: "assets/.env"); // Load environment variables
     setState(() {
       _envLoaded = true;
     });
