@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:pensaconnect/services/api_service.dart';
 import 'package:pensaconnect/services/auth_service.dart';
@@ -357,15 +358,28 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
+      // ✅ Read the app's shared repository instances (registered once in
+      // main.dart's MultiProvider) rather than constructing new ones here.
+      // PrayerRepository in particular holds real client-side state (its
+      // `_requests` cache that the Prayer Wall list renders from) — a
+      // throwaway `PrayerRepository()` fires the same HTTP call but never
+      // updates that cache, so a "prayed" tap from the Home feed silently
+      // failed to show up as prayed if you then opened the Prayer Wall.
       switch (activity.targetType) {
         case 'testimony':
-          await TestimonyRepository().toggleLike(activity.targetId!);
+          await context.read<TestimonyRepository>().toggleLike(
+            activity.targetId!,
+          );
           break;
         case 'forum_thread':
-          await ForumRepository().toggleLikeThread(activity.targetId!);
+          await context.read<ForumRepository>().toggleLikeThread(
+            activity.targetId!,
+          );
           break;
         case 'prayer_request':
-          await PrayerRepository().togglePrayerById(activity.targetId!);
+          await context.read<PrayerRepository>().togglePrayerById(
+            activity.targetId!,
+          );
           break;
       }
     } catch (e) {
