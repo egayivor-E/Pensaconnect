@@ -38,9 +38,7 @@ class ProfileViewModel extends ChangeNotifier {
 
       user = await authRepo.getCurrentUser();
       prayersCount = await prayerRepo.countUserPrayers(user!.id);
-      testimoniesCount = await testimonyRepo.countUserTestimonies(
-        user!.id as String,
-      );
+      testimoniesCount = await testimonyRepo.countUserTestimonies(user!.id);
       groupsCount = (await groupRepo.getGroups()).length;
 
       badges = _determineBadges();
