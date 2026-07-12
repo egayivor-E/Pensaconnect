@@ -1222,6 +1222,12 @@ class ForumAttachment(BaseModel):
     comment = relationship("ForumComment", back_populates="attachments")
 
     def to_dict(self):
+        # New attachments store a real Supabase public URL in file_url.
+        # Older attachments (uploaded before the Supabase migration) still
+        # have local-disk paths, so fall back to the Flask-served route
+        # for those.
+        is_hosted = isinstance(self.file_url, str) and self.file_url.startswith("http")
+        url = self.file_url if is_hosted else f"/forums/attachments/{self.id}"
         return {
             "id": self.id,
             "file_url": self.file_url,
@@ -1231,7 +1237,7 @@ class ForumAttachment(BaseModel):
             "post_id": self.post_id,
             "comment_id": self.comment_id,
             "created_at": self.created_at.isoformat(),
-            "url": f"/forums/attachments/{self.id}",
+            "url": url,
         }
 
 
