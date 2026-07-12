@@ -1,0 +1,28 @@
+name: Keep Render backend awake
+
+# Render's free plan spins the service down after ~15 minutes with no
+# incoming HTTP traffic, and the next request pays a 30-60s cold-start
+# penalty (this is what caused the WebSocket/timeout failures). Pinging
+# the health endpoint on a schedule keeps traffic flowing so it never
+# goes idle long enough to spin down — no paid plan needed.
+#
+# GitHub Actions' scheduler is best-effort and can slip by a few minutes
+# under load, so we ping every 10 minutes to stay safely under Render's
+# 15-minute idle window.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {} # lets you trigger a manual ping from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend health endpoint
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 https://pensaconnect-pjz9.onrender.com/health)
+          echo "Health check responded with HTTP $response"
+          if [ "$response" -ne 200 ]; then
+            echo "::warning::Backend health check did not return 200 (got $response) — it may have been cold-starting during this ping."
+          fi
