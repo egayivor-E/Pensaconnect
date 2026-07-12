@@ -24,13 +24,25 @@ from .utils import success_response, error_response, broadcast_new_activity
 forums_bp = Blueprint("forums", __name__, url_prefix="/forums")
 
 UPLOAD_FOLDER = "uploads/forum"
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "pdf", "docx", "txt"}
+IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+VIDEO_EXTENSIONS = {"mp4", "mov", "avi", "webm", "mkv", "m4v"}
+DOCUMENT_EXTENSIONS = {"pdf", "docx", "txt"}
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 
 # ------------------------ Helpers ------------------------
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def _extension(filename: str) -> str:
+    return filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+
+def is_image_file(filename: str) -> bool:
+    return _extension(filename) in IMAGE_EXTENSIONS
+
+def is_video_file(filename: str) -> bool:
+    return _extension(filename) in VIDEO_EXTENSIONS
 
 def paginate_query(query):
     """Helper for pagination with consistent response format"""
@@ -321,6 +333,28 @@ def create_post():
                     db.session.add(attachment)
 
         db.session.commit()
+
+        # ✅ Log + broadcast an Activity so this post shows up in the live
+        # Home feed. Uses the first *image* attachment (if any) as the
+        # feed card's thumbnail — videos and documents still attach fine,
+        # they just don't get a thumbnail (feed falls back to the icon).
+        first_image = next(
+            (a for a in post.attachments if is_image_file(a.file_name)), None
+        )
+        activity = Activity(
+            title=f"{current_user.get_full_name()} shared a new post",
+            subtitle=(post.content or post.title)[:140],
+            icon="forum",
+            color="blue",
+            user_id=current_user.id,
+            target_type="post",
+            target_id=post.id,
+            image_url=first_image.to_dict()["url"] if first_image else None,
+        )
+        db.session.add(activity)
+        db.session.commit()
+        broadcast_new_activity(activity)
+
         # FIX: Change from 200 to 201
         return success_response(post.to_dict(include_attachments=True), 201)  # ✅ Changed to 201
 
@@ -345,6 +379,20 @@ def create_post():
     )
     db.session.add(post)
     db.session.commit()
+
+    activity = Activity(
+        title=f"{current_user.get_full_name()} shared a new post",
+        subtitle=(post.content or post.title)[:140],
+        icon="forum",
+        color="blue",
+        user_id=current_user.id,
+        target_type="post",
+        target_id=post.id,
+    )
+    db.session.add(activity)
+    db.session.commit()
+    broadcast_new_activity(activity)
+
     # FIX: Already 201 here, but keep it
     return success_response(post.to_dict(), 201)  # ✅ Already correct
 
