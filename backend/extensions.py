@@ -38,7 +38,7 @@ def configure_extensions(app):
 
     # --- Database ---
     db.init_app(app)
-    migrate.init_app(app, db)
+    migrate.init_app(app, db, directory='backend/migrations')
 
     # --- JWT ---
     jwt.init_app(app)
