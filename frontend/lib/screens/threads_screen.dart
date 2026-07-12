@@ -78,8 +78,21 @@ class ThreadsScreen extends StatelessWidget {
                         horizontal: 16,
                         vertical: 12,
                       ),
-                      itemCount: threadsProvider.threads.length,
-                      itemBuilder: (context, index) {
+                      itemCount: threadsProvider.threads.length + 1,
+                      itemBuilder: (context, rawIndex) {
+                        if (rawIndex == 0) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 14),
+                            child: Text(
+                              'Tap a thread to read the full conversation and post your own reply.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface
+                                    .withOpacity(0.55),
+                              ),
+                            ),
+                          );
+                        }
+                        final index = rawIndex - 1;
                         final t = threadsProvider.threads[index];
 
                         final int likeCount = t['like_count'] ?? 0;
@@ -203,8 +216,9 @@ class ThreadsScreen extends StatelessWidget {
                                         IconButton(
                                           icon: Icon(
                                             likedByMe
-                                                ? Icons.thumb_up
+                                                ? Icons.thumb_up_rounded
                                                 : Icons.thumb_up_alt_outlined,
+                                            size: 20,
                                             color: likedByMe
                                                 ? theme.colorScheme.primary
                                                 : theme
@@ -228,8 +242,9 @@ class ThreadsScreen extends StatelessWidget {
                                         IconButton(
                                           icon: Icon(
                                             dislikedByMe
-                                                ? Icons.thumb_down
+                                                ? Icons.thumb_down_rounded
                                                 : Icons.thumb_down_alt_outlined,
+                                            size: 20,
                                             color: dislikedByMe
                                                 ? Colors.redAccent
                                                 : theme
@@ -247,6 +262,61 @@ class ThreadsScreen extends StatelessWidget {
                                           style: theme.textTheme.labelMedium,
                                         ),
                                       ],
+                                    ),
+
+                                    // ✅ NEW: an explicit "open the thread"
+                                    // footer, so the card doesn't rely on
+                                    // people intuiting that a whole tap
+                                    // target opens somewhere — it names the
+                                    // destination and what you can do there
+                                    // (read replies, post one) and gives a
+                                    // chevron as a standard "this goes
+                                    // somewhere" cue.
+                                    const SizedBox(height: 10),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 9,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme.primary
+                                            .withOpacity(0.08),
+                                        borderRadius: BorderRadius.circular(
+                                          14,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.chat_bubble_outline_rounded,
+                                            size: 16,
+                                            color: theme.colorScheme.primary,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Expanded(
+                                            child: Text(
+                                              postCount == 0
+                                                  ? 'Open thread to post the first reply'
+                                                  : 'View $postCount repl${postCount == 1 ? 'y' : 'ies'} · Post yours',
+                                              style: theme.textTheme.labelMedium
+                                                  ?.copyWith(
+                                                    color: theme
+                                                        .colorScheme.primary,
+                                                    fontWeight:
+                                                        FontWeight.w600,
+                                                  ),
+                                              maxLines: 1,
+                                              overflow:
+                                                  TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          Icon(
+                                            Icons.arrow_forward_rounded,
+                                            size: 16,
+                                            color: theme.colorScheme.primary,
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ],
                                 ),
