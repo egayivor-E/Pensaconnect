@@ -1,4 +1,6 @@
 // screens/home_screen.dart
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -231,104 +233,110 @@ class _HomeScreenState extends State<HomeScreen> {
         : username;
 
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       drawer: const AppDrawer(),
       body: RefreshIndicator(
         onRefresh: _loadActivities,
         child: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            pinned: true,
-            expandedHeight: 180,
-            backgroundColor: AppColors.inkDusk,
-            iconTheme: const IconThemeData(color: Colors.white),
-            flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [AppColors.inkDusk, AppColors.emberGold],
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              expandedHeight: 180,
+              backgroundColor: AppColors.inkDusk,
+              iconTheme: const IconThemeData(color: Colors.white),
+              flexibleSpace: FlexibleSpaceBar(
+                background: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [AppColors.inkDusk, AppColors.emberGold],
+                    ),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(24, 60, 24, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        'Welcome back, $greetingName',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'PensaConnect · Ladies & Gents Wing',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white.withOpacity(0.85),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                padding: const EdgeInsets.fromLTRB(24, 60, 24, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.end,
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 14,
+                  crossAxisSpacing: 14,
+                  childAspectRatio: 0.98,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _FeatureCard(feature: _features[index]),
+                  childCount: _features.length,
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 12, 6),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      'Welcome back, $greetingName',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        color: Colors.white,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Recent Activity',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "What's happening across the fellowship",
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.55,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'PensaConnect · Ladies & Gents Wing',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white.withOpacity(0.85),
+                    if (!_loadingActivities)
+                      Material(
+                        color: theme.colorScheme.onSurface.withOpacity(0.06),
+                        shape: const CircleBorder(),
+                        child: IconButton(
+                          onPressed: _loadActivities,
+                          icon: const Icon(Icons.refresh_rounded, size: 20),
+                          tooltip: 'Refresh',
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
             ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 14,
-                crossAxisSpacing: 14,
-                childAspectRatio: 0.98,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, index) => _FeatureCard(feature: _features[index]),
-                childCount: _features.length,
-              ),
-            ),
-          ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 12, 6),
-            sliver: SliverToBoxAdapter(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Recent Activity',
-                          style: theme.textTheme.headlineSmall,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          "What's happening across the fellowship",
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurface.withOpacity(0.55),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (!_loadingActivities)
-                    Material(
-                      color: theme.colorScheme.onSurface.withOpacity(0.06),
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        onPressed: _loadActivities,
-                        icon: const Icon(Icons.refresh_rounded, size: 20),
-                        tooltip: 'Refresh',
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          _buildActivitySliver(theme),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
+            _buildActivitySliver(theme),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ],
         ),
       ),
     );
@@ -336,32 +344,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildActivitySliver(ThemeData theme) {
     if (_loadingActivities) {
-      return const SliverPadding(
-        padding: EdgeInsets.symmetric(vertical: 32),
-        sliver: SliverToBoxAdapter(
-          child: Center(child: CircularProgressIndicator()),
+      // ✅ Shimmer skeleton cards instead of a bare spinner — the feed's
+      // real shape (avatar, two lines, action bar) is already visible
+      // while data loads, which reads as "content is arriving" rather
+      // than "the app froze".
+      return SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => Padding(
+              padding: EdgeInsets.only(bottom: index == 2 ? 0 : 14),
+              child: const _ActivitySkeletonCard(),
+            ),
+            childCount: 3,
+          ),
         ),
       );
     }
 
     if (_activitiesFailed) {
       return SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
         sliver: SliverToBoxAdapter(
-          child: Center(
-            child: Column(
-              children: [
-                Text(
-                  "Couldn't load recent activity.",
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: _loadActivities,
-                  child: const Text('Try again'),
-                ),
-              ],
-            ),
+          child: _FeedStatusMessage(
+            icon: Icons.cloud_off_rounded,
+            iconColor: theme.colorScheme.error,
+            title: "Couldn't load recent activity",
+            subtitle: 'Check your connection and try again.',
+            actionLabel: 'Try again',
+            onAction: _loadActivities,
           ),
         ),
       );
@@ -369,15 +380,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (_activities.isEmpty) {
       return SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
         sliver: SliverToBoxAdapter(
-          child: Center(
-            child: Text(
-              'Nothing new yet — check back soon.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.6),
-              ),
-            ),
+          child: _FeedStatusMessage(
+            icon: Icons.notifications_none_rounded,
+            iconColor: AppColors.emberGold,
+            title: 'Nothing new yet',
+            subtitle: 'Activity from testimonies, forums and prayers\nwill show up here as it happens.',
           ),
         ),
       );
@@ -397,13 +406,16 @@ class _HomeScreenState extends State<HomeScreen> {
             final isLast = index == _activities.length - 1;
             return Padding(
               padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
-              child: _ActivityTile(
-                key: ValueKey(activity.id),
-                activity: activity,
-                isActionInFlight: _actionInFlight.contains(activity.id),
-                isLocallyActive: _locallyActive[activity.id] ?? false,
-                onAction: () => _handleActivityAction(activity),
-                onOpen: () => _openActivityTarget(activity),
+              child: _FadeSlideIn(
+                delay: Duration(milliseconds: 40 * index.clamp(0, 6)),
+                child: _ActivityTile(
+                  key: ValueKey(activity.id),
+                  activity: activity,
+                  isActionInFlight: _actionInFlight.contains(activity.id),
+                  isLocallyActive: _locallyActive[activity.id] ?? false,
+                  onAction: () => _handleActivityAction(activity),
+                  onOpen: () => _openActivityTarget(activity),
+                ),
               ),
             );
           },
@@ -413,6 +425,268 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+// ==========================================
+// FEED ENTRANCE ANIMATION
+// ==========================================
+
+/// Small fade + upward-slide wrapper so feed cards ease in rather than
+/// popping onto the screen — with a slight per-index stagger, the whole
+/// list reads as one deliberate motion instead of a static dump of rows.
+class _FadeSlideIn extends StatefulWidget {
+  final Widget child;
+  final Duration delay;
+
+  const _FadeSlideIn({required this.child, this.delay = Duration.zero});
+
+  @override
+  State<_FadeSlideIn> createState() => _FadeSlideInState();
+}
+
+class _FadeSlideInState extends State<_FadeSlideIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  );
+  late final Animation<double> _fade = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOut,
+  );
+  late final Animation<Offset> _slide = Tween(
+    begin: const Offset(0, 0.06),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(widget.delay, () {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(position: _slide, child: widget.child),
+    );
+  }
+}
+
+// ==========================================
+// EMPTY / ERROR STATE
+// ==========================================
+
+class _FeedStatusMessage extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  const _FeedStatusMessage({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Column(
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 30, color: iconColor),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.55),
+              height: 1.4,
+            ),
+          ),
+          if (actionLabel != null) ...[
+            const SizedBox(height: 14),
+            OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// SHIMMER LOADING SKELETON
+// ==========================================
+
+class _ActivitySkeletonCard extends StatelessWidget {
+  const _ActivitySkeletonCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _Shimmer(
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.cardTheme.color,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _SkeletonBlock(width: 46, height: 46, radius: 23),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      _SkeletonBlock(width: 120, height: 12, radius: 6),
+                      SizedBox(height: 8),
+                      _SkeletonBlock(width: 200, height: 14, radius: 6),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Padding(
+              padding: EdgeInsets.only(left: 58),
+              child: _SkeletonBlock(
+                width: double.infinity,
+                height: 12,
+                radius: 6,
+              ),
+            ),
+            const SizedBox(height: 14),
+            const _SkeletonBlock(width: double.infinity, height: 1, radius: 0),
+            const SizedBox(height: 12),
+            Row(
+              children: const [
+                Expanded(child: _SkeletonBlock(height: 14, radius: 6)),
+                SizedBox(width: 20),
+                Expanded(child: _SkeletonBlock(height: 14, radius: 6)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonBlock extends StatelessWidget {
+  final double width;
+  final double height;
+  final double radius;
+
+  const _SkeletonBlock({
+    this.width = double.infinity,
+    required this.height,
+    this.radius = 6,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+  }
+}
+
+/// Sweeps a soft highlight band left-to-right across its child on a loop.
+/// Implemented with a plain `AnimationController` + `ShaderMask` so it has
+/// no dependency beyond Flutter itself.
+class _Shimmer extends StatefulWidget {
+  final Widget child;
+
+  const _Shimmer({required this.child});
+
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final base = Theme.of(context).colorScheme.onSurface.withOpacity(0.08);
+    final highlight = Theme.of(context).colorScheme.onSurface.withOpacity(
+      0.16,
+    );
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return ShaderMask(
+          shaderCallback: (bounds) {
+            final t = _controller.value;
+            return LinearGradient(
+              colors: [base, highlight, base],
+              stops: const [0.35, 0.5, 0.65],
+              begin: Alignment(-1 - t * 3, 0),
+              end: Alignment(1 - t * 3, 0),
+            ).createShader(bounds);
+          },
+          blendMode: BlendMode.srcIn,
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
+// ==========================================
+// ACTIVITY TILE
+// ==========================================
 
 class _ActivityTile extends StatelessWidget {
   final Activity activity;
@@ -465,6 +739,9 @@ class _ActivityTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.cardTheme.color,
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.onSurface.withOpacity(isDark ? 0.08 : 0.05),
+        ),
         boxShadow: [
           BoxShadow(
             color: (isDark ? Colors.black : AppColors.inkDusk).withOpacity(
@@ -498,26 +775,39 @@ class _ActivityTile extends StatelessWidget {
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
-                          activity.hasAuthorAvatar
-                              ? CircleAvatar(
-                                  radius: 23,
-                                  backgroundImage: NetworkImage(
-                                    activity.authorAvatarUrl!,
+                          Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: activity.color.withOpacity(0.35),
+                                width: 1.5,
+                              ),
+                            ),
+                            padding: const EdgeInsets.all(2),
+                            child: activity.hasAuthorAvatar
+                                ? CircleAvatar(
+                                    radius: 20,
+                                    backgroundImage: NetworkImage(
+                                      activity.authorAvatarUrl!,
+                                    ),
+                                  )
+                                : CircleAvatar(
+                                    radius: 20,
+                                    backgroundColor: activity.color
+                                        .withOpacity(0.15),
+                                    child: Text(
+                                      (activity.authorName?.isNotEmpty ??
+                                              false)
+                                          ? activity.authorName![0]
+                                                .toUpperCase()
+                                          : 'P',
+                                      style: theme.textTheme.titleMedium
+                                          ?.copyWith(color: activity.color),
+                                    ),
                                   ),
-                                )
-                              : CircleAvatar(
-                                  radius: 23,
-                                  backgroundColor: activity.color.withOpacity(
-                                    0.15,
-                                  ),
-                                  child: Text(
-                                    (activity.authorName?.isNotEmpty ?? false)
-                                        ? activity.authorName![0].toUpperCase()
-                                        : 'P',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(color: activity.color),
-                                  ),
-                                ),
+                          ),
                           Positioned(
                             right: -2,
                             bottom: -2,
@@ -551,50 +841,80 @@ class _ActivityTile extends StatelessWidget {
                               Flexible(
                                 child: Text(
                                   activity.authorName ?? 'PensaConnect',
-                                  style: theme.textTheme.titleMedium,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.circle,
+                                size: 4,
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.35,
+                                ),
+                              ),
+                              const SizedBox(width: 5),
                               Text(
-                                '  ·  ${activity.timeAgo}',
+                                activity.timeAgo,
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurface
                                       .withOpacity(0.5),
                                 ),
                               ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '· ${info.label}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: activity.color.withOpacity(0.9),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ],
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            activity.title,
-                            style: theme.textTheme.bodyLarge?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              height: 1.3,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                if (activity.subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 58),
-                    child: Text(
-                      activity.subtitle,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.62),
-                        height: 1.4,
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.only(left: 58),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        activity.title,
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                      if (activity.subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          activity.subtitle,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(
+                              0.62,
+                            ),
+                            height: 1.4,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
                   ),
-                ],
+                ),
                 if (hasActionBar) ...[
                   const SizedBox(height: 10),
                   Divider(
@@ -602,7 +922,8 @@ class _ActivityTile extends StatelessWidget {
                     thickness: 1,
                     color: theme.colorScheme.onSurface.withOpacity(0.08),
                   ),
-                  IntrinsicHeight(
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Row(
                       children: [
                         if (info.canLike)
@@ -619,17 +940,13 @@ class _ActivityTile extends StatelessWidget {
                                   : theme.colorScheme.onSurface.withOpacity(
                                       0.65,
                                     ),
+                              highlighted: isLocallyActive,
                               loading: isActionInFlight,
                               onTap: isActionInFlight ? null : onAction,
                             ),
                           ),
                         if (info.canLike && info.canOpenDetail)
-                          Container(
-                            width: 1,
-                            color: theme.colorScheme.onSurface.withOpacity(
-                              0.08,
-                            ),
-                          ),
+                          const SizedBox(width: 6),
                         if (info.canOpenDetail)
                           Expanded(
                             child: _FeedActionButton(
@@ -656,11 +973,15 @@ class _ActivityTile extends StatelessWidget {
 }
 
 /// A single segment of the feed card's Facebook-style split action bar.
+/// When `highlighted` is true (e.g. the user has liked/prayed for this),
+/// it fills with a soft tint of `color` so the state is legible even at
+/// a glance, not just from the icon swap.
 class _FeedActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
   final bool loading;
+  final bool highlighted;
   final VoidCallback? onTap;
 
   const _FeedActionButton({
@@ -669,40 +990,65 @@ class _FeedActionButton extends StatelessWidget {
     required this.color,
     required this.onTap,
     this.loading = false,
+    this.highlighted = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (loading)
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: color),
-              )
-            else
-              Icon(icon, size: 18, color: color),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: color,
-                fontWeight: FontWeight.w700,
-              ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: highlighted ? color.withOpacity(0.12) : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
             ),
-          ],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (loading)
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: color,
+                    ),
+                  )
+                else
+                  AnimatedScale(
+                    scale: highlighted ? 1.12 : 1.0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutBack,
+                    child: Icon(icon, size: 18, color: color),
+                  ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 }
+
+// ==========================================
+// FEATURE GRID CARD
+// ==========================================
 
 class _FeatureCard extends StatelessWidget {
   final HomeFeature feature;
@@ -718,6 +1064,8 @@ class _FeatureCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => context.push(feature.route),
+        splashColor: feature.color.withOpacity(0.12),
+        highlightColor: feature.color.withOpacity(0.06),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -736,7 +1084,12 @@ class _FeatureCard extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(feature.title, style: theme.textTheme.titleMedium),
+                  Text(
+                    feature.title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   const SizedBox(height: 2),
                   Text(
                     feature.subtitle,
