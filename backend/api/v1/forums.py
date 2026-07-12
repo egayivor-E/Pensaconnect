@@ -1,6 +1,7 @@
 from math import ulp
 import os
-from datetime import datetime
+import logging
+import uuid
 from functools import wraps
 
 from flask import Blueprint, request, send_file
@@ -19,15 +20,34 @@ from backend.models import (
     User,
     Activity,
 )
+from backend.supabase_client import (
+    upload_file_to_supabase,
+    delete_file_from_supabase,
+    FORUM_MEDIA_BUCKET,
+)
 from .utils import success_response, error_response, broadcast_new_activity
+
+logger = logging.getLogger(__name__)
 
 forums_bp = Blueprint("forums", __name__, url_prefix="/forums")
 
+# Legacy local folder — still referenced when serving attachments that were
+# uploaded before the Supabase migration (see get_attachment below).
 UPLOAD_FOLDER = "uploads/forum"
 IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 VIDEO_EXTENSIONS = {"mp4", "mov", "avi", "webm", "mkv", "m4v"}
 DOCUMENT_EXTENSIONS = {"pdf", "docx", "txt"}
 ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | DOCUMENT_EXTENSIONS
+
+CONTENT_TYPES = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "gif": "image/gif", "webp": "image/webp",
+    "mp4": "video/mp4", "mov": "video/quicktime", "avi": "video/x-msvideo",
+    "webm": "video/webm", "mkv": "video/x-matroska", "m4v": "video/x-m4v",
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "txt": "text/plain",
+}
 
 
 # ------------------------ Helpers ------------------------
@@ -43,6 +63,28 @@ def is_image_file(filename: str) -> bool:
 
 def is_video_file(filename: str) -> bool:
     return _extension(filename) in VIDEO_EXTENSIONS
+
+def _save_attachment_file(f, subfolder: str) -> tuple[str, str]:
+    """
+    Uploads a single werkzeug FileStorage to Supabase Storage.
+    Returns (public_url, storage_path). Raises on failure — callers
+    should let this propagate so the request fails loudly instead of
+    silently creating an attachment row that points at nothing.
+    """
+    filename = secure_filename(f.filename)
+    ext = _extension(filename)
+    unique_name = f"{uuid.uuid4()}_{filename}"
+    destination_path = f"{subfolder}/{unique_name}"
+    content_type = CONTENT_TYPES.get(ext, f.mimetype or "application/octet-stream")
+
+    file_bytes = f.read()
+    public_url = upload_file_to_supabase(
+        file_bytes=file_bytes,
+        destination_path=destination_path,
+        content_type=content_type,
+        bucket=FORUM_MEDIA_BUCKET,
+    )
+    return public_url, destination_path
 
 def paginate_query(query):
     """Helper for pagination with consistent response format"""
@@ -313,20 +355,22 @@ def create_post():
         db.session.flush()  # get post.id for attachments
 
         if "files" in request.files:
-            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
             for f in request.files.getlist("files"):
                 if allowed_file(f.filename):
                     filename = secure_filename(f.filename)
-                    # keep a unique stored path
-                    stored_name = f"{datetime.utcnow().timestamp()}_{filename}"
-                    file_path = os.path.join(UPLOAD_FOLDER, stored_name)
-                    f.save(file_path)
+                    try:
+                        public_url, storage_path = _save_attachment_file(f, "posts")
+                    except Exception as e:
+                        logger.error(f"Forum attachment upload failed: {e}")
+                        continue
                     attachment = ForumAttachment(
-                        # NOTE: file_url is cosmetic (served by /attachments/<id>)
-                        file_url=f"/forums/attachments/placeholder",
+                        file_url=public_url,
                         file_type=f.mimetype,
                         post_id=post.id,
-                        file_path=file_path,
+                        # file_path now holds the Supabase storage path
+                        # (bucket-relative), not a local disk path — used
+                        # for deletion cleanup, not for serving.
+                        file_path=storage_path,
                         file_name=filename,
                         mime_type=f.mimetype,
                     )
@@ -485,18 +529,19 @@ def add_comment(post_id):
         db.session.flush()
 
         if "files" in request.files:
-            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
             for f in request.files.getlist("files"):
                 if allowed_file(f.filename):
                     filename = secure_filename(f.filename)
-                    stored_name = f"{datetime.utcnow().timestamp()}_{filename}"
-                    file_path = os.path.join(UPLOAD_FOLDER, stored_name)
-                    f.save(file_path)
+                    try:
+                        public_url, storage_path = _save_attachment_file(f, "comments")
+                    except Exception as e:
+                        logger.error(f"Forum attachment upload failed: {e}")
+                        continue
                     attachment = ForumAttachment(
-                        file_url=f"/forums/attachments/placeholder",
+                        file_url=public_url,
                         file_type=f.mimetype,
                         comment_id=comment.id,
-                        file_path=file_path,
+                        file_path=storage_path,
                         file_name=filename,
                         mime_type=f.mimetype,
                     )
@@ -563,7 +608,22 @@ def delete_comment(post_id, comment_id):
 
 @forums_bp.route("/attachments/<int:attachment_id>", methods=["GET"])
 def get_attachment(attachment_id):
+    """
+    Legacy path: serves attachments that were uploaded before the
+    Supabase migration and still only exist on local disk. New
+    attachments are served directly from their Supabase public URL
+    (see ForumAttachment.to_dict) and never hit this route.
+
+    as_attachment is False (not True, as it was before) so images
+    render inline in <img> tags instead of the browser being told to
+    download them — that was the bug behind the broken-image icon.
+    """
     attachment = ForumAttachment.query.get_or_404(attachment_id)
+    if not attachment.file_path or not os.path.exists(attachment.file_path):
+        return error_response("Attachment file no longer available", 404)
     return send_file(
-        attachment.file_path, as_attachment=True, download_name=attachment.file_name
+        attachment.file_path,
+        as_attachment=False,
+        download_name=attachment.file_name,
+        mimetype=attachment.mime_type,
     )
