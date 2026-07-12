@@ -1,6 +1,23 @@
 // forum_models.dart
 // ✅ Fully consistent models for posts, comments, attachments, and events.
 
+/// Result of creating a post or comment. `success` reflects whether the
+/// text content itself saved; `attachmentErrors` lists any individual
+/// files that failed to upload (e.g. Supabase misconfigured, unsupported
+/// type) so the UI can tell the user *which* files silently didn't make
+/// it instead of the post just looking like it lost its media.
+class PostSubmissionResult {
+  final bool success;
+  final List<String> attachmentErrors;
+
+  const PostSubmissionResult({
+    required this.success,
+    this.attachmentErrors = const [],
+  });
+
+  bool get hasAttachmentErrors => attachmentErrors.isNotEmpty;
+}
+
 class ForumAttachment {
   final int id;
   final String url;
