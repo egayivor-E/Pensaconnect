@@ -150,7 +150,7 @@ class ForumApi {
     }
   }
 
-  Future<void> deleteComment(int commentId) async {
-    await ApiService.delete("forums/comments/$commentId");
+  Future<void> deleteComment(int postId, int commentId) async {
+    await ApiService.delete("forums/posts/$postId/comments/$commentId");
   }
 }
