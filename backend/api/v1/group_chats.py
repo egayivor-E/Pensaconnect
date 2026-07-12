@@ -22,6 +22,7 @@ def create_group_chat():
         is_public=data.get("is_public", True),
         max_members=data.get("max_members", 100),
         tags=data.get("tags", []),
+        chat_type="group",
         created_by_id=user_id,
     )
 
@@ -41,13 +42,88 @@ def create_group_chat():
 
 
 # ---------------------------
+# Get-or-create a direct (1:1) chat with another user
+# ---------------------------
+@group_chats_bp.route("/direct/<int:other_user_id>", methods=["POST"])
+@jwt_required()
+def get_or_create_direct_chat(other_user_id):
+    user_id = get_jwt_identity()
+
+    # get_jwt_identity() is a string; compare as int consistently so the
+    # self-DM check below (and the set-equality check further down) is
+    # comparing like types either way.
+    current_user_id = int(user_id)
+
+    if current_user_id == other_user_id:
+        return jsonify({"error": "Cannot start a direct chat with yourself"}), 400
+
+    other_user = User.query.get(other_user_id)
+    if not other_user:
+        return jsonify({"error": "User not found"}), 404
+
+    # A direct chat is just a GroupChat with chat_type='direct' and exactly
+    # these two members — look for one that already exists between this
+    # pair before creating a new one, so repeated taps on the same person
+    # always land in the same conversation instead of forking a new one.
+    candidate_chats = (
+        db.session.query(GroupChat)
+        .join(GroupMember, GroupMember.group_chat_id == GroupChat.id)
+        .filter(
+            GroupChat.chat_type == "direct",
+            GroupChat.is_active == True,
+            GroupMember.user_id == current_user_id,
+            GroupMember.is_active == True,
+        )
+        .all()
+    )
+    for chat in candidate_chats:
+        member_ids = {m.user_id for m in chat.members if m.is_active}
+        if member_ids == {current_user_id, other_user_id}:
+            return jsonify({
+                "data": chat.to_dict(include_members=True),
+                "message": "Direct chat already exists",
+                "status": "success",
+            }), 200
+
+    group_chat = GroupChat(
+        name=f"dm-{min(current_user_id, other_user_id)}-{max(current_user_id, other_user_id)}",
+        description=None,
+        is_public=False,
+        max_members=2,
+        chat_type="direct",
+        created_by_id=current_user_id,
+    )
+    db.session.add(group_chat)
+    db.session.flush()
+
+    db.session.add(GroupMember(
+        group_chat_id=group_chat.id, user_id=current_user_id, group_role="member"
+    ))
+    db.session.add(GroupMember(
+        group_chat_id=group_chat.id, user_id=other_user_id, group_role="member"
+    ))
+    db.session.commit()
+
+    return jsonify({
+        "data": group_chat.to_dict(include_members=True),
+        "message": "Direct chat created",
+        "status": "success",
+    }), 201
+
+
+# ---------------------------
 # Get all group chats user belongs to
 # ---------------------------
 @group_chats_bp.route("/", methods=["GET"])
 @jwt_required()
 def get_group_chats():
     user_id = get_jwt_identity()
-    
+
+    # Optional ?type=group or ?type=direct to fetch just one flavor —
+    # e.g. the Group Chats screen wants only 'group', a DM inbox wants
+    # only 'direct'. Omit it to get both, as before.
+    chat_type = request.args.get("type")
+
     # Get user's active group memberships
     memberships = GroupMember.query.filter_by(
         user_id=user_id, 
@@ -57,10 +133,14 @@ def get_group_chats():
     group_ids = [membership.group_chat_id for membership in memberships]
     
     # Get the actual group chats
-    group_chats = GroupChat.query.filter(
+    query = GroupChat.query.filter(
         GroupChat.id.in_(group_ids),
         GroupChat.is_active == True
-    ).order_by(GroupChat.created_at.desc()).all()
+    )
+    if chat_type in ("group", "direct"):
+        query = query.filter(GroupChat.chat_type == chat_type)
+
+    group_chats = query.order_by(GroupChat.created_at.desc()).all()
     
     # ❌ PREVIOUS: return jsonify([gc.to_dict() for gc in group_chats])
     # ✅ FIX: Wrap the list in a dictionary with 'data', 'message', and 'status' keys
@@ -69,6 +149,47 @@ def get_group_chats():
         "message": "Groups fetched successfully",
         "status": "success"
     }), 200 # Ensure the status code is 200
+
+
+# ---------------------------
+# Discover public groups the user hasn't joined yet
+# ---------------------------
+@group_chats_bp.route("/discover", methods=["GET"])
+@jwt_required()
+def discover_group_chats():
+    user_id = get_jwt_identity()
+
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+
+    # Groups this user is already an active member of — excluded below so
+    # "discover" only ever surfaces groups there's actually something to
+    # join, instead of also listing groups already sitting in "my groups".
+    joined_ids = [
+        m.group_chat_id
+        for m in GroupMember.query.filter_by(user_id=user_id, is_active=True).all()
+    ]
+
+    query = GroupChat.query.filter(
+        GroupChat.chat_type == "group",
+        GroupChat.is_public == True,
+        GroupChat.is_active == True,
+    )
+    if joined_ids:
+        query = query.filter(~GroupChat.id.in_(joined_ids))
+
+    pagination = query.order_by(GroupChat.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return jsonify({
+        "data": [gc.to_dict() for gc in pagination.items],
+        "page": pagination.page,
+        "pages": pagination.pages,
+        "total": pagination.total,
+        "message": "Discoverable groups fetched successfully",
+        "status": "success",
+    }), 200
 
 # ---------------------------
 # Get single group chat with members
