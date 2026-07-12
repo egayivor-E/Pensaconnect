@@ -429,7 +429,9 @@ class MyApp extends StatelessWidget {
           path: '/threads/:threadId/new-post',
           builder: (context, state) {
             final threadId = int.tryParse(state.pathParameters['threadId'] ?? '') ?? 0;
-            return PostFormScreen(threadId: threadId, threadTitle: '');
+            final extra = state.extra as Map<String, dynamic>?;
+            final threadTitle = extra?['threadTitle'] as String? ?? 'Thread';
+            return PostFormScreen(threadId: threadId, threadTitle: threadTitle);
           },
         ),
         // ✅ No longer wraps PrayerWallScreen in its own scoped
