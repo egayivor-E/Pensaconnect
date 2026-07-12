@@ -101,14 +101,31 @@ class _PostFormScreenState extends State<PostFormScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final success = await _repo.createPost(
+      final result = await _repo.createPost(
         threadId: widget.threadId,
         title: widget.threadTitle,
         content: _contentCtrl.text,
         attachments: _attachments,
       );
 
-      if (mounted) context.pop(success);
+      if (!mounted) return;
+
+      if (result.success && result.hasAttachmentErrors) {
+        // Post saved, but one or more files didn't make it — tell the
+        // user which ones instead of letting the media vanish silently.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Post saved, but ${result.attachmentErrors.length} file(s) '
+              "didn't upload: ${result.attachmentErrors.join('; ')}",
+            ),
+            backgroundColor: Colors.orange[800],
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+
+      context.pop(result.success);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
