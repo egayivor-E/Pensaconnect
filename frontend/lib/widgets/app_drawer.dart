@@ -137,8 +137,13 @@ class AppDrawer extends StatelessWidget {
     String? route,
     int? index,
   }) {
+    final theme = Theme.of(context);
     return ListTile(
-      leading: Icon(icon),
+      leading: Icon(
+        icon,
+        size: 22,
+        color: theme.colorScheme.onSurface.withOpacity(0.65),
+      ),
       title: Text(title),
       onTap: () => _handleNavigation(context, route: route, index: index),
     );
@@ -151,8 +156,13 @@ class AppDrawer extends StatelessWidget {
     required String route,
     bool requiresUserData = false,
   }) {
+    final theme = Theme.of(context);
     return ListTile(
-      leading: Icon(icon),
+      leading: Icon(
+        icon,
+        size: 22,
+        color: theme.colorScheme.onSurface.withOpacity(0.65),
+      ),
       title: Text(title),
       onTap: () async => _handleProtectedNavigation(
         context,
@@ -160,6 +170,20 @@ class AppDrawer extends StatelessWidget {
         requiresUserData: requiresUserData,
       ),
     );
+  }
+
+  // ✅ FIX: the drawer lists top-level *sections* (Home, Events, Bible
+  // Study, ...), not drill-down detail screens — every tile is reachable
+  // from every other page's drawer at any time. Pushing each tap onto the
+  // Navigator stack meant hopping between sections a few times (very easy
+  // to do from a persistent drawer) piled up duplicate pages endlessly, so
+  // the back button had to walk back through every one of them one at a
+  // time — the "looping" back behavior. Section switches now use go(),
+  // which replaces the current location instead of stacking a new page on
+  // top, so there's only ever one copy of each section in the history.
+  bool _isCurrentRoute(BuildContext context, String route) {
+    final currentLocation = GoRouterState.of(context).uri.toString();
+    return currentLocation == route;
   }
 
   void _handleNavigation(BuildContext context, {String? route, int? index}) {
@@ -173,9 +197,9 @@ class AppDrawer extends StatelessWidget {
       onItemTap!(index);
     }
 
-    // Handle route-based navigation
-    if (route != null) {
-      context.push(route);
+    // Handle route-based navigation — no-op if already on that section.
+    if (route != null && !_isCurrentRoute(context, route)) {
+      context.go(route);
     }
   }
 
@@ -189,27 +213,22 @@ class AppDrawer extends StatelessWidget {
       Navigator.of(context).pop();
     }
 
+    if (_isCurrentRoute(context, route)) return;
+
     final authRepo = context.read<AuthRepository>();
-    // ignore: unused_local_variable
-    final isLoggedIn = await authRepo.getCurrentUser();
     final user = await authRepo.getCurrentUser();
 
     if (user == null) {
-      _showLoginPrompt(context);
+      if (context.mounted) _showLoginPrompt(context);
       return;
     }
 
+    if (!context.mounted) return;
+
     if (requiresUserData) {
-      final user = await authRepo.getCurrentUser();
-      if (user != null) {
-        context.push(route, extra: user);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Unable to load user data')),
-        );
-      }
+      context.go(route, extra: user);
     } else {
-      context.push(route);
+      context.go(route);
     }
   }
 
