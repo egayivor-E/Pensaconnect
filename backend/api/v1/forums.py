@@ -319,6 +319,7 @@ def create_thread():
         db.session.commit()
         broadcast_new_activity(activity)
     except Exception:
+        logger.exception("Failed to log activity for thread %s", thread.id)
         db.session.rollback()
 
     return success_response(thread.to_dict(), 201)

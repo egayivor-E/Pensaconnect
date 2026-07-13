@@ -4,6 +4,10 @@ from backend.models import Post, PostCategory, ForumThread, User, Activity
 from backend.extensions import db
 from .utils import success_response, error_response, broadcast_new_activity
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
 posts_bp = Blueprint("posts", __name__, url_prefix="/posts")
 
 
@@ -113,6 +117,7 @@ def create_post():
         db.session.commit()
         broadcast_new_activity(activity)
     except Exception:
+        logger.exception("Failed to log activity for post %s", post.id)
         db.session.rollback()
     return success_response(post.to_dict(), "Post created", 201)
 @posts_bp.route("/<int:post_id>", methods=["PATCH"])

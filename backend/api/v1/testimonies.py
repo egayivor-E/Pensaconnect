@@ -3,6 +3,9 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.extensions import db
 from backend.models import Testimony, TestimonyComment, TestimonyLike, User, Activity
 from .utils import broadcast_new_activity
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Blueprint registered under /api/v1/testimonies
 testimonies_bp = Blueprint("testimonies", __name__, url_prefix="/testimonies")
@@ -55,6 +58,7 @@ def create_testimony():
             db.session.commit()
             broadcast_new_activity(activity)
         except Exception:
+            logger.exception("Failed to log activity for testimony %s", testimony.id)
             db.session.rollback()
 
     return jsonify(testimony.to_dict()), 201

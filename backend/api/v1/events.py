@@ -6,6 +6,9 @@ from backend.extensions import db
 from .utils import success_response, error_response, broadcast_new_activity
 from datetime import datetime, timezone 
 import json # Import json for JSON handling if needed
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ✅ Use url_prefix without trailing slash
 events_bp = Blueprint("events", __name__, url_prefix="/events")
@@ -106,6 +109,7 @@ def create_event():
             db.session.commit()
             broadcast_new_activity(activity)
         except Exception:
+            logger.exception("Failed to log activity for event %s", event.id)
             db.session.rollback()
 
         return success_response(event.to_dict(), "Event created", 201)

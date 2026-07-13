@@ -49,8 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
   static const double _miniSearchScrollThreshold = 170;
 
   void _onScroll() {
-    final shouldShow =
-        _scrollController.offset > _miniSearchScrollThreshold;
+    final shouldShow = _scrollController.offset > _miniSearchScrollThreshold;
     if (shouldShow != _showMiniSearch) {
       setState(() => _showMiniSearch = shouldShow);
     }
@@ -298,9 +297,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
 
-    socket.onConnect((_) => debugPrint('✅ HomeScreen: activity socket connected'));
-    socket.onConnectError((e) => debugPrint('❌ HomeScreen: activity socket connect error: $e'));
-    socket.onDisconnect((_) => debugPrint('🔌 HomeScreen: activity socket disconnected'));
+    socket.onConnect(
+      (_) => debugPrint('✅ HomeScreen: activity socket connected'),
+    );
+    socket.onConnectError(
+      (e) => debugPrint('❌ HomeScreen: activity socket connect error: $e'),
+    );
+    socket.onDisconnect(
+      (_) => debugPrint('🔌 HomeScreen: activity socket disconnected'),
+    );
 
     socket.connect();
   }
@@ -438,7 +443,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   shape: BoxShape.circle,
                   color: color.withOpacity(0.12),
                 ),
-                child: Icon(feature['icon'] as IconData, color: color, size: 24),
+                child: Icon(
+                  feature['icon'] as IconData,
+                  color: color,
+                  size: 24,
+                ),
               ),
               const SizedBox(height: 6),
               Text(
@@ -707,8 +716,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: Text(
                               activity.timeAgo,
                               style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurface
-                                    .withOpacity(0.5),
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.5,
+                                ),
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -1099,132 +1109,133 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CustomScrollView(
                       controller: _scrollController,
                       slivers: [
-                    // --- iOS has no AppBar, so its identity/notifications/
-                    // profile access lives inline instead of disappearing. ---
-                    if (isIOS)
-                      SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                        sliver: SliverToBoxAdapter(
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  'PensaConnect',
+                        // --- iOS has no AppBar, so its identity/notifications/
+                        // profile access lives inline instead of disappearing. ---
+                        if (isIOS)
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                            sliver: SliverToBoxAdapter(
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'PensaConnect',
+                                      style: theme.textTheme.headlineSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.notifications_none_rounded,
+                                    ),
+                                    onPressed: () {},
+                                    tooltip: 'Notifications',
+                                  ),
+                                  GestureDetector(
+                                    onTap: () => context.go('/profile'),
+                                    child: _buildProfileAvatar(theme),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                        // --- Greeting header ---
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                          sliver: SliverToBoxAdapter(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _currentUser != null
+                                      ? 'Welcome back, ${_currentUser!.username}!'
+                                      : 'Welcome back!',
                                   style: theme.textTheme.headlineSmall
-                                      ?.copyWith(fontWeight: FontWeight.w800),
+                                      ?.copyWith(fontWeight: FontWeight.bold),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.notifications_none_rounded,
+                                const SizedBox(height: 4),
+                                Text(
+                                  "Here's what's happening in your community",
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.6),
+                                  ),
                                 ),
-                                onPressed: () {},
-                                tooltip: 'Notifications',
-                              ),
-                              GestureDetector(
-                                onTap: () => context.go('/profile'),
-                                child: _buildProfileAvatar(theme),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                      ),
 
-                    // --- Greeting header ---
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      sliver: SliverToBoxAdapter(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _currentUser != null
-                                  ? 'Welcome back, ${_currentUser!.username}!'
-                                  : 'Welcome back!',
-                              style: theme.textTheme.headlineSmall?.copyWith(
+                        // --- Search + quick actions: scroll away with the
+                        // feed like everything else, rather than staying
+                        // pinned at the top. A small floating search button
+                        // (see the Stack in build()) takes over once this
+                        // has scrolled out of view. ---
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                          sliver: SliverToBoxAdapter(
+                            child: SizedBox(
+                              height: 52,
+                              child: _buildSearchField(theme),
+                            ),
+                          ),
+                        ),
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(0, 16, 0, 10),
+                          sliver: SliverToBoxAdapter(
+                            child: SizedBox(
+                              height: 92,
+                              child: _loading
+                                  ? const _QuickActionsSkeleton()
+                                  : filteredFeatures.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        'No matching features',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: theme.colorScheme.onSurface
+                                                  .withOpacity(0.5),
+                                            ),
+                                      ),
+                                    )
+                                  : ListView.separated(
+                                      scrollDirection: Axis.horizontal,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                      ),
+                                      itemCount: filteredFeatures.length,
+                                      separatorBuilder: (_, __) =>
+                                          const SizedBox(width: 8),
+                                      itemBuilder: (context, index) =>
+                                          _buildQuickAction(
+                                            context,
+                                            filteredFeatures[index],
+                                          ),
+                                    ),
+                            ),
+                          ),
+                        ),
+
+                        // --- Activity feed: the primary content ---
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                          sliver: SliverToBoxAdapter(
+                            child: Text(
+                              'Recent Activity',
+                              style: theme.textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              "Here's what's happening in your community",
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurface
-                                    .withOpacity(0.6),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    // --- Search + quick actions: scroll away with the
-                    // feed like everything else, rather than staying
-                    // pinned at the top. A small floating search button
-                    // (see the Stack in build()) takes over once this
-                    // has scrolled out of view. ---
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-                      sliver: SliverToBoxAdapter(
-                        child: SizedBox(
-                          height: 52,
-                          child: _buildSearchField(theme),
-                        ),
-                      ),
-                    ),
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(0, 16, 0, 10),
-                      sliver: SliverToBoxAdapter(
-                        child: SizedBox(
-                          height: 92,
-                          child: _loading
-                              ? const _QuickActionsSkeleton()
-                              : filteredFeatures.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    'No matching features',
-                                    style: theme.textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: theme.colorScheme.onSurface
-                                              .withOpacity(0.5),
-                                        ),
-                                  ),
-                                )
-                              : ListView.separated(
-                                  scrollDirection: Axis.horizontal,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                  ),
-                                  itemCount: filteredFeatures.length,
-                                  separatorBuilder: (_, __) =>
-                                      const SizedBox(width: 8),
-                                  itemBuilder: (context, index) =>
-                                      _buildQuickAction(
-                                        context,
-                                        filteredFeatures[index],
-                                      ),
-                                ),
-                        ),
-                      ),
-                    ),
-
-                    // --- Activity feed: the primary content ---
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-                      sliver: SliverToBoxAdapter(
-                        child: Text(
-                          'Recent Activity',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ),
-                    ),
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      sliver: _buildFeedSliver(theme, filteredActivities),
-                    ),
-                    const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          sliver: _buildFeedSliver(theme, filteredActivities),
+                        ),
+                        const SliverToBoxAdapter(child: SizedBox(height: 32)),
                       ],
                     ),
                   ),
@@ -1303,35 +1314,28 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (_activitiesFailed) {
-      return SliverToBoxAdapter(
-        child: _buildFeedErrorState(context, theme),
-      );
+      return SliverToBoxAdapter(child: _buildFeedErrorState(context, theme));
     }
 
     if (filteredActivities.isEmpty) {
-      return SliverToBoxAdapter(
-        child: _buildEmptyFeedState(context, theme),
-      );
+      return SliverToBoxAdapter(child: _buildEmptyFeedState(context, theme));
     }
 
     return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final activity = filteredActivities[index];
-          final isLast = index == filteredActivities.length - 1;
-          return Padding(
-            padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
-            child: _FadeSlideIn(
-              delay: Duration(milliseconds: 40 * index.clamp(0, 6)),
-              child: KeyedSubtree(
-                key: ValueKey(activity.id),
-                child: _buildActivityCard(context, activity),
-              ),
+      delegate: SliverChildBuilderDelegate((context, index) {
+        final activity = filteredActivities[index];
+        final isLast = index == filteredActivities.length - 1;
+        return Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+          child: _FadeSlideIn(
+            delay: Duration(milliseconds: 40 * index.clamp(0, 6)),
+            child: KeyedSubtree(
+              key: ValueKey(activity.id),
+              child: _buildActivityCard(context, activity),
             ),
-          );
-        },
-        childCount: filteredActivities.length,
-      ),
+          ),
+        );
+      }, childCount: filteredActivities.length),
     );
   }
 }
@@ -1530,9 +1534,7 @@ class _ShimmerState extends State<_Shimmer>
   @override
   Widget build(BuildContext context) {
     final base = Theme.of(context).colorScheme.onSurface.withOpacity(0.08);
-    final highlight = Theme.of(
-      context,
-    ).colorScheme.onSurface.withOpacity(0.16);
+    final highlight = Theme.of(context).colorScheme.onSurface.withOpacity(0.16);
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
@@ -1772,6 +1774,14 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
                       children: [
                         FittedBox(
                           fit: BoxFit.cover,
+                          // FittedBox doesn't clip its child by default —
+                          // without this, a video whose native aspect
+                          // ratio doesn't match the fixed 16:10 reel box
+                          // gets scaled up by `cover` but NOT cropped,
+                          // so it visually spills out over the caption
+                          // above and the like/comment bar below instead
+                          // of staying confined to the reel.
+                          clipBehavior: Clip.hardEdge,
                           child: SizedBox(
                             width: _controller!.value.size.width,
                             height: _controller!.value.size.height,
@@ -1846,7 +1856,6 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
   }
 }
 
-
 // ==========================================
 // FULL-SCREEN MEDIA VIEWER
 // ==========================================
@@ -1906,9 +1915,9 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
     final uri = Uri.parse(widget.url);
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Couldn't open that link.")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Couldn't open that link.")));
     }
   }
 
@@ -1935,9 +1944,7 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
           ),
         ],
       ),
-      body: Center(
-        child: widget.isVideo ? _buildVideo() : _buildImage(),
-      ),
+      body: Center(child: widget.isVideo ? _buildVideo() : _buildImage()),
     );
   }
 
