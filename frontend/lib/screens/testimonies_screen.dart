@@ -1,8 +1,99 @@
+// screens/testimonies_screen.dart
+// ignore_for_file: deprecated_member_use
+
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import '../models/testimony_model.dart';
-import '../repositories/testimony_repository.dart';
-import '../services/auth_service.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:timeago/timeago.dart' as timeago;
+
+/// A single piece of media attached to a testimony/post.
+class PostMedia {
+  final File? file;
+  final String? networkUrl;
+  final bool isVideo;
+  const PostMedia({this.file, this.networkUrl, this.isVideo = false});
+
+  ImageProvider get thumbnailProvider => file != null
+      ? FileImage(file!) as ImageProvider
+      : NetworkImage(networkUrl!);
+}
+
+class Testimony {
+  final String id;
+  final String title;
+  final String content;
+  final String author;
+  final String? authorAvatar;
+  final bool anonymous;
+  final DateTime createdAt;
+  final List<PostMedia> media;
+  int likes;
+  int commentCount;
+
+  Testimony({
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.author,
+    this.authorAvatar,
+    this.anonymous = false,
+    DateTime? createdAt,
+    List<PostMedia>? media,
+    this.likes = 0,
+    this.commentCount = 0,
+  }) : createdAt = createdAt ?? DateTime.now(),
+       media = media ?? [];
+
+  String get displayName => anonymous ? 'Anonymous' : author;
+}
+
+/// Seed data so the feed doesn't start empty. Replace with a real
+/// repository call once the backend "posts" endpoint is available.
+List<Testimony> _seedTestimonies() => [
+  Testimony(
+    id: 't1',
+    title: 'God provided right on time',
+    content:
+        'Last month I was going through a very difficult season. I had just lost my job and was struggling to pay my bills. That night I prayed like never before, and the next morning I got a call offering me an even better position. God is faithful!',
+    author: 'Grace Mensah',
+    createdAt: DateTime.now().subtract(const Duration(days: 1)),
+    media: const [
+      PostMedia(networkUrl: 'https://picsum.photos/seed/testify1/700/500'),
+    ],
+    likes: 24,
+    commentCount: 8,
+  ),
+  Testimony(
+    id: 't2',
+    title: 'Healed after months of prayer',
+    content:
+        'After months of the youth group praying for my recovery, I finally got the all-clear from my doctor this week. Thank you all for standing with me in faith — I felt every prayer.',
+    author: 'Kwame Owusu',
+    createdAt: DateTime.now().subtract(const Duration(days: 2)),
+    media: const [
+      PostMedia(networkUrl: 'https://picsum.photos/seed/testify2/700/500'),
+      PostMedia(networkUrl: 'https://picsum.photos/seed/testify2b/700/500'),
+    ],
+    likes: 41,
+    commentCount: 12,
+  ),
+  Testimony(
+    id: 't3',
+    title: 'A new chapter of worship',
+    content:
+        'Sharing a short clip from last week\'s worship night — such a powerful reminder of what we can do together as a body of believers.',
+    author: 'Ama Boateng',
+    createdAt: DateTime.now().subtract(const Duration(days: 4)),
+    media: const [
+      PostMedia(
+        networkUrl: 'https://picsum.photos/seed/testify3/700/500',
+        isVideo: true,
+      ),
+    ],
+    likes: 18,
+    commentCount: 3,
+  ),
+];
 
 class TestimoniesScreen extends StatefulWidget {
   const TestimoniesScreen({super.key});
@@ -12,166 +103,23 @@ class TestimoniesScreen extends StatefulWidget {
 }
 
 class _TestimoniesScreenState extends State<TestimoniesScreen> {
-  final _repo = TestimonyRepository();
-  late Future<List<Testimony>> _future;
+  final List<Testimony> _testimonies = _seedTestimonies();
 
-  // ✅ Same identity-color system used across forums/groups, so a given
-  // person is visually consistent everywhere in the app.
-  static const List<Color> _avatarPalette = [
-    Color(0xFF7C4DFF),
-    Color(0xFF26A69A),
-    Color(0xFFFF7043),
-    Color(0xFF42A5F5),
-    Color(0xFFEC407A),
-    Color(0xFF66BB6A),
-    Color(0xFF5C6BC0),
-    Color(0xFFFFA726),
-  ];
-
-  Color _colorForName(String name) {
-    if (name.isEmpty) return _avatarPalette.first;
-    final hash = name.codeUnits.fold<int>(0, (a, b) => a + b);
-    return _avatarPalette[hash % _avatarPalette.length];
-  }
-
-  String _initialsFor(String name) {
-    if (name.isEmpty) return '?';
-    final parts = name.trim().split(RegExp(r'\s+'));
-    if (parts.length >= 2) {
-      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    }
-    return name[0].toUpperCase();
-  }
-
-  // ✅ FIX: previously the delete icon was shown on every card regardless
-  // of who was viewing it — meaning any logged-in user could delete any
-  // OTHER user's testimony. This now compares the testimony's real
-  // `authorId` (confirmed present on the Testimony model) against the
-  // logged-in user's id, instead of the earlier username-based proxy.
-  // authorId is a String on the model, AuthService().userId is an int?,
-  // so both sides are normalized to string for the comparison.
-  bool _canDelete(Testimony t) {
-    final auth = AuthService();
-    if (auth.isAdmin) return true;
-    final myId = auth.userId;
-    if (myId == null || t.authorId.isEmpty) return false;
-    return t.authorId == myId.toString();
-  }
-
-  final Map<String, bool> _showHeartBurst = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _future = _repo.fetchTestimonies();
-  }
-
-  Future<void> _refresh() async {
-    setState(() {
-      _future = _repo.fetchTestimonies(forceRefresh: true);
-    });
-    await _future;
-  }
-
-  Future<void> _deleteTestimony(int id) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Testimony?'),
-        content: const Text('This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+  Future<void> _openAddTestimony() async {
+    final result = await Navigator.push<Testimony>(
+      context,
+      MaterialPageRoute(builder: (context) => const AddTestimonyScreen()),
     );
-
-    if (confirmed == true) {
-      try {
-        await _repo.deleteTestimony(id);
-        if (mounted) _refresh();
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
-        }
-      }
+    if (result != null) {
+      setState(() => _testimonies.insert(0, result));
     }
   }
 
-  Future<void> _toggleLike(Testimony testimony, int index) async {
-    try {
-      await _repo.toggleLike(int.parse(testimony.id));
-      setState(() {
-        _future = _repo.fetchTestimonies();
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to like: $e')));
-      }
-    }
-  }
-
-  void _onCardDoubleTap(Testimony t, int index) {
-    if (!t.likedByMe) {
-      _toggleLike(t, index);
-    }
-    setState(() => _showHeartBurst[t.id] = true);
-    Future.delayed(const Duration(milliseconds: 650), () {
-      if (mounted) setState(() => _showHeartBurst[t.id] = false);
-    });
-  }
-
-  void _navigateToComments(Testimony testimony) async {
-    await context.push('/testimonies/${testimony.id}');
-    if (mounted) {
-      setState(() {
-        _future = _repo.fetchTestimonies();
-      });
-    }
-  }
-
-  Widget _buildEmptyState(ThemeData theme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.auto_stories_outlined, size: 72, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            const Text(
-              'No testimonies yet',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Someone\'s story could encourage someone else\ntoday. Yours might be the first.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () async {
-                await context.push('/testimonies/add');
-                if (mounted) {
-                  setState(() => _future = _repo.fetchTestimonies());
-                }
-              },
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Share your story'),
-            ),
-          ],
-        ),
+  void _openDetail(Testimony t) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TestimonyDetailScreen(testimony: t),
       ),
     );
   }
@@ -182,316 +130,824 @@ class _TestimoniesScreenState extends State<TestimoniesScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Testimonies & Stories')),
-      body: FutureBuilder<List<Testimony>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            debugPrint('❌ Error fetching testimonies: ${snapshot.error}');
-            return Center(
+      body: _testimonies.isEmpty
+          ? Center(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(32),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.wifi_off, size: 64, color: Colors.grey[400]),
+                    Icon(
+                      Icons.auto_stories_outlined,
+                      size: 64,
+                      color: theme.colorScheme.onSurface.withOpacity(0.3),
+                    ),
                     const SizedBox(height: 16),
-                    const Text('Failed to load testimonies.'),
-                    const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      onPressed: _refresh,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Retry'),
+                    Text(
+                      'No testimonies yet',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Be the first to share what God has done in your life.',
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
               ),
-            );
-          }
-
-          final testimonies = snapshot.data ?? [];
-          if (testimonies.isEmpty) {
-            return RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.7,
-                    child: _buildEmptyState(theme),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: testimonies.length,
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
+              itemCount: _testimonies.length + 1,
               itemBuilder: (context, index) {
-                final t = testimonies[index];
-                final color = _colorForName(t.authorName);
-                final isPopular = t.likesCount >= 10 || t.commentsCount >= 5;
-                final canDelete = _canDelete(t);
-
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                    side: BorderSide(color: color.withOpacity(0.15)),
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      'Recent Testimonies',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
+                }
+                final t = _testimonies[index - 1];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: _TestimonyCard(
+                    testimony: t,
+                    onTap: () => _openDetail(t),
+                    onLike: () => setState(() => t.likes++),
                   ),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(18),
-                    onTap: () async {
-                      await context.push('/testimonies/${t.id}');
-                      if (mounted) {
-                        setState(() {
-                          _future = _repo.fetchTestimonies();
-                        });
-                      }
-                    },
-                    onDoubleTap: () => _onCardDoubleTap(t, index),
+                );
+              },
+            ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openAddTestimony,
+        icon: const Icon(Icons.add),
+        label: const Text('Share'),
+      ),
+    );
+  }
+}
+
+class _TestimonyCard extends StatelessWidget {
+  final Testimony testimony;
+  final VoidCallback onTap;
+  final VoidCallback onLike;
+  const _TestimonyCard({
+    required this.testimony,
+    required this.onTap,
+    required this.onLike,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.cardColor,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: theme.colorScheme.primary.withOpacity(
+                      0.12,
+                    ),
+                    child: testimony.anonymous
+                        ? Icon(
+                            Icons.visibility_off_outlined,
+                            color: theme.colorScheme.primary,
+                            size: 18,
+                          )
+                        : Icon(Icons.person, color: theme.colorScheme.primary),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            if (t.imageUrl != null)
-                              ClipRRect(
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(18),
-                                ),
-                                child: Image.network(
-                                  t.imageUrl!,
-                                  height: 160,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      height: 160,
-                                      width: double.infinity,
-                                      color: Colors.grey[200],
-                                      child: const Icon(
-                                        Icons.broken_image,
-                                        color: Colors.grey,
-                                        size: 50,
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            // ✅ Heart burst on double-tap — same delight
-                            // pattern as the forums screens, so the gesture
-                            // is consistent (and therefore addictive in a
-                            // healthy, learned-muscle-memory way) across
-                            // the whole app.
-                            AnimatedOpacity(
-                              opacity: (_showHeartBurst[t.id] ?? false) ? 1 : 0,
-                              duration: const Duration(milliseconds: 200),
-                              child: AnimatedScale(
-                                scale: (_showHeartBurst[t.id] ?? false) ? 1.0 : 0.5,
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.elasticOut,
-                                child: const Icon(
-                                  Icons.favorite,
-                                  color: Colors.redAccent,
-                                  size: 72,
-                                  shadows: [Shadow(color: Colors.black38, blurRadius: 12)],
-                                ),
-                              ),
-                            ),
-                          ],
+                        Text(
+                          testimony.displayName,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Row(
-                                      children: [
-                                        Flexible(
-                                          child: Text(
-                                            t.title,
-                                            style: theme.textTheme.titleLarge
-                                                ?.copyWith(fontWeight: FontWeight.bold),
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        if (isPopular) ...[
-                                          const SizedBox(width: 6),
-                                          const Text('🔥', style: TextStyle(fontSize: 14)),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                  // ✅ Delete now hidden unless you're the
-                                  // author or an admin, and tucked into a
-                                  // low-key overflow menu instead of a
-                                  // loud red icon on every card.
-                                  if (canDelete)
-                                    PopupMenuButton<String>(
-                                      icon: Icon(Icons.more_vert, color: Colors.grey[600], size: 20),
-                                      onSelected: (value) {
-                                        if (value == 'delete') {
-                                          _deleteTestimony(int.parse(t.id));
-                                        }
-                                      },
-                                      itemBuilder: (context) => [
-                                        const PopupMenuItem(
-                                          value: 'delete',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.delete_outline, color: Colors.red, size: 18),
-                                              SizedBox(width: 8),
-                                              Text('Delete', style: TextStyle(color: Colors.red)),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                t.content.length > 100
-                                    ? '${t.content.substring(0, 100)}...'
-                                    : t.content,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 14, height: 1.3),
-                              ),
-                              const SizedBox(height: 14),
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor: color,
-                                    child: Text(
-                                      _initialsFor(t.authorName),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      t.authorName,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: color,
-                                        fontSize: 13,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    t.createdAt.toLocal().toString().split(" ").first,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  InkWell(
-                                    onTap: () => _toggleLike(t, index),
-                                    borderRadius: BorderRadius.circular(20),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(milliseconds: 200),
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: t.likedByMe
-                                            ? theme.colorScheme.primary.withOpacity(0.12)
-                                            : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          AnimatedScale(
-                                            scale: t.likedByMe ? 1.15 : 1.0,
-                                            duration: const Duration(milliseconds: 200),
-                                            child: Icon(
-                                              t.likedByMe ? Icons.thumb_up : Icons.thumb_up_outlined,
-                                              size: 18,
-                                              color: t.likedByMe ? theme.colorScheme.primary : Colors.grey,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            '${t.likesCount}',
-                                            style: TextStyle(
-                                              color: t.likedByMe ? theme.colorScheme.primary : Colors.grey,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  InkWell(
-                                    onTap: () => _navigateToComments(t),
-                                    borderRadius: BorderRadius.circular(20),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                      child: Row(
-                                        children: [
-                                          const Icon(Icons.chat_bubble_outline, size: 17, color: Colors.grey),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            '${t.commentsCount}',
-                                            style: const TextStyle(
-                                              color: Colors.grey,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                        Text(
+                          timeago.format(testimony.createdAt),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface.withOpacity(
+                              0.55,
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                );
+                ],
+              ),
+            ),
+            if (testimony.media.isNotEmpty)
+              _MediaPreview(media: testimony.media),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    testimony.title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    testimony.content,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      _ActionChip(
+                        icon: Icons.favorite_border,
+                        label: '${testimony.likes}',
+                        onTap: onLike,
+                      ),
+                      const SizedBox(width: 8),
+                      _ActionChip(
+                        icon: Icons.mode_comment_outlined,
+                        label: '${testimony.commentCount}',
+                        onTap: onTap,
+                      ),
+                      const Spacer(),
+                      Icon(
+                        Icons.share_outlined,
+                        size: 18,
+                        color: theme.colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaPreview extends StatelessWidget {
+  final List<PostMedia> media;
+  const _MediaPreview({required this.media});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (media.length == 1) {
+      return AspectRatio(
+        aspectRatio: 16 / 10,
+        child: _MediaTile(media: media.first),
+      );
+    }
+    return SizedBox(
+      height: 170,
+      child: PageView.builder(
+        itemCount: media.length,
+        controller: PageController(viewportFraction: 0.94),
+        itemBuilder: (context, i) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: _MediaTile(
+              media: media[i],
+              indexLabel: '${i + 1}/${media.length}',
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaTile extends StatelessWidget {
+  final PostMedia media;
+  final String? indexLabel;
+  const _MediaTile({required this.media, this.indexLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image(
+          image: media.thumbnailProvider,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(
+            color: Colors.grey.shade300,
+            child: const Icon(Icons.image_not_supported_outlined),
+          ),
+        ),
+        if (media.isVideo)
+          Container(
+            color: Colors.black26,
+            child: const Center(
+              child: Icon(
+                Icons.play_circle_fill,
+                color: Colors.white,
+                size: 46,
+              ),
+            ),
+          ),
+        if (indexLabel != null)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                indexLabel!,
+                style: const TextStyle(color: Colors.white, fontSize: 11),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ActionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _ActionChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: theme.colorScheme.onSurface.withOpacity(0.65),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TestimonyDetailScreen extends StatefulWidget {
+  final Testimony testimony;
+  const TestimonyDetailScreen({super.key, required this.testimony});
+
+  @override
+  State<TestimonyDetailScreen> createState() => _TestimonyDetailScreenState();
+}
+
+class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
+  final List<Map<String, String>> _comments = [
+    {
+      'user': 'Efua',
+      'text':
+          'This really encouraged me in my own situation. Thank you for sharing!',
+    },
+    {'user': 'Yaw', 'text': 'Praise God! Needed to read this today.'},
+  ];
+  final _commentController = TextEditingController();
+
+  void _addComment() {
+    final text = _commentController.text.trim();
+    if (text.isEmpty) return;
+    setState(() {
+      _comments.add({'user': 'You', 'text': text});
+      widget.testimony.commentCount++;
+      _commentController.clear();
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final t = widget.testimony;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (t.media.isNotEmpty)
+              SizedBox(
+                height: 260,
+                child: PageView.builder(
+                  itemCount: t.media.length,
+                  itemBuilder: (context, i) => _MediaTile(
+                    media: t.media[i],
+                    indexLabel: t.media.length > 1
+                        ? '${i + 1}/${t.media.length}'
+                        : null,
+                  ),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    t.title,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: theme.colorScheme.primary.withOpacity(
+                          0.1,
+                        ),
+                        child: Icon(
+                          Icons.person,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            t.displayName,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            timeago.format(t.createdAt),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.6,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    t.content,
+                    style: const TextStyle(fontSize: 16, height: 1.5),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.favorite_border),
+                        onPressed: () => setState(() => t.likes++),
+                      ),
+                      Text('${t.likes}'),
+                      const SizedBox(width: 16),
+                      const Icon(Icons.comment_outlined),
+                      const SizedBox(width: 6),
+                      Text('${t.commentCount}'),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.share),
+                        onPressed: () {},
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Comments (${_comments.length})',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ..._comments.map(
+                    (c) => Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CircleAvatar(
+                            backgroundColor: theme.colorScheme.primary
+                                .withOpacity(0.1),
+                            child: Icon(
+                              Icons.person,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  c['user']!,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(c['text']!),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _commentController,
+                    onSubmitted: (_) => _addComment(),
+                    decoration: InputDecoration(
+                      hintText: 'Add a comment...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                      ),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.send),
+                        onPressed: _addComment,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AddTestimonyScreen extends StatefulWidget {
+  const AddTestimonyScreen({super.key});
+
+  @override
+  State<AddTestimonyScreen> createState() => _AddTestimonyScreenState();
+}
+
+class _AddTestimonyScreenState extends State<AddTestimonyScreen> {
+  final _titleController = TextEditingController();
+  final _contentController = TextEditingController();
+  final _picker = ImagePicker();
+  final List<PostMedia> _media = [];
+  bool _anonymous = false;
+  bool _posting = false;
+
+  static const int _maxMedia = 6;
+
+  Future<void> _pickFromGallery() async {
+    if (_media.length >= _maxMedia) return _showLimitReached();
+    final picked = await _picker.pickMultiImage(imageQuality: 85);
+    if (picked.isEmpty) return;
+    setState(() {
+      for (final p in picked) {
+        if (_media.length >= _maxMedia) break;
+        _media.add(PostMedia(file: File(p.path)));
+      }
+    });
+  }
+
+  Future<void> _takePhoto() async {
+    if (_media.length >= _maxMedia) return _showLimitReached();
+    final picked = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+    setState(() => _media.add(PostMedia(file: File(picked.path))));
+  }
+
+  Future<void> _pickVideo() async {
+    if (_media.length >= _maxMedia) return _showLimitReached();
+    final picked = await _picker.pickVideo(source: ImageSource.gallery);
+    if (picked == null) return;
+    setState(
+      () => _media.add(PostMedia(file: File(picked.path), isVideo: true)),
+    );
+  }
+
+  void _showLimitReached() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('You can attach up to $_maxMedia files per post'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _openMediaSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Theme.of(ctx).dividerColor,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Take a photo'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _takePhoto();
               },
             ),
-          );
-        },
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose photos from gallery'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickFromGallery();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_outlined),
+              title: const Text('Attach a video'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideo();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await context.push('/testimonies/add');
-          if (mounted) {
-            setState(() {
-              _future = _repo.fetchTestimonies();
-            });
-          }
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('Share'),
+    );
+  }
+
+  void _removeMedia(int index) => setState(() => _media.removeAt(index));
+
+  Future<void> _submit() async {
+    final title = _titleController.text.trim();
+    final content = _contentController.text.trim();
+    if (title.isEmpty || content.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please add a title and share your story'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    setState(() => _posting = true);
+    // TODO: replace with a real call to the posts/testimonies repository,
+    // uploading each PostMedia file before saving the record.
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    final testimony = Testimony(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      title: title,
+      content: content,
+      author: 'You',
+      anonymous: _anonymous,
+      media: List.of(_media),
+    );
+    Navigator.pop(context, testimony);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Share Your Testimony')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your story can inspire others',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _contentController,
+              maxLines: 8,
+              decoration: const InputDecoration(
+                labelText: 'Your Testimony',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Photos & video (optional)',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Add up to $_maxMedia files to bring your story to life',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.6),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 96,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  ..._media.asMap().entries.map((entry) {
+                    final i = entry.key;
+                    final m = entry.value;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              width: 96,
+                              height: 96,
+                              color: theme.colorScheme.surfaceVariant,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image(
+                                    image: m.thumbnailProvider,
+                                    fit: BoxFit.cover,
+                                  ),
+                                  if (m.isVideo)
+                                    const Center(
+                                      child: Icon(
+                                        Icons.play_circle_fill,
+                                        color: Colors.white,
+                                        size: 32,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 2,
+                            right: 2,
+                            child: GestureDetector(
+                              onTap: () => _removeMedia(i),
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  if (_media.length < _maxMedia)
+                    InkWell(
+                      onTap: _openMediaSheet,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: theme.dividerColor),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.add_a_photo_outlined,
+                              color: theme.colorScheme.primary,
+                            ),
+                            const SizedBox(height: 4),
+                            Text('Add', style: theme.textTheme.bodySmall),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(child: Text('Share anonymously')),
+                  Switch(
+                    value: _anonymous,
+                    onChanged: (v) => setState(() => _anonymous = v),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _posting ? null : _submit,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  child: _posting
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Share Testimony'),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
