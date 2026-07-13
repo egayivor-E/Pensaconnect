@@ -188,6 +188,7 @@ class User(BaseModel,  UserMixin):
     testimonies = relationship("Testimony", back_populates="user")
     testimony_comments = relationship("TestimonyComment", back_populates="user")
     testimony_likes = relationship("TestimonyLike", back_populates="user")
+    timeline_posts = relationship("TimelinePost", back_populates="user", cascade="all, delete-orphan")
     group_chats_created = db.relationship('GroupChat',back_populates='created_by', foreign_keys='GroupChat.created_by_id', cascade='all, delete-orphan'
     )
     
@@ -1424,6 +1425,43 @@ class Testimony(BaseModel):
         return data
     
     
+
+class TimelinePost(BaseModel):
+    """
+    A post a user makes on their own profile/timeline. Distinct from the
+    forum `Post` model (which always belongs to a `ForumThread`) — a
+    TimelinePost has no thread, it just belongs to the author.
+
+    Every TimelinePost that gets created also gets a matching Activity
+    row (target_type="timeline_post") so it shows up in the global
+    "Recent" feed. Deleting the post deletes that Activity row too (see
+    the DELETE route in api/v1/timeline_posts.py) so it disappears from
+    both places at once, per the "delete everywhere" requirement.
+    """
+    __tablename__ = "timeline_posts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    image_url = db.Column(db.String(500), nullable=True)
+
+    user = db.relationship("User", back_populates="timeline_posts")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "content": self.content,
+            "imageUrl": self.image_url,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "userId": self.user_id,
+            "user": {
+                "id": self.user.id if self.user else None,
+                "username": self.user.username if self.user else None,
+                "fullName": self.user.get_full_name() if self.user and hasattr(self.user, "get_full_name") else None,
+                "profilePicture": getattr(self.user, "profile_picture", None) if self.user else None,
+            },
+        }
+
 
 class TestimonyComment(BaseModel):
     __tablename__ = "testimony_comments"

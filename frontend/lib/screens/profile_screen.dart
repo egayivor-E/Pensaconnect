@@ -6,7 +6,9 @@ import 'package:pensaconnect/config/config.dart';
 import '../models/badge.dart';
 import '../models/profile_view_model.dart';
 import '../models/user.dart';
+import '../models/timeline_post_model.dart';
 import '../repositories/user_repository.dart';
+import '../repositories/timeline_post_repository.dart';
 import '../services/auth_service.dart';
 import 'edit_profile_screen.dart';
 
@@ -21,9 +23,18 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final _repo = UserRepository();
+  final _timelineRepo = TimelinePostRepository();
   User? _user;
   bool _loading = true;
   bool _isOwnProfile = true;
+
+  // ✅ Timeline (profile) posts — the user's own posts shown below the
+  // stats card. Loaded once we know which user's profile we're on
+  // (works for both "my profile" and viewing someone else's).
+  List<TimelinePost> _timelinePosts = [];
+  bool _timelineLoading = true;
+  final TextEditingController _composerController = TextEditingController();
+  bool _posting = false;
 
   @override
   void initState() {
@@ -47,9 +58,75 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _isOwnProfile = false;
         _loading = false;
       });
+      _loadTimelinePosts();
     } else {
       await _loadCurrentUser();
     }
+  }
+
+  Future<void> _loadTimelinePosts() async {
+    if (_user == null) return;
+    setState(() => _timelineLoading = true);
+    try {
+      final posts = await _timelineRepo.fetchUserPosts(_user!.id);
+      if (!mounted) return;
+      setState(() {
+        _timelinePosts = posts;
+        _timelineLoading = false;
+      });
+    } catch (e) {
+      debugPrint("❌ Error loading timeline posts: $e");
+      if (!mounted) return;
+      setState(() => _timelineLoading = false);
+    }
+  }
+
+  Future<void> _submitPost() async {
+    final content = _composerController.text.trim();
+    if (content.isEmpty || _posting) return;
+
+    setState(() => _posting = true);
+    try {
+      final post = await _timelineRepo.addPost(content: content);
+      if (!mounted) return;
+      setState(() {
+        _timelinePosts.insert(0, post);
+        _composerController.clear();
+        _posting = false;
+      });
+    } catch (e) {
+      debugPrint("❌ Error creating post: $e");
+      if (!mounted) return;
+      setState(() => _posting = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to post')));
+    }
+  }
+
+  Future<void> _deletePost(TimelinePost post) async {
+    // Optimistic removal — this is the user's own post list, deleting it
+    // here also deletes the matching Activity row server-side, which is
+    // what makes it disappear from the Home "Recent" feed too.
+    final index = _timelinePosts.indexOf(post);
+    if (index == -1) return;
+    setState(() => _timelinePosts.removeAt(index));
+    try {
+      await _timelineRepo.deletePost(post.id);
+    } catch (e) {
+      debugPrint("❌ Error deleting post: $e");
+      if (!mounted) return;
+      setState(() => _timelinePosts.insert(index, post));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to delete post')));
+    }
+  }
+
+  @override
+  void dispose() {
+    _composerController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadCurrentUser() async {
@@ -80,6 +157,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _loading = false;
       });
       if (mounted) context.read<ProfileViewModel>().loadProfile();
+      _loadTimelinePosts();
     } catch (e, stack) {
       debugPrint("❌ Error loading profile: $e");
       debugPrint("🧩 Stack trace: $stack");
@@ -178,6 +256,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           const SizedBox(height: 20),
                           _buildStatsAndBadges(context),
                         ],
+                        const SizedBox(height: 20),
+                        if (_isOwnProfile) _buildComposer(context),
+                        _buildTimelinePosts(context),
                       ],
                     ),
                   ),
@@ -293,7 +374,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
         return Card(
           elevation: 1,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -357,6 +440,197 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       },
     );
+  }
+
+  // ✅ Post composer — own profile only. Posting here creates a
+  // TimelinePost server-side, which also logs an Activity so the post
+  // shows up on Home's "Recent" feed at the same time.
+  Widget _buildComposer(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.only(bottom: 20),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _composerController,
+              minLines: 2,
+              maxLines: 5,
+              enabled: !_posting,
+              decoration: InputDecoration(
+                hintText: "Share something on your timeline...",
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                contentPadding: const EdgeInsets.all(12),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: _posting ? null : _submitPost,
+                icon: _posting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send_rounded, size: 18),
+                label: Text(_posting ? 'Posting...' : 'Post'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: theme.colorScheme.onPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ✅ The user's timeline feed — their own posts, newest first. Shown on
+  // both "my profile" and viewing someone else's profile; only the
+  // composer and delete affordance are restricted to the owner.
+  Widget _buildTimelinePosts(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (_timelineLoading && _timelinePosts.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_timelinePosts.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            _isOwnProfile ? 'Nothing posted yet.' : 'No posts yet.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.6),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: _timelinePosts
+          .map(
+            (post) => _TimelinePostCard(
+              post: post,
+              canDelete: _isOwnProfile,
+              onDelete: () => _deletePost(post),
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+// A single timeline post shown on the profile feed, with an optional
+// delete affordance (owner only). Deleting removes it from the profile
+// AND the Home "Recent" feed at once, via the backend's Activity cleanup.
+class _TimelinePostCard extends StatelessWidget {
+  final TimelinePost post;
+  final bool canDelete;
+  final VoidCallback onDelete;
+
+  const _TimelinePostCard({
+    required this.post,
+    required this.canDelete,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _formatDate(post.createdAt),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                  ),
+                ),
+                if (canDelete)
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                    tooltip: 'Delete post',
+                    onPressed: () => _confirmDelete(context),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(post.content, style: theme.textTheme.bodyLarge),
+            if (post.imageUrl != null && post.imageUrl!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.network(
+                  post.imageUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete post?'),
+        content: const Text(
+          'This removes it from your profile and from Recent activity.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              onDelete();
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${date.day}/${date.month}/${date.year}';
   }
 }
 

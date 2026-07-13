@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_vector_icons/flutter_vector_icons.dart';
 import 'package:timeago/timeago.dart' as timeago;
+
 class Activity {
   // ✅ The activity log row's own id (distinct from targetId, which is
   // the id of whatever the activity is *about*). Required for dedup —
@@ -108,16 +109,22 @@ class Activity {
       // Falls back to a hash of title+createdAt if the backend ever omits
       // "id" (shouldn't happen, but keeps fromJson from crashing / keeps
       // dedup-by-id from silently colliding every unidentified row onto 0).
-      id: (json['id'] as num?)?.toInt() ??
+      id:
+          (json['id'] as num?)?.toInt() ??
           Object.hash(json['title'], json['created_at'] ?? json['createdAt']),
       title: json['title'] ?? 'Untitled',
       subtitle: json['subtitle'] ?? '',
       icon: _mapIcon(json['icon']),
       color: _mapColor(json['color']),
       createdAt:
-          DateTime.tryParse(json['created_at']?.toString() ?? json['createdAt']?.toString() ?? '') ??
+          DateTime.tryParse(
+            json['created_at']?.toString() ??
+                json['createdAt']?.toString() ??
+                '',
+          ) ??
           DateTime.now(),
-      authorName: author?['fullName'] as String? ?? author?['username'] as String?,
+      authorName:
+          author?['fullName'] as String? ?? author?['username'] as String?,
       authorAvatarUrl: author?['profilePicture'] as String?,
       targetType: json['targetType'] as String?,
       targetId: (json['targetId'] as num?)?.toInt(),
@@ -152,6 +159,7 @@ class Activity {
         },
     };
   }
+
   /// Maps string from API to Flutter IconData
   static IconData _mapIcon(String? iconName) {
     switch (iconName) {
@@ -165,10 +173,13 @@ class Activity {
         return Icons.forum;
       case 'pray':
         return Icons.self_improvement;
+      case 'article':
+        return Icons.article;
       default:
         return Icons.notifications;
     }
   }
+
   /// Maps string from API to Flutter Color
   static Color _mapColor(String? colorName) {
     switch (colorName) {

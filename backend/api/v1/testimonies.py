@@ -127,6 +127,14 @@ def delete_testimony(testimony_id):
     if testimony.user_id != user_id:
         return jsonify({"error": "Unauthorized"}), 403
 
+    # ✅ "Delete everywhere": Activity is a polymorphic pointer with no
+    # FK/cascade (see the comment on Activity in models.py), so deleting
+    # the testimony alone left a dangling entry in the global Recent
+    # feed. Clean it up explicitly here.
+    Activity.query.filter_by(
+        target_type="testimony", target_id=testimony.id
+    ).delete(synchronize_session=False)
+
     db.session.delete(testimony)
     db.session.commit()
     return jsonify({"message": "Testimony deleted"})

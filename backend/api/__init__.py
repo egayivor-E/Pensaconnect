@@ -24,6 +24,7 @@ from .v1.messages import messages_bp
 from .v1.bible import bible_bp
 from .v1.forums import forums_bp
 from .v1.testimonies import testimonies_bp
+from .v1.timeline_posts import timeline_posts_bp
 from .v1.group_chats import group_chats_bp
 from .v1.anonymous_messages import anonymous_bp
 from .v1.worship_songs import worship_songs_bp
@@ -50,6 +51,7 @@ api_v1.register_blueprint(messages_bp)
 api_v1.register_blueprint(bible_bp)
 api_v1.register_blueprint(forums_bp)
 api_v1.register_blueprint(testimonies_bp)
+api_v1.register_blueprint(timeline_posts_bp)
 api_v1.register_blueprint(group_chats_bp)
 api_v1.register_blueprint(anonymous_bp)
 api_v1.register_blueprint(worship_songs_bp)
