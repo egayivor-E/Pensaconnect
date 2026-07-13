@@ -154,6 +154,10 @@ class User(BaseModel,  UserMixin):
     subscription_id = db.Column(String(150))
     reset_token = db.Column(String(255))
 
+    # ✅ Marks service/AI accounts (e.g. the forum assistant). Used to badge
+    # their posts in the UI and to gate who is allowed to post as them.
+    is_bot = db.Column(Boolean, default=False, nullable=False, server_default="false")
+
     # --- Relationships ---
     posts = relationship('Post', back_populates='author', cascade='all, delete-orphan', foreign_keys='Post.user_id')
     approved_posts = relationship('Post', back_populates='approver', foreign_keys='Post.approved_by_id')
@@ -1078,7 +1082,11 @@ class ForumThread(BaseModel):
     id = Column(Integer, primary_key=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-   
+
+    # ✅ Moderation controls: pinned threads sort to the top of the list;
+    # locked threads stop accepting new posts/comments from non-staff.
+    is_pinned = Column(Boolean, nullable=False, default=False, server_default="false")
+    is_locked = Column(Boolean, nullable=False, default=False, server_default="false")
 
     category_id = Column(Integer, ForeignKey("forum_categories.id"))
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -1100,7 +1108,10 @@ class ForumThread(BaseModel):
             "author_id": self.author_id,
             "author_name": self.author.username if self.author else None,
             "author_avatar": self.author.avatar_url if self.author else None,
+            "author_is_bot": bool(getattr(self.author, "is_bot", False)) if self.author else False,
             "category_id": self.category_id,
+            "is_pinned": self.is_pinned,
+            "is_locked": self.is_locked,
             "posts_count": len(self.posts),
             "forum_posts_count": len(self.forum_posts),
             "like_count": ForumLike.query.filter_by(thread_id=self.id, reaction_type="like").count(),
@@ -1168,6 +1179,7 @@ class ForumPost(BaseModel):
             "author_id": self.author_id,
             "author_name": self.author.username if self.author else "Unknown",
             "author_avatar": getattr(self.author, "avatar_url", None),
+            "author_is_bot": bool(getattr(self.author, "is_bot", False)) if self.author else False,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "like_count": len(self.likes),
@@ -1209,6 +1221,7 @@ class ForumComment(BaseModel):
             "author_id": self.author_id,
             "author_name": self.user.username if self.user else "Unknown",
             "author_avatar": getattr(self.user, "avatar_url", None),
+            "author_is_bot": bool(getattr(self.user, "is_bot", False)) if self.user else False,
             "created_at": self.created_at.isoformat(),
         }
 
@@ -1304,6 +1317,60 @@ class ForumLike(BaseModel):
             "reaction_type": self.reaction_type,
             "thread_id": self.thread_id,
             "created_at": self.created_at.isoformat(),
+        }
+
+
+class ForumReport(BaseModel):
+    """A community flag on a post or comment, for staff review.
+
+    Exactly one of post_id / comment_id is set. Unlike ForumLike (which is
+    unique per user+target+type so it can be freely toggled), a report is a
+    one-shot event — the same user reporting the same content twice just
+    doesn't insert a second row (enforced in the API layer, not the DB),
+    so the queue doesn't get spammed with duplicates from one person.
+    """
+    __tablename__ = "forum_reports"
+
+    id = Column(db.Integer, primary_key=True)
+    reporter_id = Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    post_id = Column(db.Integer, db.ForeignKey("forum_posts.id"), nullable=True)
+    comment_id = Column(db.Integer, db.ForeignKey("forum_comments.id"), nullable=True)
+    reason = Column(db.String(255), nullable=True)
+
+    # open -> a moderator hasn't looked at it yet; resolved -> dismissed or
+    # actioned (e.g. the content was deleted) by a moderator.
+    status = Column(db.String(20), nullable=False, default="open")
+    resolved_by_id = Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(db.DateTime(timezone=True), nullable=True)
+
+    reporter = relationship("User", foreign_keys=[reporter_id])
+    resolved_by = relationship("User", foreign_keys=[resolved_by_id])
+    post = relationship("ForumPost")
+    comment = relationship("ForumComment")
+
+    __table_args__ = (
+        db.UniqueConstraint("reporter_id", "post_id", name="uq_reporter_post_report"),
+        db.UniqueConstraint("reporter_id", "comment_id", name="uq_reporter_comment_report"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "reporter_id": self.reporter_id,
+            "reporter_name": self.reporter.username if self.reporter else None,
+            "post_id": self.post_id,
+            "comment_id": self.comment_id,
+            "reason": self.reason,
+            "status": self.status,
+            "created_at": self.created_at.isoformat(),
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+            # Small content preview so a moderator doesn't have to open
+            # every report just to see what's being flagged.
+            "content_preview": (
+                (self.post.content if self.post else None)
+                or (self.comment.content if self.comment else None)
+                or ""
+            )[:200],
         }
 
 

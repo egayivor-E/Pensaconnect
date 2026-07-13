@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import '../models/forum_model.dart';
 import '../repositories/forum_repository.dart';
+import '../providers/auth_provider.dart';
 import 'post_form_screen.dart';
 
 class ForumsScreen extends StatefulWidget {
@@ -67,8 +69,11 @@ class _ForumsScreenState extends State<ForumsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final userRoles = ["member"]; // TODO: Replace with AuthProvider roles
-    final canPost = userRoles.contains("member") || userRoles.contains("admin");
+    // ✅ Was hardcoded to ["member"] with a TODO — that silently gated
+    // posting for guests/other roles incorrectly. Now reads the real
+    // signed-in user's roles, same pattern ForumDetailScreen already uses.
+    final auth = context.watch<AuthProvider>();
+    final canPost = auth.currentUser != null;
 
     return Scaffold(
       appBar: AppBar(title: const Text("Posts")),
@@ -117,11 +122,18 @@ class _ForumsScreenState extends State<ForumsScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.forum_outlined, size: 72, color: Colors.grey[400]),
+                            Icon(
+                              Icons.forum_outlined,
+                              size: 72,
+                              color: Colors.grey[400],
+                            ),
                             const SizedBox(height: 16),
                             const Text(
                               'No posts yet',
-                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             const SizedBox(height: 6),
                             const Text(
@@ -161,10 +173,14 @@ class _ForumsScreenState extends State<ForumsScreen> {
               itemBuilder: (context, i) {
                 final post = posts[i];
                 final color = _colorForName(post.authorName);
-                final isPopular = post.likeCount >= 10 || post.commentsCount >= 5;
+                final isPopular =
+                    post.likeCount >= 10 || post.commentsCount >= 5;
 
                 return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  margin: const EdgeInsets.symmetric(
+                    vertical: 6,
+                    horizontal: 4,
+                  ),
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
@@ -173,10 +189,7 @@ class _ForumsScreenState extends State<ForumsScreen> {
                   child: InkWell(
                     borderRadius: BorderRadius.circular(16),
                     onTap: () {
-                      context.push(
-                        "/posts/${post.id}",
-                        extra: post,
-                      );
+                      context.push("/posts/${post.id}", extra: post);
                     },
                     child: Padding(
                       padding: const EdgeInsets.all(14),
@@ -221,7 +234,10 @@ class _ForumsScreenState extends State<ForumsScreen> {
                                         ),
                                         if (isPopular) ...[
                                           const SizedBox(width: 6),
-                                          const Text('🔥', style: TextStyle(fontSize: 12)),
+                                          const Text(
+                                            '🔥',
+                                            style: TextStyle(fontSize: 12),
+                                          ),
                                         ],
                                       ],
                                     ),
@@ -239,7 +255,10 @@ class _ForumsScreenState extends State<ForumsScreen> {
                               if (post.createdAt != null)
                                 Text(
                                   _formatDate(post.createdAt!),
-                                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                  ),
                                 ),
                             ],
                           ),
@@ -254,24 +273,42 @@ class _ForumsScreenState extends State<ForumsScreen> {
                           Row(
                             children: [
                               Icon(
-                                post.likedByMe ? Icons.favorite : Icons.favorite_border,
+                                post.likedByMe
+                                    ? Icons.favorite
+                                    : Icons.favorite_border,
                                 size: 16,
-                                color: post.likedByMe ? Colors.redAccent : Colors.grey,
+                                color: post.likedByMe
+                                    ? Colors.redAccent
+                                    : Colors.grey,
                               ),
                               const SizedBox(width: 4),
                               Text(
                                 '${post.likeCount}',
-                                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[700],
+                                ),
                               ),
                               const SizedBox(width: 14),
-                              const Icon(Icons.chat_bubble_outline, size: 15, color: Colors.grey),
+                              const Icon(
+                                Icons.chat_bubble_outline,
+                                size: 15,
+                                color: Colors.grey,
+                              ),
                               const SizedBox(width: 4),
                               Text(
                                 '${post.commentsCount}',
-                                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[700],
+                                ),
                               ),
                               const Spacer(),
-                              Icon(Icons.chevron_right, size: 18, color: Colors.grey[400]),
+                              Icon(
+                                Icons.chevron_right,
+                                size: 18,
+                                color: Colors.grey[400],
+                              ),
                             ],
                           ),
                         ],

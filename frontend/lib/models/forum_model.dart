@@ -63,6 +63,7 @@ class ForumPost {
   final int authorId;
   final String authorName;
   final String? authorAvatar;
+  final bool authorIsBot;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final List<ForumAttachment> attachments;
@@ -79,6 +80,7 @@ class ForumPost {
     required this.authorId,
     required this.authorName,
     this.authorAvatar,
+    this.authorIsBot = false,
     this.createdAt,
     this.updatedAt,
     this.attachments = const [],
@@ -103,6 +105,7 @@ class ForumPost {
       authorId: _parseInt(json['author_id']),
       authorName: json['author_name'] ?? 'Unknown',
       authorAvatar: json['author_avatar'],
+      authorIsBot: json['author_is_bot'] ?? false,
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'])
           : null,
@@ -126,6 +129,7 @@ class ForumPost {
     "author_id": authorId,
     "author_name": authorName,
     "author_avatar": authorAvatar,
+    "author_is_bot": authorIsBot,
     "created_at": createdAt?.toIso8601String(),
     "updated_at": updatedAt?.toIso8601String(),
     "attachments": attachments.map((a) => a.toJson()).toList(),
@@ -141,6 +145,7 @@ class ForumComment {
   final int authorId;
   final String authorName;
   final String? authorAvatar;
+  final bool authorIsBot;
   final String content;
   final DateTime? createdAt;
   final List<ForumAttachment> attachments;
@@ -151,6 +156,7 @@ class ForumComment {
     required this.authorId,
     required this.authorName,
     this.authorAvatar,
+    this.authorIsBot = false,
     required this.content,
     this.createdAt,
     this.attachments = const [],
@@ -170,6 +176,7 @@ class ForumComment {
       authorId: _parseInt(json['author_id']),
       authorName: json['author_name'] ?? 'Unknown',
       authorAvatar: json['author_avatar'],
+      authorIsBot: json['author_is_bot'] ?? false,
       content: json['content'] ?? '',
       attachments: (json['attachments'] as List<dynamic>? ?? [])
           .map((a) => ForumAttachment.fromJson(a))
@@ -186,6 +193,7 @@ class ForumComment {
     "author_id": authorId,
     "author_name": authorName,
     "author_avatar": authorAvatar,
+    "author_is_bot": authorIsBot,
     "content": content,
     "attachments": attachments.map((a) => a.toJson()).toList(),
     "created_at": createdAt?.toIso8601String(),

@@ -12,9 +12,20 @@ class ForumApi {
       : Config.apiBaseUrl;
 
   // ---------- THREADS ----------
-  Future<List<Map<String, dynamic>>> fetchThreads() async {
-    // These calls rely on ApiService to correctly join the path
-    final res = await ApiService.get("forums/threads");
+  Future<Map<String, dynamic>> fetchThread(int threadId) async {
+    final res = await ApiService.get("forums/threads/$threadId");
+    final body = json.decode(res.body);
+    return Map<String, dynamic>.from(body['data']);
+  }
+
+  Future<List<Map<String, dynamic>>> fetchThreads({
+    String? q,
+    String sort = 'newest',
+  }) async {
+    final params = <String, String>{'sort': sort};
+    if (q != null && q.trim().isNotEmpty) params['q'] = q.trim();
+    final query = Uri(queryParameters: params).query;
+    final res = await ApiService.get("forums/threads?$query");
     final body = json.decode(res.body);
     return List<Map<String, dynamic>>.from(body['data']);
   }
@@ -25,6 +36,19 @@ class ForumApi {
       "description": description,
     });
     return res.statusCode == 201;
+  }
+
+  /// Staff-only: pin/unpin or lock/unlock a thread.
+  Future<bool> setThreadModeration(
+    int threadId, {
+    bool? isPinned,
+    bool? isLocked,
+  }) async {
+    final body = <String, dynamic>{};
+    if (isPinned != null) body['is_pinned'] = isPinned;
+    if (isLocked != null) body['is_locked'] = isLocked;
+    final res = await ApiService.patch("forums/threads/$threadId", body);
+    return res.statusCode == 200;
   }
 
   // ---------- POSTS ----------
@@ -152,5 +176,59 @@ class ForumApi {
 
   Future<void> deleteComment(int postId, int commentId) async {
     await ApiService.delete("forums/posts/$postId/comments/$commentId");
+  }
+
+  // ---------- REPORTS ----------
+  Future<String> reportPost(int postId, {String? reason}) async {
+    final res = await ApiService.post("forums/posts/$postId/report", {
+      if (reason != null && reason.isNotEmpty) "reason": reason,
+    });
+    final body = json.decode(res.body);
+    return body['data']?['message'] ?? 'Report submitted';
+  }
+
+  Future<String> reportComment(int commentId, {String? reason}) async {
+    final res = await ApiService.post("forums/comments/$commentId/report", {
+      if (reason != null && reason.isNotEmpty) "reason": reason,
+    });
+    final body = json.decode(res.body);
+    return body['data']?['message'] ?? 'Report submitted';
+  }
+
+  // ---------- AI ASSISTANT (staff-only) ----------
+  /// Asks the assistant to draft + post a labeled reply on an existing
+  /// post. `instruction` lets the moderator steer it (defaults to a
+  /// generic "reply thoughtfully" prompt server-side if omitted).
+  Future<Map<String, dynamic>> requestAiReply(
+    int postId, {
+    String? instruction,
+  }) async {
+    final res = await ApiService.post("forums/posts/$postId/ai-reply", {
+      if (instruction != null && instruction.isNotEmpty)
+        "instruction": instruction,
+    });
+    final body = json.decode(res.body);
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw Exception(body['message'] ?? 'The assistant could not reply');
+    }
+    return Map<String, dynamic>.from(body['data']);
+  }
+
+  /// Asks the assistant to draft + post a new discussion-starter inside
+  /// a thread (e.g. a weekly reflection prompt) — never a new thread.
+  Future<Map<String, dynamic>> requestAiThreadPost(
+    int threadId, {
+    required String instruction,
+    String? title,
+  }) async {
+    final res = await ApiService.post("forums/threads/$threadId/ai-post", {
+      "instruction": instruction,
+      if (title != null && title.isNotEmpty) "title": title,
+    });
+    final body = json.decode(res.body);
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw Exception(body['message'] ?? 'The assistant could not post');
+    }
+    return Map<String, dynamic>.from(body['data']);
   }
 }

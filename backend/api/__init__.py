@@ -31,6 +31,7 @@ from .v1.worship_uploads import worship_uploads_bp
 
 
 
+
 # Register them under /api/v1
 api_v1.register_blueprint(auth_bp)
 api_v1.register_blueprint(users_bp)

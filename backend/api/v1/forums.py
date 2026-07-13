@@ -8,6 +8,7 @@ from flask import Blueprint, request, send_file
 from flask.views import MethodView
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash
 
 from backend.extensions import db
 from backend.models import (
@@ -17,9 +18,13 @@ from backend.models import (
     ForumAttachment,
     ForumCategory,
     ForumLike,
+    ForumReport,
     User,
     Activity,
+    Notification,
+    NotificationType,
 )
+from .ai_assistant import generate_assistant_reply, AssistantError
 from backend.supabase_client import (
     upload_file_to_supabase,
     delete_file_from_supabase,
@@ -127,6 +132,73 @@ def roles_required(*roles):
     return wrapper
 
 
+BOT_USERNAME = "pensa_assistant"
+
+
+def get_or_create_bot_user() -> User:
+    """The single service account the AI assistant posts/comments as.
+
+    Lazily created on first use rather than seeded, so environments that
+    never touch the assistant feature never get a stray account. Always
+    is_bot=True and locked (unusable) for normal login — it's never meant
+    to authenticate, only to be a foreign key target for authored content.
+    """
+    bot = User.query.filter_by(username=BOT_USERNAME).first()
+    if bot:
+        return bot
+
+    bot = User(
+        username=BOT_USERNAME,
+        email="assistant@pensaconnect.local",
+        password_hash=generate_password_hash(uuid.uuid4().hex),
+        first_name="Pensa",
+        last_name="Assistant",
+        email_verified=True,
+        is_bot=True,
+        status="active",
+    )
+    db.session.add(bot)
+    db.session.commit()
+    return bot
+
+
+def get_or_create_notification_type(name: str):
+    from backend.models import NotificationType as NT
+    nt = NT.query.filter_by(name=name).first()
+    if nt:
+        return nt
+    nt = NT(name=name)
+    db.session.add(nt)
+    db.session.commit()
+    return nt
+
+
+def notify_reply(*, recipient_id: int, actor_name: str, thread_id: int, post_id: int, is_bot: bool = False):
+    """Notify a post's author that someone replied to it. Best-effort and
+    isolated (own try/except) for the same reason broadcast_new_activity
+    is — a notification hiccup must never fail the comment that triggered
+    it, and it must never fire for someone replying to themselves."""
+    try:
+        nt = get_or_create_notification_type("forum_reply")
+        title = "The assistant replied to your post" if is_bot else "New reply to your post"
+        notification = Notification(
+            user_id=recipient_id,
+            notification_type_id=nt.id,
+            title=title,
+            message=f"{actor_name} replied to your post.",
+            action_url=f"/threads/{thread_id}?post={post_id}",
+            action_label="View reply",
+            source_id=post_id,
+        )
+        db.session.add(notification)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to create reply notification: {e}")
+
+
+def thread_is_locked_for(thread: "ForumThread", user: User) -> bool:
+    return bool(thread.is_locked) and not is_staff(user)
 
 
 # ------------------------ CATEGORIES ------------------------
@@ -157,7 +229,44 @@ def create_category():
 
 @forums_bp.route("/threads", methods=["GET"])
 def get_threads():
-    threads = ForumThread.query.order_by(ForumThread.created_at.desc()).all()
+    """
+    Query params:
+      q     - optional search string, matched against title/description
+      sort  - "newest" (default), "active" (most posts), or "liked"
+      limit - cap on rows returned (default 100, max 200) — a real
+              cursor/page param can replace this once thread volume
+              actually warrants it; for now this just stops an
+              unbounded SELECT * as the forum grows.
+    Pinned threads always sort first, regardless of `sort`.
+    """
+    query = ForumThread.query
+
+    q = (request.args.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            db.or_(ForumThread.title.ilike(like), ForumThread.description.ilike(like))
+        )
+
+    sort = request.args.get("sort", default="newest")
+    if sort == "liked":
+        # Correlated subquery keeps this a single query instead of N+1s.
+        like_count_sq = (
+            db.session.query(db.func.count(ForumLike.id))
+            .filter(ForumLike.thread_id == ForumThread.id, ForumLike.reaction_type == "like")
+            .correlate(ForumThread)
+            .scalar_subquery()
+        )
+        query = query.order_by(ForumThread.is_pinned.desc(), like_count_sq.desc())
+    elif sort == "active":
+        query = query.outerjoin(ForumThread.forum_posts).group_by(ForumThread.id).order_by(
+            ForumThread.is_pinned.desc(), db.func.count(ForumPost.id).desc()
+        )
+    else:
+        query = query.order_by(ForumThread.is_pinned.desc(), ForumThread.created_at.desc())
+
+    limit = min(request.args.get("limit", default=100, type=int) or 100, 200)
+    threads = query.limit(limit).all()
     return success_response([t.to_dict() for t in threads])
 
 @forums_bp.route("/threads/<int:thread_id>", methods=["GET"])
@@ -180,6 +289,10 @@ def create_thread():
         category_id=data.get("category_id"),
         author_id=current_user.id,
         description=data.get("description"),
+        # Only staff can start a thread pre-pinned; a regular member
+        # sending `is_pinned: true` is silently ignored, not errored,
+        # since it's not something they need to know is even a field.
+        is_pinned=bool(data.get("is_pinned")) if is_staff(current_user) else False,
     )
     db.session.add(thread)
     db.session.commit()
@@ -288,6 +401,16 @@ def update_thread(thread_id):
     if "description" in data:
         thread.description = data["description"]
 
+    # Pin/lock are moderation-only, regardless of whether this particular
+    # requester is allowed to edit title/description as the thread's own
+    # author — can_manage() above already let authors through, but pin/
+    # lock is a step above "manage your own content".
+    if is_staff(current_user):
+        if "is_pinned" in data:
+            thread.is_pinned = bool(data["is_pinned"])
+        if "is_locked" in data:
+            thread.is_locked = bool(data["is_locked"])
+
     db.session.commit()
     return success_response(thread.to_dict())
 
@@ -344,6 +467,8 @@ def create_post():
         thread = ForumThread.query.get(thread_id)
         if not thread:
             return error_response("Thread does not exist", 400)
+        if thread_is_locked_for(thread, current_user):
+            return error_response("This thread is locked and no longer accepting posts", 403)
 
         post = ForumPost(
             thread_id=thread.id,
@@ -446,6 +571,8 @@ def create_post():
     thread = ForumThread.query.get(thread_id)
     if not thread:
         return error_response("Thread does not exist", 400)
+    if thread_is_locked_for(thread, current_user):
+        return error_response("This thread is locked and no longer accepting posts", 403)
 
     post = ForumPost(
         thread_id=thread.id,
@@ -534,8 +661,10 @@ def get_comments(post_id):
 @forums_bp.route("/posts/<int:post_id>/comments", methods=["POST"])
 @jwt_required()
 def add_comment(post_id):
-    ForumPost.query.get_or_404(post_id)
+    post = ForumPost.query.get_or_404(post_id)
     current_user = get_current_user()
+    if thread_is_locked_for(post.thread, current_user):
+        return error_response("This thread is locked and no longer accepting replies", 403)
 
     # Multipart form
     if request.content_type and request.content_type.startswith("multipart/form-data"):
@@ -581,6 +710,16 @@ def add_comment(post_id):
                 db.session.add(attachment)
 
         db.session.commit()
+
+        if post.author_id != current_user.id:
+            notify_reply(
+                recipient_id=post.author_id,
+                actor_name=current_user.get_full_name(),
+                thread_id=post.thread_id,
+                post_id=post.id,
+                is_bot=bool(getattr(current_user, "is_bot", False)),
+            )
+
         response_data = comment.to_dict(include_attachments=True)
         if attachment_errors:
             response_data["attachment_errors"] = attachment_errors
@@ -600,6 +739,16 @@ def add_comment(post_id):
     )
     db.session.add(comment)
     db.session.commit()
+
+    if post.author_id != current_user.id:
+        notify_reply(
+            recipient_id=post.author_id,
+            actor_name=current_user.get_full_name(),
+            thread_id=post.thread_id,
+            post_id=post.id,
+            is_bot=bool(getattr(current_user, "is_bot", False)),
+        )
+
     # FIX: Already 201 here, but keep it
     return success_response(comment.to_dict(include_attachments=True), 201)
 
@@ -638,6 +787,167 @@ def delete_comment(post_id, comment_id):
     db.session.delete(comment)
     db.session.commit()
     return success_response({"message": "Comment deleted"})
+
+
+# ------------------------ REPORTS ------------------------
+
+def _create_report(*, current_user, post_id=None, comment_id=None):
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()[:255] or None
+
+    existing = ForumReport.query.filter_by(
+        reporter_id=current_user.id, post_id=post_id, comment_id=comment_id
+    ).first()
+    if existing:
+        return success_response({"message": "You've already reported this."})
+
+    report = ForumReport(
+        reporter_id=current_user.id,
+        post_id=post_id,
+        comment_id=comment_id,
+        reason=reason,
+    )
+    db.session.add(report)
+    db.session.commit()
+    return success_response({"message": "Thanks — a moderator will take a look."}, 201)
+
+
+@forums_bp.route("/posts/<int:post_id>/report", methods=["POST"])
+@jwt_required()
+def report_post(post_id):
+    ForumPost.query.get_or_404(post_id)
+    return _create_report(current_user=get_current_user(), post_id=post_id)
+
+
+@forums_bp.route("/comments/<int:comment_id>/report", methods=["POST"])
+@jwt_required()
+def report_comment(comment_id):
+    ForumComment.query.get_or_404(comment_id)
+    return _create_report(current_user=get_current_user(), comment_id=comment_id)
+
+
+@forums_bp.route("/reports", methods=["GET"])
+@roles_required("admin", "moderator")
+def list_reports():
+    status = request.args.get("status", default="open")
+    query = ForumReport.query
+    if status != "all":
+        query = query.filter_by(status=status)
+    query = query.order_by(ForumReport.created_at.desc())
+    return success_response(paginate_query(query))
+
+
+@forums_bp.route("/reports/<int:report_id>", methods=["PATCH"])
+@roles_required("admin", "moderator")
+def resolve_report(report_id):
+    report = ForumReport.query.get_or_404(report_id)
+    current_user = get_current_user()
+    data = request.get_json() or {}
+    status = data.get("status", "resolved")
+    if status not in ("open", "resolved"):
+        return error_response("Invalid status", 400)
+
+    report.status = status
+    if status == "resolved":
+        report.resolved_by_id = current_user.id
+        report.resolved_at = db.func.now()
+    db.session.commit()
+    return success_response(report.to_dict())
+
+
+# ------------------------ AI ASSISTANT ------------------------
+#
+# Deliberately narrow surface: the assistant only ever acts when a
+# moderator explicitly invokes it on a specific post or thread. It never
+# gets a route that lets it post unprompted. See ai_assistant.py for the
+# model-calling logic and the reasoning behind this shape.
+
+@forums_bp.route("/posts/<int:post_id>/ai-reply", methods=["POST"])
+@roles_required("admin", "moderator")
+def ai_reply_to_post(post_id):
+    post = ForumPost.query.get_or_404(post_id)
+    if thread_is_locked_for(post.thread, get_current_user()):
+        return error_response("This thread is locked", 403)
+
+    data = request.get_json(silent=True) or {}
+    instruction = (data.get("instruction") or "").strip() or "Write a thoughtful reply to this forum post."
+
+    context = f"Thread: {post.thread.title}\nPost title: {post.title}\nPost content: {post.content}"
+    existing_comments = ForumComment.query.filter_by(post_id=post.id).order_by(
+        ForumComment.created_at.asc()
+    ).limit(10).all()
+    if existing_comments:
+        context += "\n\nExisting replies:\n" + "\n".join(
+            f"- {c.user.username if c.user else 'someone'}: {c.content}" for c in existing_comments
+        )
+
+    try:
+        reply_text = generate_assistant_reply(context=context, instruction=instruction)
+    except AssistantError as e:
+        return error_response(str(e), 502)
+
+    bot = get_or_create_bot_user()
+    comment = ForumComment(post_id=post.id, author_id=bot.id, content=reply_text)
+    db.session.add(comment)
+    db.session.commit()
+
+    if post.author_id != bot.id:
+        notify_reply(
+            recipient_id=post.author_id,
+            actor_name="Pensa Assistant",
+            thread_id=post.thread_id,
+            post_id=post.id,
+            is_bot=True,
+        )
+
+    return success_response(comment.to_dict(include_attachments=False), 201)
+
+
+@forums_bp.route("/threads/<int:thread_id>/ai-post", methods=["POST"])
+@roles_required("admin", "moderator")
+def ai_new_post_in_thread(thread_id):
+    """Have the assistant draft a new discussion-starter post inside an
+    existing thread — e.g. a weekly reflection prompt. It cannot create a
+    brand new thread by itself; a moderator still has to have created the
+    thread it lives in, which keeps the assistant a guest in spaces
+    humans opened, not an independent author of the forum's structure."""
+    thread = ForumThread.query.get_or_404(thread_id)
+    if thread.is_locked:
+        return error_response("This thread is locked", 403)
+
+    data = request.get_json(silent=True) or {}
+    instruction = (data.get("instruction") or "").strip()
+    if not instruction:
+        return error_response("instruction is required, e.g. 'Write a reflection prompt about patience'", 400)
+
+    context = f"Thread: {thread.title}\n{thread.description or ''}"
+
+    try:
+        body_text = generate_assistant_reply(context=context, instruction=instruction)
+    except AssistantError as e:
+        return error_response(str(e), 502)
+
+    bot = get_or_create_bot_user()
+    title = (data.get("title") or instruction[:80]).strip()
+    post = ForumPost(thread_id=thread.id, author_id=bot.id, title=title, content=body_text)
+    db.session.add(post)
+    db.session.commit()
+
+    activity = Activity(
+        title="Pensa Assistant shared a reflection",
+        subtitle=(post.content or post.title)[:140],
+        icon="forum",
+        color="blue",
+        user_id=bot.id,
+        target_type="post",
+        target_id=post.id,
+        meta_data={"thread_id": post.thread_id, "is_bot": True},
+    )
+    db.session.add(activity)
+    db.session.commit()
+    broadcast_new_activity(activity)
+
+    return success_response(post.to_dict(include_attachments=False), 201)
 
 
 # ------------------------ ATTACHMENTS ------------------------

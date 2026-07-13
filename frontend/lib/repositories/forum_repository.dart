@@ -23,7 +23,13 @@ class ForumRepository {
           : Config.apiBaseUrl;
 
   /// ---------------- THREADS ----------------
-  Future<List<Map<String, dynamic>>> getThreads() => _api.fetchThreads();
+  Future<Map<String, dynamic>> getThread(int threadId) =>
+      _api.fetchThread(threadId);
+
+  Future<List<Map<String, dynamic>>> getThreads({
+    String? q,
+    String sort = 'newest',
+  }) => _api.fetchThreads(q: q, sort: sort);
 
   Future<bool> createThread(String title, String description) async {
     final success = await _api.createThread(title, description);
@@ -32,6 +38,43 @@ class ForumRepository {
       debugPrint("✅ Thread created successfully");
     }
     return success;
+  }
+
+  /// Staff-only: pin/unpin or lock/unlock a thread.
+  Future<bool> setThreadModeration(
+    int threadId, {
+    bool? isPinned,
+    bool? isLocked,
+  }) => _api.setThreadModeration(
+    threadId,
+    isPinned: isPinned,
+    isLocked: isLocked,
+  );
+
+  /// ---------------- REPORTS ----------------
+  Future<String> reportPost(int postId, {String? reason}) =>
+      _api.reportPost(postId, reason: reason);
+
+  Future<String> reportComment(int commentId, {String? reason}) =>
+      _api.reportComment(commentId, reason: reason);
+
+  /// ---------------- AI ASSISTANT (staff-only) ----------------
+  Future<ForumComment> requestAiReply(int postId, {String? instruction}) async {
+    final data = await _api.requestAiReply(postId, instruction: instruction);
+    return ForumComment.fromJson(data);
+  }
+
+  Future<ForumPost> requestAiThreadPost(
+    int threadId, {
+    required String instruction,
+    String? title,
+  }) async {
+    final data = await _api.requestAiThreadPost(
+      threadId,
+      instruction: instruction,
+      title: title,
+    );
+    return ForumPost.fromJson(data);
   }
 
   Future<void> toggleReaction(int threadId, String type) async {
@@ -136,12 +179,15 @@ class ForumRepository {
       // ✅ Backend records per-file upload failures (e.g. Supabase not
       // configured, unsupported type) even when the post itself saves
       // fine — surface them instead of letting media vanish silently.
-      final rawErrors = responseData['data']?['attachment_errors'] ??
+      final rawErrors =
+          responseData['data']?['attachment_errors'] ??
           responseData['attachment_errors'];
       if (rawErrors is List) {
         for (final e in rawErrors) {
           final name = e is Map ? (e['file_name'] ?? 'file') : 'file';
-          final reason = e is Map ? (e['error'] ?? 'upload failed') : 'upload failed';
+          final reason = e is Map
+              ? (e['error'] ?? 'upload failed')
+              : 'upload failed';
           attachmentErrors.add('$name: $reason');
         }
       }
@@ -237,12 +283,15 @@ class ForumRepository {
         );
       }
 
-      final rawErrors = responseData['data']?['attachment_errors'] ??
+      final rawErrors =
+          responseData['data']?['attachment_errors'] ??
           responseData['attachment_errors'];
       if (rawErrors is List) {
         for (final e in rawErrors) {
           final name = e is Map ? (e['file_name'] ?? 'file') : 'file';
-          final reason = e is Map ? (e['error'] ?? 'upload failed') : 'upload failed';
+          final reason = e is Map
+              ? (e['error'] ?? 'upload failed')
+              : 'upload failed';
           attachmentErrors.add('$name: $reason');
         }
       }

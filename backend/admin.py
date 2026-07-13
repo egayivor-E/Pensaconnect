@@ -13,7 +13,7 @@ from backend.models import (
     Notification, NotificationType, Donation, DonationNotification,
     Testimony, TestimonyComment, TestimonyLike,
     GroupChat, GroupMember, GroupMessage,
-    ForumCategory, ForumThread, ForumPost, ForumComment, ForumAttachment, ForumLike,
+    ForumCategory, ForumThread, ForumPost, ForumComment, ForumAttachment, ForumLike, ForumReport,
     WorshipSong
 )
 
@@ -247,6 +247,7 @@ admin.add_view(SafeModelView(ForumPost, db.session, category="🗣️ Forum"))
 admin.add_view(SafeModelView(ForumComment, db.session, category="🗣️ Forum"))
 admin.add_view(SafeModelView(ForumAttachment, db.session, category="🗣️ Forum"))
 admin.add_view(SafeModelView(ForumLike, db.session, category="🗣️ Forum"))
+admin.add_view(SafeModelView(ForumReport, db.session, category="🗣️ Forum"))
 
 # --- Worship & Music --- (ADD THIS NEW CATEGORY)
 admin.add_view(WorshipSongAdmin(WorshipSong, db.session, category="🎵 Worship & Music"))

@@ -6,9 +6,13 @@ class ThreadsProvider extends ChangeNotifier {
 
   List<Map<String, dynamic>> _threads = [];
   bool _loading = false;
+  String _searchQuery = '';
+  String _sort = 'newest'; // newest | active | liked
 
   List<Map<String, dynamic>> get threads => _threads;
   bool get isLoading => _loading;
+  String get searchQuery => _searchQuery;
+  String get sort => _sort;
 
   ThreadsProvider() {
     fetchThreads();
@@ -20,13 +24,35 @@ class ThreadsProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _threads = await _repo.getThreads();
+      _threads = await _repo.getThreads(q: _searchQuery, sort: _sort);
     } catch (e) {
       if (kDebugMode) print("⚠️ Error fetching threads: $e");
     } finally {
       _loading = false;
       notifyListeners();
     }
+  }
+
+  // ---------------- SEARCH + SORT ----------------
+  Future<void> setSearchQuery(String value) async {
+    _searchQuery = value;
+    await fetchThreads();
+  }
+
+  Future<void> setSort(String value) async {
+    _sort = value;
+    await fetchThreads();
+  }
+
+  // ---------------- MODERATION ----------------
+  Future<void> togglePin(int threadId, bool pin) async {
+    final ok = await _repo.setThreadModeration(threadId, isPinned: pin);
+    if (ok) await fetchThreads();
+  }
+
+  Future<void> toggleLock(int threadId, bool lock) async {
+    final ok = await _repo.setThreadModeration(threadId, isLocked: lock);
+    if (ok) await fetchThreads();
   }
 
   // ---------------- ADD THREAD ----------------
