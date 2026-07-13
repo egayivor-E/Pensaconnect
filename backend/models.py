@@ -1444,6 +1444,10 @@ class TimelinePost(BaseModel):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
     image_url = db.Column(db.String(500), nullable=True)
+    # True when image_url actually points at a video file (uploaded via
+    # POST /timeline-posts/upload). Kept as an explicit flag rather than
+    # sniffing the URL's extension client-side every render.
+    is_video = db.Column(db.Boolean, nullable=False, default=False)
 
     user = db.relationship("User", back_populates="timeline_posts")
 
@@ -1452,6 +1456,7 @@ class TimelinePost(BaseModel):
             "id": self.id,
             "content": self.content,
             "imageUrl": self.image_url,
+            "isVideo": self.is_video,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "userId": self.user_id,
             "user": {

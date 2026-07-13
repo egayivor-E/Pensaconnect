@@ -1,9 +1,14 @@
+import uuid
+import logging
+
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from werkzeug.utils import secure_filename
+
 from backend.extensions import db
 from backend.models import TimelinePost, Activity
-from .utils import broadcast_new_activity
-import logging
+from backend.supabase_client import upload_file_to_supabase, TIMELINE_MEDIA_BUCKET
+from .utils import broadcast_new_activity, success_response, error_response
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,7 @@ def create_timeline_post():
     post = TimelinePost(
         content=content,
         image_url=data.get("image_url"),
+        is_video=bool(data.get("is_video", False)),
         user_id=user_id,
     )
     db.session.add(post)
@@ -46,7 +52,10 @@ def create_timeline_post():
             user_id=user_id,
             target_type="timeline_post",
             target_id=post.id,
-            meta_data={"image_url": post.image_url} if post.image_url else {},
+            meta_data={
+                "image_url": post.image_url,
+                "is_video": post.is_video,
+            } if post.image_url else {},
         )
         db.session.add(activity)
         db.session.commit()
@@ -56,6 +65,79 @@ def create_timeline_post():
         db.session.rollback()
 
     return jsonify(post.to_dict()), 201
+
+
+# ---------------------------
+# Upload media (photo or video) for a timeline post
+# ---------------------------
+IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+VIDEO_EXTENSIONS = {"mp4", "mov", "avi", "webm", "mkv", "m4v"}
+ALLOWED_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+
+CONTENT_TYPES = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "gif": "image/gif", "webp": "image/webp",
+    "mp4": "video/mp4", "mov": "video/quicktime", "avi": "video/x-msvideo",
+    "webm": "video/webm", "mkv": "video/x-matroska", "m4v": "video/x-m4v",
+}
+
+
+def _extension(filename: str) -> str:
+    return filename.rsplit(".", 1)[1].lower() if "." in filename else ""
+
+
+@timeline_posts_bp.route("/upload", methods=["POST"])
+@jwt_required()
+def upload_timeline_media():
+    """
+    Uploads a photo or video for a profile timeline post to Supabase
+    Storage and returns its public URL. The client is expected to call
+    this first, then pass the returned url/isVideo into the normal
+    POST / (create_timeline_post) call as image_url/is_video.
+
+    Requires the 'timeline-media' bucket to exist (public) in the
+    Supabase project — create it the same way worship-media and
+    forum-media were created.
+    """
+    user_id = get_jwt_identity()
+
+    if "file" not in request.files:
+        return error_response("No file uploaded. Please include a 'file' field.", 400)
+
+    file = request.files["file"]
+    if file.filename == "":
+        return error_response("No selected file.", 400)
+
+    filename = secure_filename(file.filename)
+    ext = _extension(filename)
+    if ext not in ALLOWED_MEDIA_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_MEDIA_EXTENSIONS))
+        return error_response(f"Invalid file type. Allowed: {allowed}.", 400)
+
+    content_type = CONTENT_TYPES.get(ext, file.mimetype or "application/octet-stream")
+    unique_name = f"{uuid.uuid4()}_{filename}"
+    destination_path = f"posts/{user_id}/{unique_name}"
+
+    try:
+        file_bytes = file.read()
+        public_url = upload_file_to_supabase(
+            file_bytes=file_bytes,
+            destination_path=destination_path,
+            content_type=content_type,
+            bucket=TIMELINE_MEDIA_BUCKET,
+        )
+    except Exception as e:
+        logger.exception("Timeline media upload failed for user %s", user_id)
+        return error_response(f"Upload failed: {e}", 500)
+
+    return success_response(
+        {
+            "url": public_url,
+            "is_video": ext in VIDEO_EXTENSIONS,
+        },
+        "Media uploaded successfully",
+        201,
+    )
 
 
 # ---------------------------

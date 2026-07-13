@@ -32,6 +32,11 @@ WORSHIP_MEDIA_BUCKET = "worship-media"
 # worship-media.
 FORUM_MEDIA_BUCKET = "forum-media"
 
+# Bucket for a user's own profile timeline posts (images/videos attached
+# via POST /timeline-posts/upload). Create this as a public bucket in
+# the Supabase dashboard, same as worship-media and forum-media.
+TIMELINE_MEDIA_BUCKET = "timeline-media"
+
 
 def get_supabase_client() -> Client:
     """

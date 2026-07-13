@@ -4,6 +4,7 @@ class TimelinePost {
   final int id;
   final String content;
   final String? imageUrl;
+  final bool isVideo;
   final DateTime createdAt;
   final int userId;
   final String authorName;
@@ -13,6 +14,7 @@ class TimelinePost {
     required this.id,
     required this.content,
     this.imageUrl,
+    this.isVideo = false,
     required this.createdAt,
     required this.userId,
     required this.authorName,
@@ -25,6 +27,7 @@ class TimelinePost {
       id: (json['id'] as num).toInt(),
       content: json['content'] ?? '',
       imageUrl: json['imageUrl'] as String?,
+      isVideo: json['isVideo'] == true,
       createdAt:
           DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
           DateTime.now(),
