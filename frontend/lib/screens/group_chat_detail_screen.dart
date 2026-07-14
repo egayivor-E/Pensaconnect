@@ -6,8 +6,10 @@ import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:pensaconnect/services/auth_service.dart';
 import '../repositories/group_chat_repository.dart';
+import '../repositories/user_repository.dart';
 import '../models/group_message_model.dart';
 import '../services/socketio_service.dart';
+import '../utils/profile_navigation.dart';
 
 class GroupChatDetailScreen extends StatefulWidget {
   final int groupId;
@@ -38,6 +40,13 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   bool _initialLoadDone = false;
   Timer? _typingTimer;
   StreamSubscription<List<GroupMessage>>? _messageSubscription;
+
+  // Keyed by user id. Populated once from the group's member list and used
+  // as a fallback whenever a message arrives with missing/partial sender
+  // info (e.g. a Socket.IO payload that only carried a bare senderId) —
+  // this is what previously showed up as "Unknown User" with no picture
+  // in the chat until the next full reload.
+  final Map<int, Map<String, dynamic>> _memberInfo = {};
 
   // ✅ FIX: track whether auth has genuinely timed out, so the screen can
   // recover instead of spinning on "Authenticating..." forever if a user
@@ -124,6 +133,10 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     // ✅ Start listening BEFORE loading messages
     _setupRealtimeListener();
 
+    // Fire-and-forget: doesn't block messages from showing, just backfills
+    // names/avatars for any message whose own sender data turns out thin.
+    _loadMemberInfo();
+
     // ✅ Load messages
     await _loadInitialMessages();
 
@@ -148,7 +161,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   void _joinSocketRoom() {
     // ✅ Live auth check
     if (!_isAuthenticated) {
-      debugPrint('⚠️ Cannot join room: No user ID available (ID: $_currentUserId)');
+      debugPrint(
+        '⚠️ Cannot join room: No user ID available (ID: $_currentUserId)',
+      );
       return;
     }
 
@@ -158,7 +173,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     }
 
     try {
-      debugPrint('🚀 Joining WebSocket room for group ${widget.groupId} with user ID: $_currentUserId');
+      debugPrint(
+        '🚀 Joining WebSocket room for group ${widget.groupId} with user ID: $_currentUserId',
+      );
       _socketService.debugConnectionStatus(widget.groupId);
 
       setState(() {
@@ -202,6 +219,20 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     }
   }
 
+  Future<void> _loadMemberInfo() async {
+    try {
+      final members = await _groupRepo.getGroupMembers(widget.groupId);
+      if (!mounted) return;
+      setState(() {
+        for (final m in members) {
+          if (m.user != null) _memberInfo[m.userId] = m.user!;
+        }
+      });
+    } catch (e) {
+      debugPrint('⚠️ Could not load group members for sender fallback: $e');
+    }
+  }
+
   void _setupRealtimeListener() {
     _messageSubscription?.cancel();
 
@@ -219,7 +250,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                 _messages = List.from(cached);
                 _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
                 _isConnected = _socketService.isConnected(widget.groupId);
-                debugPrint('✅ Updated from cache: ${_messages.length} messages');
+                debugPrint(
+                  '✅ Updated from cache: ${_messages.length} messages',
+                );
               } else {
                 for (final msg in newMessages) {
                   if (!_messages.any((m) => m.id == msg.id)) {
@@ -281,7 +314,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
 
     // ✅ Live auth check before sending
     if (!_isAuthenticated) {
-      debugPrint('❌ Cannot send message: User ID not available (ID: $_currentUserId)');
+      debugPrint(
+        '❌ Cannot send message: User ID not available (ID: $_currentUserId)',
+      );
 
       try {
         final authService = AuthService();
@@ -308,10 +343,7 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
       }
 
       debugPrint('📤 Sending message with user ID: $_currentUserId');
-      await _groupRepo.sendMessage(
-        groupId: widget.groupId,
-        content: text,
-      );
+      await _groupRepo.sendMessage(groupId: widget.groupId, content: text);
 
       _controller.clear();
       setState(() => _isTyping = false);
@@ -380,7 +412,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     if (index == 0) return true;
     final prev = _messages[index - 1].createdAt;
     final curr = _messages[index].createdAt;
-    return prev.year != curr.year || prev.month != curr.month || prev.day != curr.day;
+    return prev.year != curr.year ||
+        prev.month != curr.month ||
+        prev.day != curr.day;
   }
 
   bool _isGroupedWithPrevious(int index) {
@@ -457,21 +491,31 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     final groupedWithPrev = _isGroupedWithPrevious(index);
     final groupedWithNext = _isGroupedWithNext(index);
 
-    final profilePictureUrl = _getProfilePictureUrl(message.sender);
-    final fullName = message.sender?['full_name'] ??
-        message.sender?['username'] ??
+    // Prefer the sender info carried on the message itself, but fall back
+    // to the group member list whenever it's missing a name or picture
+    // (e.g. a thin real-time payload) so people aren't shown as
+    // "Unknown User" just because of where the message came from.
+    final senderInfo = message.sender ?? _memberInfo[message.senderId];
+    final fallbackInfo = _memberInfo[message.senderId];
+    final profilePictureUrl =
+        _getProfilePictureUrl(senderInfo) ??
+        _getProfilePictureUrl(fallbackInfo);
+    final fullName =
+        senderInfo?['full_name'] ??
+        senderInfo?['username'] ??
+        fallbackInfo?['full_name'] ??
+        fallbackInfo?['username'] ??
         'Unknown User';
 
     final messageLength = message.content.length;
     final isVeryShort = messageLength < 10;
 
     return Padding(
-      padding: EdgeInsets.only(
-        top: groupedWithPrev ? 2 : 10,
-        bottom: 2,
-      ),
+      padding: EdgeInsets.only(top: groupedWithPrev ? 2 : 10, bottom: 2),
       child: Row(
-        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isMe
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMe) ...[
@@ -479,22 +523,32 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
               width: 32,
               child: groupedWithNext
                   ? null
-                  : _buildAvatar(profilePictureUrl, fullName, radius: 16),
+                  : _buildAvatar(
+                      profilePictureUrl,
+                      fullName,
+                      radius: 16,
+                      userId: message.senderId,
+                    ),
             ),
             const SizedBox(width: 8),
           ],
           Flexible(
             child: Column(
-              crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              crossAxisAlignment: isMe
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
               children: [
                 if (!isMe && !groupedWithPrev)
                   Padding(
                     padding: const EdgeInsets.only(left: 14, bottom: 3),
-                    child: Text(
-                      fullName,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.primary.withOpacity(0.85),
+                    child: GestureDetector(
+                      onTap: () => openUserProfile(context, message.senderId),
+                      child: Text(
+                        fullName,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.primary.withOpacity(0.85),
+                        ),
                       ),
                     ),
                   ),
@@ -504,9 +558,16 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                         ? double.infinity
                         : MediaQuery.of(context).size.width * 0.72,
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
-                    borderRadius: _bubbleRadius(isMe, groupedWithPrev, groupedWithNext),
+                    borderRadius: _bubbleRadius(
+                      isMe,
+                      groupedWithPrev,
+                      groupedWithNext,
+                    ),
                     color: isMe ? null : colorScheme.surfaceContainerHighest,
                     gradient: isMe
                         ? LinearGradient(
@@ -561,7 +622,11 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     );
   }
 
-  BorderRadius _bubbleRadius(bool isMe, bool groupedWithPrev, bool groupedWithNext) {
+  BorderRadius _bubbleRadius(
+    bool isMe,
+    bool groupedWithPrev,
+    bool groupedWithNext,
+  ) {
     const big = Radius.circular(18);
     const small = Radius.circular(5);
 
@@ -581,9 +646,14 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     );
   }
 
-  Widget _buildAvatar(String? url, String fullName, {double radius = 16}) {
+  Widget _buildAvatar(
+    String? url,
+    String fullName, {
+    double radius = 16,
+    int? userId,
+  }) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
+    final avatar = Container(
       width: radius * 2,
       height: radius * 2,
       decoration: BoxDecoration(
@@ -598,10 +668,20 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             ? Image.network(
                 url,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _buildFallbackAvatar(colorScheme, fullName),
+                errorBuilder: (_, __, ___) =>
+                    _buildFallbackAvatar(colorScheme, fullName),
               )
             : _buildFallbackAvatar(colorScheme, fullName),
       ),
+    );
+
+    // Tapping a message avatar opens that person's profile — same behavior
+    // as every other avatar in the app (see widgets/user_avatar.dart).
+    if (userId == null) return avatar;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => openUserProfile(context, userId),
+      child: avatar,
     );
   }
 
@@ -628,11 +708,23 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     final colorScheme = Theme.of(context).colorScheme;
 
     if (message.readBy.length > 1) {
-      return Icon(Icons.done_all_rounded, size: 13, color: Colors.white.withOpacity(0.9));
+      return Icon(
+        Icons.done_all_rounded,
+        size: 13,
+        color: Colors.white.withOpacity(0.9),
+      );
     } else if (message.readBy.isNotEmpty) {
-      return Icon(Icons.done_all_rounded, size: 13, color: colorScheme.secondary.withOpacity(0.9));
+      return Icon(
+        Icons.done_all_rounded,
+        size: 13,
+        color: colorScheme.secondary.withOpacity(0.9),
+      );
     }
-    return Icon(Icons.done_rounded, size: 13, color: Colors.white.withOpacity(0.65));
+    return Icon(
+      Icons.done_rounded,
+      size: 13,
+      color: Colors.white.withOpacity(0.65),
+    );
   }
 
   String _formatModernTime(DateTime dateTime) {
@@ -642,7 +734,8 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
   String? _getProfilePictureUrl(Map<String, dynamic>? sender) {
     if (sender == null) return null;
 
-    final profilePicture = sender['profile_picture'] ??
+    final profilePicture =
+        sender['profile_picture'] ??
         sender['profilePicture'] ??
         sender['avatar'] ??
         sender['profile_image'] ??
@@ -654,15 +747,15 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
 
     final profilePictureStr = profilePicture.toString();
 
-    if (profilePictureStr.startsWith('http://') || profilePictureStr.startsWith('https://')) {
+    if (profilePictureStr.startsWith('http://') ||
+        profilePictureStr.startsWith('https://')) {
       return profilePictureStr;
     }
 
-    const baseUrl = 'https://pensaconnect.onrender.com';
-    final cleanPath =
-        profilePictureStr.startsWith('/') ? profilePictureStr.substring(1) : profilePictureStr;
-
-    return '$baseUrl/$cleanPath';
+    // ✅ Route through the same env-aware helper the rest of the app uses,
+    // instead of a hardcoded production host that silently breaks avatars
+    // on any other environment (local/staging).
+    return UserRepository.getProfilePictureUrl(profilePictureStr);
   }
 
   String _getInitials(String name) {
@@ -676,7 +769,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
 
   Widget _buildConnectionStatus() {
     final theme = Theme.of(context);
-    final color = _isConnected ? const Color(0xFF22C55E) : const Color(0xFFF59E0B);
+    final color = _isConnected
+        ? const Color(0xFF22C55E)
+        : const Color(0xFFF59E0B);
 
     return Container(
       margin: const EdgeInsets.only(right: 12),
@@ -734,7 +829,10 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
           children: [
             Expanded(
               child: Container(
-                constraints: const BoxConstraints(minHeight: 46, maxHeight: 120),
+                constraints: const BoxConstraints(
+                  minHeight: 46,
+                  maxHeight: 120,
+                ),
                 padding: const EdgeInsets.symmetric(horizontal: 6),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surfaceContainerHighest,
@@ -755,7 +853,10 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                           hintText: 'Message',
                           border: InputBorder.none,
                           isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 12,
+                          ),
                         ),
                         onSubmitted: (_) => _sendMessage(),
                       ),
@@ -791,7 +892,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                       padding: const EdgeInsets.all(13),
                       child: CircularProgressIndicator(
                         strokeWidth: 2.2,
-                        valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
+                        valueColor: AlwaysStoppedAnimation(
+                          theme.colorScheme.primary,
+                        ),
                       ),
                     )
                   : SizedBox(
@@ -806,7 +909,11 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                         child: InkWell(
                           customBorder: const CircleBorder(),
                           onTap: hasText ? _sendMessage : null,
-                          child: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+                          child: const Icon(
+                            Icons.arrow_upward_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                         ),
                       ),
                     ),
@@ -840,7 +947,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             const SizedBox(height: 16),
             Text(
               'No messages yet',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -874,7 +983,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                     const SizedBox(height: 16),
                     Text(
                       "Couldn't verify your session",
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 6),
@@ -957,7 +1068,9 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                   Text(
                     widget.groupName,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   Text(
                     '${_messages.length} message${_messages.length == 1 ? '' : 's'}',
@@ -990,30 +1103,31 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _messages.isEmpty
-                    ? _buildEmptyState(theme)
-                    : RefreshIndicator(
-                        onRefresh: () async {
-                          _initialLoadDone = false;
-                          await _loadInitialMessages();
-                        },
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-                          itemCount: _messages.length,
-                          itemBuilder: (context, index) {
-                            final message = _messages[index];
-                            final showDivider = _isNewDay(index);
+                ? _buildEmptyState(theme)
+                : RefreshIndicator(
+                    onRefresh: () async {
+                      _initialLoadDone = false;
+                      await _loadInitialMessages();
+                    },
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final message = _messages[index];
+                        final showDivider = _isNewDay(index);
 
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (showDivider) _buildDateDivider(message.createdAt),
-                                _buildMessageBubble(message, index),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (showDivider)
+                              _buildDateDivider(message.createdAt),
+                            _buildMessageBubble(message, index),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
           ),
           _buildComposer(),
         ],
