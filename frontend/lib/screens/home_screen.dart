@@ -47,7 +47,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // so search is still reachable without permanently pinning it.
   final ScrollController _scrollController = ScrollController();
   bool _showMiniSearch = false;
-  static const double _miniSearchScrollThreshold = 170;
+  // ✅ Raised from 170 -> 260 so the mini search button only appears once
+  // we're clearly past the header/quick-actions row, instead of popping
+  // in mid-way through the first feed card (where its floating position
+  // could visually clash with that card's own content/action bar).
+  static const double _miniSearchScrollThreshold = 260;
 
   void _onScroll() {
     final shouldShow = _scrollController.offset > _miniSearchScrollThreshold;
@@ -1248,35 +1252,58 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   // --- Floating mini search: fades/scales in once the
                   // real search field has scrolled out of view, giving a
-                  // quick way back to search without pinning it. ---
+                  // quick way back to search without pinning it. Sits on
+                  // top of a full-width, top-to-transparent gradient scrim
+                  // so it always reads as its own translucent bar rather
+                  // than stacking directly on whatever card content has
+                  // scrolled underneath it. ---
                   Positioned(
-                    top: 12,
-                    right: 16,
+                    top: 0,
+                    right: 0,
+                    left: 0,
                     child: IgnorePointer(
                       ignoring: !_showMiniSearch,
                       child: AnimatedOpacity(
                         opacity: _showMiniSearch ? 1 : 0,
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeOut,
-                        child: AnimatedScale(
-                          scale: _showMiniSearch ? 1 : 0.7,
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeOut,
-                          child: Material(
-                            color: theme.colorScheme.surface,
-                            shape: const CircleBorder(),
-                            elevation: 3,
-                            shadowColor: Colors.black.withOpacity(0.15),
-                            child: InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: _revealSearch,
-                              child: Padding(
-                                padding: const EdgeInsets.all(10),
-                                child: Icon(
-                                  Icons.search_rounded,
-                                  size: 20,
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.7),
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(0, 12, 16, 20),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                theme.colorScheme.surfaceVariant.withOpacity(
+                                  0.9,
+                                ),
+                                theme.colorScheme.surfaceVariant.withOpacity(
+                                  0.0,
+                                ),
+                              ],
+                            ),
+                          ),
+                          alignment: Alignment.centerRight,
+                          child: AnimatedScale(
+                            scale: _showMiniSearch ? 1 : 0.7,
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeOut,
+                            child: Material(
+                              color: theme.colorScheme.surface,
+                              shape: const CircleBorder(),
+                              elevation: 3,
+                              shadowColor: Colors.black.withOpacity(0.15),
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: _revealSearch,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: Icon(
+                                    Icons.search_rounded,
+                                    size: 20,
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.7),
+                                  ),
                                 ),
                               ),
                             ),
