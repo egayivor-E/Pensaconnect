@@ -163,7 +163,7 @@ def _register_websocket_events(socketio_instance):
             return False
 
     @socketio_instance.on("disconnect")
-    def handle_disconnect():
+    def handle_disconnect(reason=None):
         user_info = connected_users.pop(request.sid, None)
         if user_info:
             logger.info(f"❌ User {user_info['user_id']} disconnected (SID: {request.sid})")
