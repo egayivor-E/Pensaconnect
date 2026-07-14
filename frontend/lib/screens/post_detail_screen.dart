@@ -5,6 +5,7 @@ import 'package:pensaconnect/repositories/forum_repository.dart';
 import 'package:provider/provider.dart';
 import '../models/forum_model.dart';
 import '../utils/role_utils.dart';
+import '../utils/profile_navigation.dart';
 
 class PostDetailScreen extends StatefulWidget {
   final int threadId; // ✅ add this
@@ -217,8 +218,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                             children: comments
                                 .map(
                                   (c) => ListTile(
-                                    leading: const CircleAvatar(
-                                      child: Icon(Icons.person),
+                                    leading: GestureDetector(
+                                      onTap: () =>
+                                          openUserProfile(context, c.authorId),
+                                      child: const CircleAvatar(
+                                        child: Icon(Icons.person),
+                                      ),
                                     ),
                                     title: Text(c.authorName),
                                     subtitle: Column(

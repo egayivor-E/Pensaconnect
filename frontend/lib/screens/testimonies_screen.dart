@@ -6,6 +6,7 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../models/testimony_model.dart';
 import '../repositories/testimony_repository.dart';
+import '../utils/profile_navigation.dart';
 import 'add_testimony_screen.dart';
 import 'testimony_detail_screen.dart';
 
@@ -220,12 +221,21 @@ class _TestimonyCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
               child: Row(
                 children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: theme.colorScheme.primary.withOpacity(
-                      0.12,
+                  GestureDetector(
+                    onTap: () => openUserProfile(
+                      context,
+                      int.tryParse(testimony.authorId),
                     ),
-                    child: Icon(Icons.person, color: theme.colorScheme.primary),
+                    child: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: theme.colorScheme.primary.withOpacity(
+                        0.12,
+                      ),
+                      child: Icon(
+                        Icons.person,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(

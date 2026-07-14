@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/forum_model.dart';
 import '../repositories/forum_repository.dart';
 import '../providers/auth_provider.dart';
+import '../utils/profile_navigation.dart';
 import 'post_form_screen.dart';
 
 class ForumsScreen extends StatefulWidget {
@@ -198,22 +199,26 @@ class _ForumsScreenState extends State<ForumsScreen> {
                         children: [
                           Row(
                             children: [
-                              CircleAvatar(
-                                radius: 18,
-                                backgroundColor: color,
-                                backgroundImage: post.authorAvatar != null
-                                    ? NetworkImage(post.authorAvatar!)
-                                    : null,
-                                child: post.authorAvatar == null
-                                    ? Text(
-                                        _initialsFor(post.authorName),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 13,
-                                        ),
-                                      )
-                                    : null,
+                              GestureDetector(
+                                onTap: () =>
+                                    openUserProfile(context, post.authorId),
+                                child: CircleAvatar(
+                                  radius: 18,
+                                  backgroundColor: color,
+                                  backgroundImage: post.authorAvatar != null
+                                      ? NetworkImage(post.authorAvatar!)
+                                      : null,
+                                  child: post.authorAvatar == null
+                                      ? Text(
+                                          _initialsFor(post.authorName),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        )
+                                      : null,
+                                ),
                               ),
                               const SizedBox(width: 10),
                               Expanded(

@@ -22,6 +22,7 @@ import '../repositories/prayer_repository.dart';
 import '../models/activity.dart';
 import '../models/user.dart';
 import '../utils/activity_target.dart';
+import '../utils/profile_navigation.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -673,13 +674,19 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 activity.hasAuthorAvatar
-                    ? CircleAvatar(
-                        radius: 22,
-                        backgroundColor: activity.color.withOpacity(0.12),
-                        backgroundImage: NetworkImage(resolvedAvatarUrl!),
-                        onBackgroundImageError: (exception, stackTrace) {
-                          debugPrint('Activity avatar load error: $exception');
-                        },
+                    ? GestureDetector(
+                        onTap: () =>
+                            openUserProfile(context, activity.authorId),
+                        child: CircleAvatar(
+                          radius: 22,
+                          backgroundColor: activity.color.withOpacity(0.12),
+                          backgroundImage: NetworkImage(resolvedAvatarUrl!),
+                          onBackgroundImageError: (exception, stackTrace) {
+                            debugPrint(
+                              'Activity avatar load error: $exception',
+                            );
+                          },
+                        ),
                       )
                     : Container(
                         width: 44,

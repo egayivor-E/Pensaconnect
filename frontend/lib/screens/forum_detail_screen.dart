@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:pensaconnect/repositories/user_repository.dart';
+import 'package:pensaconnect/utils/profile_navigation.dart';
 import 'package:pensaconnect/utils/forum_event_bus.dart';
 import 'package:pensaconnect/utils/role_utils.dart';
 import 'package:provider/provider.dart';
@@ -778,26 +779,32 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     String name, {
     double radius = 20,
     bool isBot = false,
+    int? authorId,
   }) {
     final color = isBot ? AppColors.inkDusk : _colorForName(name);
-    final avatar = CircleAvatar(
-      radius: radius,
-      backgroundColor: color,
-      backgroundImage: avatarUrl != null
-          ? NetworkImage(UserRepository.getProfilePictureUrl(avatarUrl))
-          : null,
-      child: avatarUrl != null
+    final avatar = GestureDetector(
+      onTap: (isBot || authorId == null)
           ? null
-          : isBot
-          ? const Icon(Icons.auto_awesome, color: Colors.white, size: 18)
-          : Text(
-              _initialsFor(name),
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: radius * 0.7,
+          : () => openUserProfile(context, authorId),
+      child: CircleAvatar(
+        radius: radius,
+        backgroundColor: color,
+        backgroundImage: avatarUrl != null
+            ? NetworkImage(UserRepository.getProfilePictureUrl(avatarUrl))
+            : null,
+        child: avatarUrl != null
+            ? null
+            : isBot
+            ? const Icon(Icons.auto_awesome, color: Colors.white, size: 18)
+            : Text(
+                _initialsFor(name),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: radius * 0.7,
+                ),
               ),
-            ),
+      ),
     );
     if (!isBot) return avatar;
     // ✅ Small "AI" badge pinned to the avatar corner — content authored
@@ -1106,6 +1113,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                   post.authorAvatar,
                   post.authorName,
                   isBot: post.authorIsBot,
+                  authorId: post.authorId,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1570,6 +1578,7 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
           comment.authorName,
           radius: 16,
           isBot: comment.authorIsBot,
+          authorId: comment.authorId,
         ),
         title: Text(
           comment.authorName,

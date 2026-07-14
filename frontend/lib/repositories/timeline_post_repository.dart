@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:image_picker/image_picker.dart' show XFile;
 import 'package:http/http.dart' as http;
 import '../models/timeline_post_model.dart';
 import '../services/api_service.dart';
@@ -45,10 +45,15 @@ class TimelinePostRepository {
   /// gets the same auth-header/token-refresh/interceptor handling as
   /// every other call, and _handleResponse already throws ApiException
   /// on a non-2xx, so there's no separate status check needed here.
-  Future<MediaUploadResult> uploadMedia(File file) async {
+  Future<MediaUploadResult> uploadMedia(XFile file) async {
+    // Read bytes directly off the XFile (works identically on web and
+    // native) instead of using MultipartFile.fromPath, which throws
+    // "MultipartFile is only supported where dart:io is available" on
+    // Flutter Web because dart:io isn't available there.
+    final bytes = await file.readAsBytes();
     final res = await ApiService.postMultipart(
       "$endpoint/upload",
-      files: [await http.MultipartFile.fromPath("file", file.path)],
+      files: [http.MultipartFile.fromBytes("file", bytes, filename: file.name)],
     );
     final body = json.decode(res.body);
     // success_response() wraps the payload under "data".

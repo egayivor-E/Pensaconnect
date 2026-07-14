@@ -17,6 +17,49 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY") or os.urandom(32)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # Base environment name; subclasses (DevelopmentConfig, ProductionConfig,
+    # RenderConfig, etc.) override this, but having it here means
+    # `Config.ENV` never raises AttributeError if the base class is used
+    # directly.
+    ENV = os.getenv("FLASK_ENV", "development")
+
+    # File upload settings, shared by every route that accepts uploads
+    # (avatars, forum attachments, etc.). Matches the set used in
+    # backend/api/v1/forums.py so nothing picked client-side gets rejected
+    # inconsistently between endpoints.
+    IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+    VIDEO_EXTENSIONS = {"mp4", "mov", "avi", "webm", "mkv", "m4v"}
+    DOCUMENT_EXTENSIONS = {"pdf", "docx", "txt"}
+    ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | DOCUMENT_EXTENSIONS
+
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))  # 16 MB
+
+    @classmethod
+    def is_allowed_file(cls, filename: str) -> bool:
+        """Return True if `filename` has one of the allowed upload extensions."""
+        return (
+            bool(filename)
+            and "." in filename
+            and filename.rsplit(".", 1)[1].lower() in cls.ALLOWED_EXTENSIONS
+        )
+
+    @classmethod
+    def get_upload_folder(cls) -> str:
+        """
+        Absolute path to the shared uploads directory, matching the
+        `/uploads/<filename>` static route registered in backend/__init__.py
+        (project_root/uploads). Created on first use so callers never have
+        to check for its existence themselves.
+        """
+        upload_folder = os.getenv("UPLOAD_FOLDER") or str(basedir / "uploads")
+        os.makedirs(upload_folder, exist_ok=True)
+        return upload_folder
+
+    @classmethod
+    def get_base_url(cls) -> str:
+        """Public base URL of the API, used to build absolute upload URLs."""
+        return os.getenv("BASE_URL", "http://localhost:5000")
+
     # ✅ FIXED: Database configuration that works on Render
     if 'RENDER' in os.environ or 'DATABASE_URL' in os.environ:
         # Render provides DATABASE_URL for PostgreSQL

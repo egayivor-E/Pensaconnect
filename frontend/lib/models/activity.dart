@@ -20,6 +20,7 @@ class Activity {
   // when these are null rather than crashing or showing a broken image.
   final String? authorName;
   final String? authorAvatarUrl;
+  final int? authorId;
   // ✅ What this activity is "about" — e.g. targetType "testimony" +
   // targetId 42 points at Testimony#42. Nullable because not every
   // activity has (or needs) a real backing object. Lets the feed deep
@@ -59,6 +60,7 @@ class Activity {
     required this.createdAt,
     this.authorName,
     this.authorAvatarUrl,
+    this.authorId,
     this.targetType,
     this.targetId,
     this.hasLiked = false,
@@ -83,6 +85,7 @@ class Activity {
       createdAt: createdAt,
       authorName: authorName,
       authorAvatarUrl: authorAvatarUrl,
+      authorId: authorId,
       targetType: targetType,
       targetId: targetId,
       hasLiked: hasLiked ?? this.hasLiked,
@@ -126,6 +129,7 @@ class Activity {
       authorName:
           author?['fullName'] as String? ?? author?['username'] as String?,
       authorAvatarUrl: author?['profilePicture'] as String?,
+      authorId: (author?['id'] as num?)?.toInt(),
       targetType: json['targetType'] as String?,
       targetId: (json['targetId'] as num?)?.toInt(),
       hasLiked: json['hasLiked'] as bool? ?? false,
@@ -154,6 +158,7 @@ class Activity {
       if (threadId != null) 'threadId': threadId,
       if (authorName != null)
         'user': {
+          if (authorId != null) 'id': authorId,
           'fullName': authorName,
           if (authorAvatarUrl != null) 'profilePicture': authorAvatarUrl,
         },

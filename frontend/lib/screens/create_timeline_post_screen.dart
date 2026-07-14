@@ -1,6 +1,7 @@
 // screens/create_timeline_post_screen.dart
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -20,7 +21,11 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
   final _picker = ImagePicker();
   final _contentController = TextEditingController();
 
-  File? _mediaFile;
+  // Kept as an XFile (not converted to dart:io's File) because File isn't
+  // usable on Flutter Web — that's what was causing "MultipartFile is only
+  // supported where dart:io is available" whenever a photo/video was
+  // attached to a share.
+  XFile? _mediaFile;
   bool _mediaIsVideo = false;
   bool _posting = false;
 
@@ -34,7 +39,7 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
     final picked = await _picker.pickImage(source: source, imageQuality: 85);
     if (picked == null) return;
     setState(() {
-      _mediaFile = File(picked.path);
+      _mediaFile = picked;
       _mediaIsVideo = false;
     });
   }
@@ -43,7 +48,7 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
     final picked = await _picker.pickVideo(source: ImageSource.gallery);
     if (picked == null) return;
     setState(() {
-      _mediaFile = File(picked.path);
+      _mediaFile = picked;
       _mediaIsVideo = true;
     });
   }
@@ -195,7 +200,15 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
                                 ),
                               ),
                             )
-                          : Image.file(_mediaFile!, fit: BoxFit.cover),
+                          : (kIsWeb
+                                ? Image.network(
+                                    _mediaFile!.path,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Image.file(
+                                    File(_mediaFile!.path),
+                                    fit: BoxFit.cover,
+                                  )),
                     ),
                   ),
                   Positioned(

@@ -24,9 +24,9 @@ class UserRepository {
         // so User.fromJson() was handed {"user": {...}} instead of the
         // actual user fields, and every field silently parsed to its
         // default (hence "Welcome back, Friend!" even when logged in).
-        final userJson = (data['data']?['user'] ??
-                data['data'] ??
-                data['user']) as Map<String, dynamic>;
+        final userJson =
+            (data['data']?['user'] ?? data['data'] ?? data['user'])
+                as Map<String, dynamic>;
         return User.fromJson(userJson);
       } else {
         debugPrint("❌ Invalid response in getCurrentUser: ${response.body}");
@@ -46,8 +46,8 @@ class UserRepository {
         final data = json.decode(response.body);
         final userJson =
             (data is Map<String, dynamic> && data.containsKey('data'))
-                ? data['data']
-                : data;
+            ? data['data']
+            : data;
         return User.fromJson(userJson);
       } else {
         debugPrint(
@@ -75,8 +75,8 @@ class UserRepository {
         final data = json.decode(response.body);
         final userJson =
             (data is Map<String, dynamic> && data.containsKey('data'))
-                ? data['data']
-                : data;
+            ? data['data']
+            : data;
         return User.fromJson(userJson);
       } else {
         debugPrint("❌ Failed to update user: ${response.body}");

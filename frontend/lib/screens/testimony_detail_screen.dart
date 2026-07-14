@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../models/testimony_model.dart';
 import '../repositories/testimony_repository.dart';
+import '../utils/profile_navigation.dart';
 
 class TestimonyDetailScreen extends StatefulWidget {
   final int id;
@@ -86,7 +87,9 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
             content: const Text('Your encouragement was shared 💛'),
             backgroundColor: Colors.green[600],
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }
@@ -214,9 +217,13 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                 color: Colors.grey[200],
                                 child: Center(
                                   child: CircularProgressIndicator(
-                                    value: loadingProgress.expectedTotalBytes != null
-                                        ? loadingProgress.cumulativeBytesLoaded /
-                                              loadingProgress.expectedTotalBytes!
+                                    value:
+                                        loadingProgress.expectedTotalBytes !=
+                                            null
+                                        ? loadingProgress
+                                                  .cumulativeBytesLoaded /
+                                              loadingProgress
+                                                  .expectedTotalBytes!
                                         : null,
                                   ),
                                 ),
@@ -234,7 +241,9 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                 Icons.favorite,
                                 color: Colors.redAccent,
                                 size: 90,
-                                shadows: [Shadow(color: Colors.black38, blurRadius: 14)],
+                                shadows: [
+                                  Shadow(color: Colors.black38, blurRadius: 14),
+                                ],
                               ),
                             ),
                           ),
@@ -255,14 +264,20 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                         const SizedBox(height: 12),
                         Row(
                           children: [
-                            CircleAvatar(
-                              backgroundColor: authorColor,
-                              child: Text(
-                                _initialsFor(testimony.authorName),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
+                            GestureDetector(
+                              onTap: () => openUserProfile(
+                                context,
+                                int.tryParse(testimony.authorId),
+                              ),
+                              child: CircleAvatar(
+                                backgroundColor: authorColor,
+                                child: Text(
+                                  _initialsFor(testimony.authorName),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
                                 ),
                               ),
                             ),
@@ -308,7 +323,10 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                             children: [
                               Text(
                                 testimony.content,
-                                style: const TextStyle(fontSize: 16, height: 1.5),
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  height: 1.5,
+                                ),
                               ),
                               if (testimony.imageUrl == null)
                                 AnimatedOpacity(
@@ -322,7 +340,12 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                       Icons.favorite,
                                       color: Colors.redAccent,
                                       size: 84,
-                                      shadows: [Shadow(color: Colors.black26, blurRadius: 12)],
+                                      shadows: [
+                                        Shadow(
+                                          color: Colors.black26,
+                                          blurRadius: 12,
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -344,7 +367,9 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                 ),
                                 decoration: BoxDecoration(
                                   color: testimony.likedByMe
-                                      ? theme.colorScheme.primary.withOpacity(0.12)
+                                      ? theme.colorScheme.primary.withOpacity(
+                                          0.12,
+                                        )
                                       : Colors.transparent,
                                   borderRadius: BorderRadius.circular(20),
                                 ),
@@ -352,7 +377,9 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                   children: [
                                     AnimatedScale(
                                       scale: testimony.likedByMe ? 1.15 : 1.0,
-                                      duration: const Duration(milliseconds: 200),
+                                      duration: const Duration(
+                                        milliseconds: 200,
+                                      ),
                                       child: Icon(
                                         // ✅ Heart reads as "this moved me,"
                                         // more fitting for a testimony than
@@ -449,11 +476,16 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                             final comments = snapshot.data ?? [];
                             if (comments.isEmpty) {
                               return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 20),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 20,
+                                ),
                                 child: Column(
                                   children: [
-                                    Icon(Icons.mode_comment_outlined,
-                                        color: Colors.grey[400], size: 32),
+                                    Icon(
+                                      Icons.mode_comment_outlined,
+                                      color: Colors.grey[400],
+                                      size: 32,
+                                    ),
                                     const SizedBox(height: 8),
                                     const Text(
                                       'No encouragement yet.\nBe the first to celebrate this testimony!',
@@ -466,7 +498,9 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                             }
                             return Column(
                               children: comments.map((c) {
-                                final commentColor = _colorForName(c.authorName);
+                                final commentColor = _colorForName(
+                                  c.authorName,
+                                );
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 12),
                                   elevation: 0,
@@ -479,14 +513,20 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                       horizontal: 16,
                                       vertical: 8,
                                     ),
-                                    leading: CircleAvatar(
-                                      backgroundColor: commentColor,
-                                      child: Text(
-                                        _initialsFor(c.authorName),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 12,
+                                    leading: GestureDetector(
+                                      onTap: () => openUserProfile(
+                                        context,
+                                        int.tryParse(c.authorId ?? ''),
+                                      ),
+                                      child: CircleAvatar(
+                                        backgroundColor: commentColor,
+                                        child: Text(
+                                          _initialsFor(c.authorName),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -533,7 +573,11 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                           elevation: 0,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
-                            side: BorderSide(color: theme.colorScheme.primary.withOpacity(0.15)),
+                            side: BorderSide(
+                              color: theme.colorScheme.primary.withOpacity(
+                                0.15,
+                              ),
+                            ),
                           ),
                           child: Padding(
                             padding: const EdgeInsets.all(16),
@@ -553,7 +597,8 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                   controller: _commentController,
                                   maxLines: 3,
                                   decoration: InputDecoration(
-                                    hintText: 'Share a word of encouragement...',
+                                    hintText:
+                                        'Share a word of encouragement...',
                                     filled: true,
                                     fillColor: Colors.grey.withOpacity(0.06),
                                     border: OutlineInputBorder(

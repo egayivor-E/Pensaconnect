@@ -11,6 +11,7 @@ import '../repositories/auth_repository.dart';
 import '../services/socketio_service.dart';
 import '../config/config.dart';
 import '../utils/validators.dart';
+import '../utils/profile_navigation.dart';
 
 class LiveStreamScreen extends StatefulWidget {
   const LiveStreamScreen({super.key});
@@ -294,7 +295,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
         if (user == null) {
           // ✅ FIX: previously this silently dropped the message with no
           // feedback at all if the user came back null.
-          _showErrorMessage('Could not verify your account. Please log in again.');
+          _showErrorMessage(
+            'Could not verify your account. Please log in again.',
+          );
           return;
         }
         _socketService.sendMessage(int.tryParse(_groupId) ?? 1, {
@@ -780,12 +783,15 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            backgroundColor: theme.colorScheme.primary.withAlpha(25),
-            child: Icon(
-              Icons.person,
-              color: theme.colorScheme.primary,
-              size: 20,
+          GestureDetector(
+            onTap: () => openUserProfile(context, int.tryParse(msg.senderId)),
+            child: CircleAvatar(
+              backgroundColor: theme.colorScheme.primary.withAlpha(25),
+              child: Icon(
+                Icons.person,
+                color: theme.colorScheme.primary,
+                size: 20,
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -837,12 +843,16 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
             itemBuilder: (context, index) {
               final member = _members[index];
               return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: theme.colorScheme.primary.withAlpha(25),
-                  child: Icon(
-                    Icons.person,
-                    color: theme.colorScheme.primary,
-                    size: 20,
+                leading: GestureDetector(
+                  onTap: () =>
+                      openUserProfile(context, int.tryParse(member.id)),
+                  child: CircleAvatar(
+                    backgroundColor: theme.colorScheme.primary.withAlpha(25),
+                    child: Icon(
+                      Icons.person,
+                      color: theme.colorScheme.primary,
+                      size: 20,
+                    ),
                   ),
                 ),
                 title: Text(member.name, overflow: TextOverflow.ellipsis),
