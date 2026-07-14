@@ -37,6 +37,11 @@ FORUM_MEDIA_BUCKET = "forum-media"
 # the Supabase dashboard, same as worship-media and forum-media.
 TIMELINE_MEDIA_BUCKET = "timeline-media"
 
+# Bucket for user profile avatar images (uploaded via POST /me/avatar).
+# Create this as a public bucket in the Supabase dashboard, same as
+# worship-media, forum-media, and timeline-media.
+AVATAR_BUCKET = "avatars"
+
 
 def get_supabase_client() -> Client:
     """
