@@ -8,7 +8,7 @@ from backend.models import User
 from backend.extensions import db
 from .utils import success_response, error_response
 from backend.config import Config
-from backend.supabase_client import upload_file_to_supabase, AVATAR_BUCKET
+from backend.supabase_client import upload_file_to_supabase, delete_file_from_supabase, AVATAR_BUCKET
 
 users_bp = Blueprint("users", __name__, url_prefix="/users")
 
@@ -74,7 +74,7 @@ def delete_user(user_id: int):
     user = User.query.get_or_404(user_id)
     
     # Delete user's profile picture if it exists
-    if user.profile_picture and user.profile_picture.startswith('/uploads/'):
+    if user.profile_picture:
         _delete_old_avatar(user.profile_picture)
     
     db.session.delete(user)
@@ -135,35 +135,35 @@ def upload_avatar():
         timestamp = int(datetime.utcnow().timestamp())
         unique_id = uuid.uuid4().hex[:8]  # Add random component
         extension = file.filename.rsplit('.', 1)[1].lower()
-        filename = f"avatar_{user_id}_{timestamp}_{unique_id}.{extension}"
-        filename = secure_filename(filename)
+        filename = secure_filename(f"avatar_{user_id}_{timestamp}_{unique_id}.{extension}")
 
-        # Get upload folder from config (works in any environment)
-        upload_folder = Config.get_upload_folder()
-        file_path = os.path.join(upload_folder, filename)
+        file_bytes = file.read()
+        content_type = file.mimetype or "application/octet-stream"
 
-        # Save file
-        file.save(file_path)
-        
-        # Verify file was saved
-        if not os.path.exists(file_path):
-            raise Exception("File was not saved successfully")
+        # Upload to Supabase Storage. Render's local disk is ephemeral and
+        # gets wiped on every redeploy/restart, so avatars must live in
+        # Supabase to survive between deploys.
+        public_url = upload_file_to_supabase(
+            file_bytes=file_bytes,
+            destination_path=filename,
+            content_type=content_type,
+            bucket=AVATAR_BUCKET,
+        )
 
-        print(f"✅ Avatar saved: {file_path}")
-        print(f"✅ File size: {os.path.getsize(file_path)} bytes")
+        print(f"✅ Avatar uploaded to Supabase: {public_url}")
         print(f"✅ Environment: {Config.ENV}")
 
-        # Delete old avatar if it exists
-        if user.profile_picture and user.profile_picture.startswith('/uploads/'):
+        # Delete the old avatar from Supabase if there was one
+        if user.profile_picture:
             _delete_old_avatar(user.profile_picture)
 
-        # Store relative path in database (consistent across environments)
-        user.profile_picture = f"/uploads/{filename}"
+        # Store the public Supabase URL (works from any environment)
+        user.profile_picture = public_url
         db.session.commit()
 
         return success_response({
             "user": user.to_dict(exclude=["password_hash"]),
-            "avatar_url": user.profile_picture,  # Relative path
+            "avatar_url": user.profile_picture,
             "filename": filename,
             "environment": Config.ENV,
             "message": "Avatar uploaded successfully"
@@ -230,17 +230,31 @@ def _serve_default_avatar():
 
 
 def _delete_old_avatar(avatar_path):
-    """Safely delete old avatar file"""
+    """Safely delete old avatar (Supabase storage, or legacy local-disk path)"""
     try:
-        if avatar_path and avatar_path.startswith('/uploads/'):
+        if not avatar_path:
+            return False
+
+        if avatar_path.startswith('/uploads/'):
+            # Legacy avatar saved to local disk before the Supabase migration.
+            # Render's disk is ephemeral, so this most likely no longer
+            # exists, but attempt cleanup for completeness.
             filename = avatar_path.split('/')[-1]
             upload_folder = Config.get_upload_folder()
             old_file_path = os.path.join(upload_folder, filename)
-            
             if os.path.exists(old_file_path):
                 os.remove(old_file_path)
-                print(f"🗑️ Deleted old avatar: {old_file_path}")
+                print(f"🗑️ Deleted old local avatar: {old_file_path}")
                 return True
+            return False
+
+        if AVATAR_BUCKET in avatar_path:
+            # Supabase public URL - extract the storage path and delete it
+            filename = avatar_path.rsplit('/', 1)[-1]
+            delete_file_from_supabase(filename, bucket=AVATAR_BUCKET)
+            print(f"🗑️ Deleted old Supabase avatar: {filename}")
+            return True
+
     except Exception as e:
         print(f"⚠️ Could not delete old avatar: {str(e)}")
     return False
