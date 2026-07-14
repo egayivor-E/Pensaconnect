@@ -26,19 +26,19 @@ class TimelinePost {
     return TimelinePost(
       id: (json['id'] as num).toInt(),
       content: json['content'] ?? '',
-      imageUrl: json['imageUrl'] as String?,
-      isVideo: json['isVideo'] == true,
+      imageUrl: json['image_url'] as String?,
+      isVideo: json['is_video'] == true,
       createdAt:
-          DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.tryParse(json['created_at']?.toString() ?? '') ??
           DateTime.now(),
       userId:
-          (json['userId'] as num?)?.toInt() ??
+          (json['user_id'] as num?)?.toInt() ??
           (user?['id'] as num?)?.toInt() ??
           0,
-      authorName: (user?['fullName'] as String?)?.trim().isNotEmpty == true
-          ? user!['fullName'] as String
+      authorName: (user?['full_name'] as String?)?.trim().isNotEmpty == true
+          ? user!['full_name'] as String
           : (user?['username'] as String? ?? 'You'),
-      authorAvatarUrl: user?['profilePicture'] as String?,
+      authorAvatarUrl: user?['profile_picture'] as String?,
     );
   }
 }

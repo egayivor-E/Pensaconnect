@@ -513,7 +513,7 @@ class _ThreadsScreenState extends State<ThreadsScreen> {
                                                   child: Text(
                                                     postCount == 0
                                                         ? 'Open thread to post the first reply'
-                                                        : 'View $postCount repl${postCount == 1 ? 'y' : 'ies'} · Post yours',
+                                                        : 'View $postCount repl${postCount == 1 ? 'y' : 'ies'} · Others view, Join',
                                                     style: theme
                                                         .textTheme
                                                         .labelMedium
