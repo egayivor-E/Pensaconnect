@@ -100,4 +100,19 @@ class TimelinePostRepository {
       );
     }
   }
+
+  /// Toggle a like/reaction on a timeline post. Follows the same
+  /// toggle-endpoint convention as TestimonyRepository/ForumRepository
+  /// elsewhere in the app — ApiService already throws ApiException on a
+  /// non-2xx, so a normal return here means the toggle succeeded.
+  Future<void> toggleLike(int postId) async {
+    final res = await ApiService.post("$endpoint/$postId/like", {});
+    if (res.statusCode != 200) {
+      throw ApiException(
+        statusCode: res.statusCode,
+        message: "Failed to update reaction",
+        details: json.decode(res.body),
+      );
+    }
+  }
 }

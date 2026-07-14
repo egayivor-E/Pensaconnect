@@ -40,8 +40,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // one piece of the UI that's actually still a mock.
   File? _coverFile;
 
-  Future<List<TimelinePost>>? _futurePosts;
+  // ✅ Replaced the old Future<List<TimelinePost>>?/FutureBuilder pair with
+  // plain state we own directly. A FutureBuilder rebuilds its child from
+  // whatever Future is currently assigned, which made an optimistic
+  // like/unlike (see _toggleLike) impossible to express cleanly — there
+  // was no mutable list to update in place. This mirrors the pattern
+  // HomeScreen already uses for its activity feed.
+  List<TimelinePost> _posts = [];
+  bool _postsLoading = true;
+  String? _postsError;
   int? _postsLoadedForUserId;
+
+  // ✅ Reaction state for timeline posts — same target-keyed,
+  // optimistic-with-rollback pattern as HomeScreen's
+  // _likedTargetKeys/_actionInFlight, just keyed directly by post id
+  // since a timeline post (unlike an Activity row) *is* the real content.
+  final Set<int> _likedPostIds = {};
+  final Set<int> _postActionInFlight = {};
 
   @override
   void initState() {
@@ -57,13 +72,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _ensurePostsLoaded(int userId) {
     if (_postsLoadedForUserId == userId) return;
     _postsLoadedForUserId = userId;
-    _futurePosts = _postsRepo.fetchUserPosts(userId);
+    _loadPosts(userId);
   }
 
-  Future<void> _refreshPosts(int userId) async {
-    setState(() => _futurePosts = _postsRepo.fetchUserPosts(userId));
-    await _futurePosts;
+  Future<void> _loadPosts(int userId) async {
+    if (!mounted) return;
+    setState(() {
+      _postsLoading = true;
+      _postsError = null;
+    });
+    try {
+      final fetched = await _postsRepo.fetchUserPosts(userId);
+      if (!mounted) return;
+      setState(() {
+        _posts = fetched;
+        _postsLoading = false;
+        // Rebuilt fresh from each load's `hasLiked` flags rather than
+        // merged into the old set — same reasoning as HomeScreen: the
+        // server is the source of truth for like state, so a refresh
+        // should fully replace it, not just add to it.
+        _likedPostIds
+          ..clear()
+          ..addAll(fetched.where((p) => p.hasLiked).map((p) => p.id));
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _postsError = e.toString();
+        _postsLoading = false;
+      });
+    }
   }
+
+  Future<void> _refreshPosts(int userId) => _loadPosts(userId);
 
   // Post media (images/videos) come back from the backend as a relative
   // path — same convention as activity and user avatars elsewhere in the
@@ -120,6 +161,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
       } catch (e) {
         _showSnack('Failed to delete post: $e');
       }
+    }
+  }
+
+  // ✅ Optimistically flips a post's heart + count, then rolls both back
+  // if the API call fails — same pattern as HomeScreen._handleLike, just
+  // scoped to this profile's own post list instead of the global feed.
+  Future<void> _toggleLike(TimelinePost post) async {
+    if (_postActionInFlight.contains(post.id)) return;
+    final index = _posts.indexWhere((p) => p.id == post.id);
+    if (index == -1) return;
+    final wasLiked = _likedPostIds.contains(post.id);
+
+    setState(() {
+      _postActionInFlight.add(post.id);
+      wasLiked ? _likedPostIds.remove(post.id) : _likedPostIds.add(post.id);
+      final current = _posts[index];
+      final newCount = (current.likeCount + (wasLiked ? -1 : 1)).clamp(
+        0,
+        1 << 30,
+      );
+      _posts[index] = current.copyWith(
+        likeCount: newCount,
+        hasLiked: !wasLiked,
+      );
+    });
+
+    try {
+      await _postsRepo.toggleLike(post.id);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        wasLiked ? _likedPostIds.add(post.id) : _likedPostIds.remove(post.id);
+        final current = _posts[index];
+        final revertedCount = (current.likeCount + (wasLiked ? 1 : -1)).clamp(
+          0,
+          1 << 30,
+        );
+        _posts[index] = current.copyWith(
+          likeCount: revertedCount,
+          hasLiked: wasLiked,
+        );
+      });
+      _showSnack("Couldn't save that — check your connection and try again.");
+    } finally {
+      if (mounted) setState(() => _postActionInFlight.remove(post.id));
     }
   }
 
@@ -655,148 +741,171 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildPostsGrid(BuildContext context, User user) {
     final theme = Theme.of(context);
-    return FutureBuilder<List<TimelinePost>>(
-      future: _futurePosts,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
+
+    if (_postsLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_postsError != null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              children: [
+                const Icon(Icons.error_outline, size: 56, color: Colors.red),
+                const SizedBox(height: 16),
+                Text('Failed to load posts: $_postsError'),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => _loadPosts(user.id),
+                  child: const Text('Try Again'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (_posts.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          _EmptyState(
+            icon: Icons.photo_library_outlined,
+            title: 'No posts yet',
+            subtitle: 'Tap "New Post" to share a photo, video, or update.',
+          ),
+        ],
+      );
+    }
+
+    final width = MediaQuery.sizeOf(context).width;
+    final crossAxisCount = width >= 1000 ? 5 : (width >= 700 ? 4 : 3);
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(2),
+      itemCount: _posts.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
+      ),
+      itemBuilder: (context, i) {
+        final post = _posts[i];
+        final isOwnPost = post.userId == user.id;
+        final isLiked = _likedPostIds.contains(post.id);
+        final isInFlight = _postActionInFlight.contains(post.id);
+        final resolvedUrl = _resolvePostMediaUrl(post.imageUrl);
+
+        return GestureDetector(
+          onTap: () => _openPostViewer(context, post, isOwnPost),
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  children: [
-                    const Icon(
-                      Icons.error_outline,
-                      size: 56,
-                      color: Colors.red,
+              // ✅ Media rendering fix: a video's raw file URL is not a
+              // valid image, so the previous code's unconditional
+              // Image.network(resolvedUrl) attempted to decode video
+              // bytes as an image for every video post — that always
+              // failed and fell straight to the broken-image
+              // errorBuilder, which was the reported "media not
+              // rendering" bug. Videos now get their own placeholder
+              // tile (there's no thumbnail field from the backend yet)
+              // instead of a doomed Image.network call.
+              if (post.isVideo)
+                Container(
+                  color: Colors.black87,
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.play_circle_fill,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                )
+              else if (resolvedUrl != null)
+                Image.network(
+                  resolvedUrl,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (ctx, child, progress) {
+                    if (progress == null) return child;
+                    return Container(color: theme.colorScheme.surfaceVariant);
+                  },
+                  errorBuilder: (_, __, ___) => Container(
+                    color: theme.colorScheme.surfaceVariant,
+                    child: const Icon(Icons.image_not_supported_outlined),
+                  ),
+                )
+              else
+                Container(
+                  color: theme.colorScheme.surfaceVariant,
+                  padding: const EdgeInsets.all(6),
+                  alignment: Alignment.center,
+                  child: Text(
+                    post.content,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+
+              // ✅ Reaction pill — replaces the old always-visible tiny
+              // delete dot in this corner. Every post can be reacted to
+              // (owner or not); delete now lives behind the "⋮" menu in
+              // the full post viewer instead of a small, easy-to-mis-tap
+              // icon sitting on top of every one of the owner's tiles.
+              Positioned(
+                left: 6,
+                bottom: 6,
+                child: GestureDetector(
+                  onTap: isInFlight ? null : () => _toggleLike(post),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
                     ),
-                    const SizedBox(height: 16),
-                    Text('Failed to load posts: ${snapshot.error}'),
-                    const SizedBox(height: 16),
-                    ElevatedButton(
-                      onPressed: () => _refreshPosts(user.id),
-                      child: const Text('Try Again'),
+                    decoration: BoxDecoration(
+                      color: Colors.black45,
+                      borderRadius: BorderRadius.circular(20),
                     ),
-                  ],
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isLiked ? Icons.favorite : Icons.favorite_border,
+                          color: isLiked ? Colors.redAccent : Colors.white,
+                          size: 14,
+                        ),
+                        if (post.likeCount > 0) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            '${post.likeCount}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
-          );
-        }
-
-        final posts = snapshot.data ?? [];
-        if (posts.isEmpty) {
-          return ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            children: const [
-              _EmptyState(
-                icon: Icons.photo_library_outlined,
-                title: 'No posts yet',
-                subtitle: 'Tap "New Post" to share a photo, video, or update.',
-              ),
-            ],
-          );
-        }
-
-        final width = MediaQuery.sizeOf(context).width;
-        final crossAxisCount = width >= 1000 ? 5 : (width >= 700 ? 4 : 3);
-
-        return GridView.builder(
-          padding: const EdgeInsets.all(2),
-          itemCount: posts.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 2,
-            mainAxisSpacing: 2,
           ),
-          itemBuilder: (context, i) {
-            final post = posts[i];
-            final isOwnPost = post.userId == user.id;
-            final resolvedUrl = _resolvePostMediaUrl(post.imageUrl);
-            return GestureDetector(
-              onTap: () => _openPostViewer(context, post),
-              onLongPress: isOwnPost
-                  ? () => _confirmDeletePost(post, user.id)
-                  : null,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (resolvedUrl != null)
-                    Image.network(
-                      resolvedUrl,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (ctx, child, progress) {
-                        if (progress == null) return child;
-                        return Container(
-                          color: theme.colorScheme.surfaceVariant,
-                        );
-                      },
-                      errorBuilder: (_, __, ___) => Container(
-                        color: theme.colorScheme.surfaceVariant,
-                        child: const Icon(Icons.image_not_supported_outlined),
-                      ),
-                    )
-                  else
-                    Container(
-                      color: theme.colorScheme.surfaceVariant,
-                      padding: const EdgeInsets.all(6),
-                      alignment: Alignment.center,
-                      child: Text(
-                        post.content,
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ),
-                  if (post.isVideo)
-                    const Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Icon(
-                        Icons.play_circle_fill,
-                        color: Colors.white,
-                        size: 20,
-                        shadows: [Shadow(blurRadius: 6, color: Colors.black45)],
-                      ),
-                    ),
-                  // ✅ Visible delete affordance for the post owner's own
-                  // tiles, in addition to the long-press above — a
-                  // long-press-only action was too easy to never discover.
-                  if (isOwnPost)
-                    Positioned(
-                      top: 4,
-                      left: 4,
-                      child: GestureDetector(
-                        onTap: () => _confirmDeletePost(post, user.id),
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            color: Colors.black45,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.delete_outline,
-                            color: Colors.white,
-                            size: 16,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
         );
       },
     );
   }
 
-  void _openPostViewer(BuildContext context, TimelinePost post) {
+  void _openPostViewer(
+    BuildContext context,
+    TimelinePost post,
+    bool isOwnPost,
+  ) {
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
@@ -804,6 +913,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         pageBuilder: (_, __, ___) => _PostViewer(
           post: post,
           resolvedImageUrl: _resolvePostMediaUrl(post.imageUrl),
+          isOwnPost: isOwnPost,
+          isLiked: _likedPostIds.contains(post.id),
+          onToggleLike: () => _toggleLike(post),
+          onDelete: isOwnPost
+              ? () {
+                  Navigator.pop(context);
+                  _confirmDeletePost(post, post.userId);
+                }
+              : null,
         ),
       ),
     );
@@ -1166,13 +1284,47 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
-class _PostViewer extends StatelessWidget {
+// ✅ Now stateful: it needs to track its own local like/count so the
+// heart in the full-screen viewer can respond instantly to a tap (the
+// pushed route doesn't automatically rebuild when the profile screen's
+// own state changes underneath it). The actual persistence still goes
+// through the same _toggleLike on ProfileScreen via onToggleLike.
+class _PostViewer extends StatefulWidget {
   final TimelinePost post;
   final String? resolvedImageUrl;
-  const _PostViewer({required this.post, required this.resolvedImageUrl});
+  final bool isOwnPost;
+  final bool isLiked;
+  final VoidCallback onToggleLike;
+  final VoidCallback? onDelete;
+
+  const _PostViewer({
+    required this.post,
+    required this.resolvedImageUrl,
+    required this.isOwnPost,
+    required this.isLiked,
+    required this.onToggleLike,
+    this.onDelete,
+  });
+
+  @override
+  State<_PostViewer> createState() => _PostViewerState();
+}
+
+class _PostViewerState extends State<_PostViewer> {
+  late bool _liked = widget.isLiked;
+  late int _count = widget.post.likeCount;
+
+  void _handleTapLike() {
+    setState(() {
+      _liked = !_liked;
+      _count = (_count + (_liked ? 1 : -1)).clamp(0, 1 << 30);
+    });
+    widget.onToggleLike();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final post = widget.post;
     return GestureDetector(
       onTap: () => Navigator.pop(context),
       child: Scaffold(
@@ -1181,45 +1333,128 @@ class _PostViewer extends StatelessWidget {
           backgroundColor: Colors.transparent,
           elevation: 0,
           iconTheme: const IconThemeData(color: Colors.white),
+          // ✅ Delete now lives here, behind an explicit "⋮" menu, and
+          // only shows up at all for the post's own owner — instead of
+          // a permanent tiny icon sitting on every grid tile.
+          actions: [
+            if (widget.isOwnPost && widget.onDelete != null)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                onSelected: (value) {
+                  if (value == 'delete') widget.onDelete!();
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Delete post'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+          ],
         ),
         extendBodyBehindAppBar: true,
-        body: Center(
-          child: resolvedImageUrl == null
-              ? Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    post.content,
-                    style: const TextStyle(color: Colors.white, fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              : post.isVideo
-              // A full inline video player is a separate dependency
-              // decision (video_player/chewie are already used
-              // elsewhere in the app for worship); wire the same
-              // player in here once you want in-viewer playback.
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.play_circle_fill,
-                      color: Colors.white,
-                      size: 72,
-                    ),
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Text(
-                        post.content,
-                        style: const TextStyle(color: Colors.white),
-                        textAlign: TextAlign.center,
+        body: Stack(
+          children: [
+            Center(
+              child: GestureDetector(
+                // Swallow taps on the media itself so tapping the image
+                // to zoom (InteractiveViewer) doesn't also close the
+                // viewer via the outer GestureDetector.
+                onTap: () {},
+                child: widget.resolvedImageUrl == null
+                    ? Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          post.content,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : post.isVideo
+                    // A full inline video player is a separate dependency
+                    // decision (video_player/chewie are already used
+                    // elsewhere in the app for worship); wire the same
+                    // player in here once you want in-viewer playback.
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.play_circle_fill,
+                            color: Colors.white,
+                            size: 72,
+                          ),
+                          const SizedBox(height: 16),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: Text(
+                              post.content,
+                              style: const TextStyle(color: Colors.white),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      )
+                    : InteractiveViewer(
+                        child: Image.network(
+                          widget.resolvedImageUrl!,
+                          fit: BoxFit.contain,
+                        ),
                       ),
+              ),
+            ),
+            // ✅ The post's actual reaction affordance — a heart with a
+            // live count — replacing the old tiny delete dot as the
+            // thing that lives front-and-center on a post.
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 32,
+              child: Center(
+                child: GestureDetector(
+                  onTap: _handleTapLike,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
                     ),
-                  ],
-                )
-              : InteractiveViewer(
-                  child: Image.network(resolvedImageUrl!, fit: BoxFit.contain),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _liked ? Icons.favorite : Icons.favorite_border,
+                          color: _liked ? Colors.redAccent : Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _count > 0
+                              ? '$_count ${_count == 1 ? 'Like' : 'Likes'}'
+                              : 'Like',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -9,6 +9,8 @@ class TimelinePost {
   final int userId;
   final String authorName;
   final String? authorAvatarUrl;
+  final int likeCount;
+  final bool hasLiked;
 
   TimelinePost({
     required this.id,
@@ -19,6 +21,8 @@ class TimelinePost {
     required this.userId,
     required this.authorName,
     this.authorAvatarUrl,
+    this.likeCount = 0,
+    this.hasLiked = false,
   });
 
   factory TimelinePost.fromJson(Map<String, dynamic> json) {
@@ -39,6 +43,29 @@ class TimelinePost {
           ? user!['full_name'] as String
           : (user?['username'] as String? ?? 'You'),
       authorAvatarUrl: user?['profile_picture'] as String?,
+      // ✅ Reactions: the server is expected to return these the same way
+      // Activity already does (see Activity.hasLiked / likeCount) — a
+      // per-post like count and whether the current user has liked it.
+      likeCount: (json['like_count'] as num?)?.toInt() ?? 0,
+      hasLiked: json['has_liked'] == true,
+    );
+  }
+
+  // Lets the profile screen apply an optimistic like/unlike (and roll it
+  // back on failure) without re-fetching the whole post list — same
+  // reasoning as Activity.copyWith in the home feed.
+  TimelinePost copyWith({int? likeCount, bool? hasLiked}) {
+    return TimelinePost(
+      id: id,
+      content: content,
+      imageUrl: imageUrl,
+      isVideo: isVideo,
+      createdAt: createdAt,
+      userId: userId,
+      authorName: authorName,
+      authorAvatarUrl: authorAvatarUrl,
+      likeCount: likeCount ?? this.likeCount,
+      hasLiked: hasLiked ?? this.hasLiked,
     );
   }
 }
