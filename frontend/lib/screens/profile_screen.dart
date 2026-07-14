@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../config/config.dart';
 import '../models/badge.dart';
 import '../models/profile_view_model.dart';
 import '../models/timeline_post_model.dart';
@@ -62,6 +63,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _refreshPosts(int userId) async {
     setState(() => _futurePosts = _postsRepo.fetchUserPosts(userId));
     await _futurePosts;
+  }
+
+  // Post media (images/videos) come back from the backend as a relative
+  // path — same convention as activity and user avatars elsewhere in the
+  // app (see HomeScreen._resolveAvatarUrl). Image.network needs an
+  // absolute URL, so without this a relative path silently fails to load
+  // and just shows the errorBuilder / nothing.
+  String? _resolvePostMediaUrl(String? path) {
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+    final base = Config.baseUrl.endsWith('/')
+        ? Config.baseUrl.substring(0, Config.baseUrl.length - 1)
+        : Config.baseUrl;
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    return '$base$normalizedPath';
   }
 
   Future<void> _openCreatePost(int userId) async {
@@ -324,6 +342,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
       expandedHeight: isWide ? 340 : 300,
       backgroundColor: primary,
       iconTheme: const IconThemeData(color: Colors.white),
+      // ✅ Back arrow: pops if this screen was pushed (e.g. reached from
+      // another user's profile, a notification, etc). If there's nothing
+      // to pop — e.g. Profile is a bottom-tab/root route in go_router with
+      // no back stack — falls back to navigating home instead of showing
+      // a dead/missing button.
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back, color: Colors.white),
+        tooltip: 'Back',
+        onPressed: () {
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          } else {
+            context.go('/');
+          }
+        },
+      ),
       actions: [
         IconButton(
           icon: const Icon(Icons.settings_outlined, color: Colors.white),
@@ -682,6 +716,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           itemBuilder: (context, i) {
             final post = posts[i];
             final isOwnPost = post.userId == user.id;
+            final resolvedUrl = _resolvePostMediaUrl(post.imageUrl);
             return GestureDetector(
               onTap: () => _openPostViewer(context, post),
               onLongPress: isOwnPost
@@ -690,9 +725,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (post.imageUrl != null)
+                  if (resolvedUrl != null)
                     Image.network(
-                      post.imageUrl!,
+                      resolvedUrl,
                       fit: BoxFit.cover,
                       loadingBuilder: (ctx, child, progress) {
                         if (progress == null) return child;
@@ -729,6 +764,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         shadows: [Shadow(blurRadius: 6, color: Colors.black45)],
                       ),
                     ),
+                  // ✅ Visible delete affordance for the post owner's own
+                  // tiles, in addition to the long-press above — a
+                  // long-press-only action was too easy to never discover.
+                  if (isOwnPost)
+                    Positioned(
+                      top: 4,
+                      left: 4,
+                      child: GestureDetector(
+                        onTap: () => _confirmDeletePost(post, user.id),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: Colors.black45,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             );
@@ -743,7 +801,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       PageRouteBuilder(
         opaque: false,
         barrierColor: Colors.black87,
-        pageBuilder: (_, __, ___) => _PostViewer(post: post),
+        pageBuilder: (_, __, ___) => _PostViewer(
+          post: post,
+          resolvedImageUrl: _resolvePostMediaUrl(post.imageUrl),
+        ),
       ),
     );
   }
@@ -1107,7 +1168,8 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
 
 class _PostViewer extends StatelessWidget {
   final TimelinePost post;
-  const _PostViewer({required this.post});
+  final String? resolvedImageUrl;
+  const _PostViewer({required this.post, required this.resolvedImageUrl});
 
   @override
   Widget build(BuildContext context) {
@@ -1122,7 +1184,7 @@ class _PostViewer extends StatelessWidget {
         ),
         extendBodyBehindAppBar: true,
         body: Center(
-          child: post.imageUrl == null
+          child: resolvedImageUrl == null
               ? Padding(
                   padding: const EdgeInsets.all(24),
                   child: Text(
@@ -1156,7 +1218,7 @@ class _PostViewer extends StatelessWidget {
                   ],
                 )
               : InteractiveViewer(
-                  child: Image.network(post.imageUrl!, fit: BoxFit.contain),
+                  child: Image.network(resolvedImageUrl!, fit: BoxFit.contain),
                 ),
         ),
       ),
