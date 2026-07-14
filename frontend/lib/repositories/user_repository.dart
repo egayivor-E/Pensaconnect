@@ -118,6 +118,13 @@ class UserRepository {
     if (relativePath == null || relativePath.isEmpty) {
       return '${ApiService.baseUrl}/uploads/default-avatar.png';
     }
+
+    // Already an absolute URL (e.g. Supabase storage) — use as-is.
+    if (relativePath.startsWith('http://') ||
+        relativePath.startsWith('https://')) {
+      return relativePath;
+    }
+
     final baseUrl = ApiService.baseUrl;
     final normalizedPath = relativePath.startsWith('/')
         ? relativePath.substring(1)

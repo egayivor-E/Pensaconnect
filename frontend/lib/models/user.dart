@@ -19,15 +19,18 @@ class User {
 
   // ✅ Better approach - accept baseUrl as parameter
   String getProfilePictureUrl(String baseUrl) {
-    if (profilePicture == null || profilePicture!.isEmpty) {
-      return '$baseUrl/uploads/default-avatar.png'; // ← Use parameter, not ApiService.baseUrl
+    final pic = profilePicture;
+    if (pic == null || pic.isEmpty) {
+      return '$baseUrl/uploads/default-avatar.png';
     }
 
-    final normalizedPath = profilePicture!.startsWith('/')
-        ? profilePicture!.substring(1)
-        : profilePicture!;
+    // Already an absolute URL (e.g. Supabase storage) — use as-is.
+    if (pic.startsWith('http://') || pic.startsWith('https://')) {
+      return pic;
+    }
 
-    return '$baseUrl/$normalizedPath'; // ← Use parameter, not ApiService.baseUrl
+    final normalizedPath = pic.startsWith('/') ? pic.substring(1) : pic;
+    return '$baseUrl/$normalizedPath';
   }
 
   /// ✅ Factory constructor handles both int and string for `id`
