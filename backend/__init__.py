@@ -254,11 +254,30 @@ def _register_websocket_events(socketio_instance):
             else:
                 logger.info(f"✅ Using message ID from frontend: {message_id}")
             
-            # Get sender info from frontend data
-            sender_info = data.get("sender", {})
-            sender_name = sender_info.get("full_name", "Unknown User")
-            sender_username = sender_info.get("username", "unknown")
-            sender_profile_picture = sender_info.get("profile_picture")
+            # ✅ SECURITY/CORRECTNESS FIX: look the sender up server-side from
+            # the authenticated user_id instead of trusting whatever
+            # "sender" object the client included in the payload. Trusting
+            # client-supplied sender data meant (a) a client could claim to
+            # be anyone, and (b) any client that forgot to attach full
+            # sender info (e.g. a thin payload) broadcast "Unknown User"
+            # with no picture to everyone else in the room.
+            sender_name = "Unknown User"
+            sender_username = "unknown"
+            sender_profile_picture = None
+            try:
+                sender_user = User.query.get(user_id)
+                if sender_user:
+                    sender_name = (
+                        sender_user.get_full_name()
+                        if hasattr(sender_user, "get_full_name")
+                        else sender_user.username
+                    )
+                    sender_username = sender_user.username
+                    sender_profile_picture = getattr(sender_user, "profile_picture", None)
+                else:
+                    logger.warning(f"⚠️ send_message: no User row for user_id={user_id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to look up sender {user_id} for broadcast: {e}")
             
             # Get timestamp
             created_at = data.get("createdAt")
