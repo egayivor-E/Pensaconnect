@@ -120,12 +120,14 @@ class Testimony {
 class TestimonyComment {
   final String id;
   final String authorName;
+  final String? authorId;
   final String content;
   final DateTime createdAt;
 
   TestimonyComment({
     required this.id,
     required this.authorName,
+    this.authorId,
     required this.content,
     required this.createdAt,
   });
@@ -134,11 +136,16 @@ class TestimonyComment {
     final dynamic user = json['user'];
 
     String authorName = 'Anonymous';
+    String? authorId;
     if (user is Map<String, dynamic>) {
       authorName = Testimony._extractString(
         user['username'] ?? user['name'] ?? user['user'],
       );
       if (authorName.isEmpty) authorName = 'Anonymous';
+      final rawId = Testimony._extractString(
+        user['id'] ?? user['user_id'] ?? user['uuid'],
+      );
+      authorId = rawId.isEmpty ? null : rawId;
     } else if (user is String) {
       authorName = user;
     } else if (json['authorName'] != null) {
@@ -148,6 +155,7 @@ class TestimonyComment {
     return TestimonyComment(
       id: Testimony._extractString(json['id']),
       authorName: authorName,
+      authorId: authorId,
       content: Testimony._extractString(json['content']),
       createdAt: Testimony._extractDate(
         json['created_at'] ?? json['createdAt'] ?? json['timestamp'],
