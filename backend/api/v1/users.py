@@ -8,6 +8,7 @@ from backend.models import User
 from backend.extensions import db
 from .utils import success_response, error_response
 from backend.config import Config
+from backend.supabase_client import upload_file_to_supabase, AVATAR_BUCKET
 
 users_bp = Blueprint("users", __name__, url_prefix="/users")
 

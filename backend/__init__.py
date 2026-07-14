@@ -19,7 +19,7 @@ from backend.routes.admin_auth import admin_auth
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_jwt_extended import decode_token
 
-from backend.config import ProductionConfig, DevelopmentConfig, RenderConfig, TestingConfig, StagingConfig
+from backend.config import Config, ProductionConfig, DevelopmentConfig, RenderConfig, TestingConfig, StagingConfig
 from backend.extensions import (
     configure_extensions, db, limiter, jwt, 
     cache, init_celery, celery
@@ -492,24 +492,29 @@ def create_app(config_name: Optional[str] = None) -> Flask:
     
     @app.route("/uploads/<path:filename>")
     def serve_uploads(filename):
-        project_root = Path(app.root_path).parent
-        upload_folder = os.path.join(project_root, "uploads")
-        
-        # Check if uploads folder exists
-        if not os.path.exists(upload_folder):
-            logger.error(f"❌ Uploads folder doesn't exist: {upload_folder}")
-            return jsonify({"error": "Uploads directory not found"}), 404
-        
+        # ✅ FIX: this used to compute its own path
+        # (Path(app.root_path).parent / "uploads"), which is *not* the same
+        # folder avatars are actually saved to — that's
+        # Config.get_upload_folder(), which honors the UPLOAD_FOLDER env
+        # var (e.g. a persistent disk mount on Render). The mismatch meant
+        # every freshly-uploaded avatar 404'd immediately when requested
+        # from this root-level route, regardless of whether the file on
+        # disk was still there. Route through the same helper everything
+        # else uses so "where it was saved" and "where it's served from"
+        # can never drift apart again.
+        upload_folder = Config.get_upload_folder()
+
         # Check if file exists
         file_path = os.path.join(upload_folder, filename)
         if not os.path.exists(file_path):
             # Log what files are available for debugging
-            available_files = os.listdir(upload_folder)
-            logger.warning(f"⚠️ File not found: {filename}")
+            available_files = os.listdir(upload_folder) if os.path.exists(upload_folder) else []
+            logger.warning(f"⚠️ File not found: {filename} in {upload_folder}")
             logger.warning(f"📁 Available files: {available_files}")
             return jsonify({
-                "error": "File not found", 
+                "error": "File not found",
                 "requested": filename,
+                "upload_folder": upload_folder,
                 "available": available_files
             }), 404
         
