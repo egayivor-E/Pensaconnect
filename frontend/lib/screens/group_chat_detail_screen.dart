@@ -669,6 +669,14 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             ? CachedNetworkImage(
                 imageUrl: url,
                 fit: BoxFit.cover,
+                memCacheWidth: (radius *
+                        2 *
+                        MediaQuery.devicePixelRatioOf(context))
+                    .round(),
+                memCacheHeight: (radius *
+                        2 *
+                        MediaQuery.devicePixelRatioOf(context))
+                    .round(),
                 errorWidget: (_, __, ___) =>
                     _buildFallbackAvatar(colorScheme, fullName),
               )

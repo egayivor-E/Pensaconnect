@@ -3,7 +3,7 @@ import 'package:video_player/video_player.dart';
 import '../config/config.dart';
 import '../models/timeline_post_model.dart';
 import '../repositories/timeline_post_repository.dart';
-import '../repositories/user_repository.dart';
+import 'user_avatar.dart';
 
 /// Resolves a possibly-relative media path against Config.baseUrl —
 /// same convention used across the app for avatars/activity media.
@@ -414,12 +414,8 @@ class _TimelinePostCommentsSheetState extends State<TimelinePostCommentsSheet> {
                         final c = _comments[i];
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
-                          leading: CircleAvatar(
-                            backgroundImage: NetworkImage(
-                              UserRepository.getProfilePictureUrl(
-                                c.authorAvatarUrl,
-                              ),
-                            ),
+                          leading: UserAvatar(
+                            profilePicture: c.authorAvatarUrl,
                           ),
                           title: Text(
                             c.authorName,

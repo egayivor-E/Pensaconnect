@@ -914,6 +914,10 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
             width: size,
             height: size,
             fit: BoxFit.cover,
+            memCacheWidth:
+                (size * MediaQuery.devicePixelRatioOf(context)).round(),
+            memCacheHeight:
+                (size * MediaQuery.devicePixelRatioOf(context)).round(),
             errorWidget: (_, __, ___) => Container(
               width: size,
               height: size,

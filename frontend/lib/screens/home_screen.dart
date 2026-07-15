@@ -16,6 +16,7 @@ import '../config/config.dart';
 import '../widgets/app_drawer.dart';
 import '../widgets/chat_options_sheet.dart';
 import '../widgets/timeline_post_viewer.dart';
+import '../widgets/user_avatar.dart';
 import '../repositories/activity_repository.dart';
 import '../repositories/user_repository.dart';
 import '../repositories/testimony_repository.dart';
@@ -404,22 +405,9 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return CircleAvatar(
-      radius: 19,
-      backgroundColor: theme.colorScheme.primaryContainer,
-      backgroundImage: _currentUser!.profilePicture != null
-          ? NetworkImage(_currentUser!.getProfilePictureUrl(Config.baseUrl))
-          : null,
-      onBackgroundImageError: (exception, stackTrace) {
-        debugPrint('Profile image load error: $exception');
-      },
-      child: _currentUser!.profilePicture == null
-          ? Icon(
-              Icons.person,
-              color: theme.colorScheme.onPrimaryContainer,
-              size: 20,
-            )
-          : null,
+    return UserAvatar(
+      profilePicture: _currentUser!.profilePicture,
+      size: 38,
     );
   }
 
@@ -745,7 +733,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildActivityCard(BuildContext context, Activity activity) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final resolvedAvatarUrl = _resolveAvatarUrl(activity.authorAvatarUrl);
     final info = activityTargetInfo(activity.targetType);
     final isLiked = _likedTargetKeys.contains(_targetKey(activity));
     final isInFlight = _actionInFlight.contains(_targetKey(activity));
@@ -777,19 +764,10 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 activity.hasAuthorAvatar
-                    ? GestureDetector(
-                        onTap: () =>
-                            openUserProfile(context, activity.authorId),
-                        child: CircleAvatar(
-                          radius: 22,
-                          backgroundColor: activity.color.withOpacity(0.12),
-                          backgroundImage: NetworkImage(resolvedAvatarUrl!),
-                          onBackgroundImageError: (exception, stackTrace) {
-                            debugPrint(
-                              'Activity avatar load error: $exception',
-                            );
-                          },
-                        ),
+                    ? UserAvatar(
+                        profilePicture: activity.authorAvatarUrl,
+                        size: 44,
+                        userId: activity.authorId,
                       )
                     : Container(
                         width: 44,
@@ -970,6 +948,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CachedNetworkImage(
                       imageUrl: _resolveAvatarUrl(activity.imageUrl)!,
                       fit: BoxFit.contain,
+                      memCacheWidth: (MediaQuery.sizeOf(context).width *
+                              MediaQuery.devicePixelRatioOf(context))
+                          .round(),
+                      memCacheHeight:
+                          (420 * MediaQuery.devicePixelRatioOf(context))
+                              .round(),
                       errorWidget: (context, url, error) => Container(
                         height: 200,
                         color: activity.color.withOpacity(0.08),

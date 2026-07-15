@@ -339,6 +339,12 @@ class _EventsScreenState extends State<EventsScreen> {
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,
+                          memCacheWidth: (MediaQuery.sizeOf(context).width *
+                                  MediaQuery.devicePixelRatioOf(context))
+                              .round(),
+                          memCacheHeight:
+                              (height * MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
                           errorWidget: (_, __, ___) => Container(
                             color: Colors.grey.shade300,
                             child: const Icon(Icons.event_outlined),

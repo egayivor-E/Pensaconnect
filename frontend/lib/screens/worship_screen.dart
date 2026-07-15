@@ -474,6 +474,12 @@ class _WorshipScreenState extends State<WorshipScreen> {
                             width: 50,
                             height: 50,
                             fit: BoxFit.cover,
+                            memCacheWidth:
+                                (50 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                            memCacheHeight:
+                                (50 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
                             errorWidget: (context, url, error) {
                               return Container(
                                 width: 50,

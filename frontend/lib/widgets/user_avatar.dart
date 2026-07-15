@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../models/user.dart';
 import '../repositories/user_repository.dart';
 import '../utils/profile_navigation.dart';
@@ -30,20 +31,43 @@ class UserAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final imageUrl = UserRepository.getProfilePictureUrl(profilePicture);
+    final hasPicture = profilePicture != null && profilePicture!.isNotEmpty;
+
+    // Decode at the size the avatar is actually shown at — an avatar
+    // photo can be a multi-megapixel upload, and without a memory-cache
+    // hint Flutter decodes it at full resolution every time even though
+    // it's rendered as a 40px circle. Multiply by devicePixelRatio so it
+    // still looks sharp on high-DPI screens.
+    final cacheDimension =
+        (size * MediaQuery.devicePixelRatioOf(context)).round();
 
     return GestureDetector(
       onTap:
           onTap ??
           (userId != null ? () => openUserProfile(context, userId) : null),
-      child: CircleAvatar(
-        radius: size / 2,
-        backgroundImage: NetworkImage(imageUrl),
-        onBackgroundImageError: (exception, stackTrace) {
-          debugPrint('Failed to load avatar: $exception');
-        },
-        child: profilePicture == null || profilePicture!.isEmpty
-            ? Icon(Icons.person, size: size * 0.6, color: Colors.white)
-            : null,
+      child: ClipOval(
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: hasPicture
+              ? CachedNetworkImage(
+                  imageUrl: imageUrl,
+                  fit: BoxFit.cover,
+                  memCacheWidth: cacheDimension,
+                  memCacheHeight: cacheDimension,
+                  placeholder: (context, url) => Container(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  ),
+                  errorWidget: (context, url, error) => Container(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: Icon(Icons.person, size: size * 0.6, color: Colors.white),
+                  ),
+                )
+              : Container(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Icon(Icons.person, size: size * 0.6, color: Colors.white),
+                ),
+        ),
       ),
     );
   }

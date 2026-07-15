@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:pensaconnect/providers/app_providers.dart';
 import 'package:provider/provider.dart'; // ADD THIS
 import '../models/worship_song.dart';
@@ -40,13 +41,22 @@ class SongCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           child: Stack(
             children: [
-              FadeInImage.assetNetwork(
-                placeholder: 'assets/images/worship_icon.jpeg',
-                image: song.thumbnailUrl,
+              CachedNetworkImage(
+                imageUrl: song.thumbnailUrl,
                 width: 60,
                 height: 60,
                 fit: BoxFit.cover,
-                imageErrorBuilder: (context, error, stackTrace) {
+                memCacheWidth:
+                    (60 * MediaQuery.devicePixelRatioOf(context)).round(),
+                memCacheHeight:
+                    (60 * MediaQuery.devicePixelRatioOf(context)).round(),
+                placeholder: (context, url) => Image.asset(
+                  'assets/images/worship_icon.jpeg',
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                ),
+                errorWidget: (context, url, error) {
                   return Container(
                     width: 60,
                     height: 60,

@@ -267,6 +267,9 @@ class _TestimonyCard extends StatelessWidget {
                 child: CachedNetworkImage(
                   imageUrl: testimony.imageUrl!,
                   fit: BoxFit.cover,
+                  memCacheWidth: (MediaQuery.sizeOf(context).width *
+                          MediaQuery.devicePixelRatioOf(context))
+                      .round(),
                   errorWidget: (_, __, ___) => Container(
                     color: Colors.grey.shade300,
                     child: const Icon(Icons.image_not_supported_outlined),

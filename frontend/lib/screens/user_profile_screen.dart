@@ -304,6 +304,12 @@ class _ProfileHeader extends StatelessWidget {
                   child: CachedNetworkImage(
                     imageUrl: avatarUrl,
                     fit: BoxFit.cover,
+                    memCacheWidth:
+                        (104 * MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                    memCacheHeight:
+                        (104 * MediaQuery.devicePixelRatioOf(context))
+                            .round(),
                     errorWidget: (_, __, ___) => Container(
                       color: AppColors.emberGold.withOpacity(0.25),
                       child: const Icon(
@@ -476,6 +482,9 @@ class _PostCard extends StatelessWidget {
                 child: CachedNetworkImage(
                   imageUrl: post.imageUrl!,
                   fit: BoxFit.cover,
+                  memCacheWidth: (MediaQuery.sizeOf(context).width *
+                          MediaQuery.devicePixelRatioOf(context))
+                      .round(),
                   errorWidget: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),

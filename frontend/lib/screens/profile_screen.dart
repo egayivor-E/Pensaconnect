@@ -499,6 +499,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           child: CachedNetworkImage(
                             imageUrl: avatarUrl,
                             fit: BoxFit.cover,
+                            memCacheWidth: (avatarSize *
+                                    MediaQuery.devicePixelRatioOf(context))
+                                .round(),
+                            memCacheHeight: (avatarSize *
+                                    MediaQuery.devicePixelRatioOf(context))
+                                .round(),
                             errorWidget: (_, __, ___) => Container(
                               color: theme.colorScheme.primaryContainer,
                               child: const Icon(Icons.person, size: 40),
@@ -803,6 +809,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 CachedNetworkImage(
                   imageUrl: resolvedUrl,
                   fit: BoxFit.cover,
+                  memCacheWidth: ((width / crossAxisCount) *
+                          MediaQuery.devicePixelRatioOf(context))
+                      .round(),
                   placeholder: (ctx, url) =>
                       Container(color: theme.colorScheme.surfaceVariant),
                   errorWidget: (_, __, ___) => Container(

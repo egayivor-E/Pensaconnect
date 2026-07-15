@@ -89,6 +89,26 @@ class Config:
             or f"sqlite:///{basedir / 'app.db'}"
         )
 
+    # ✅ Pool options for every environment, not just Render.
+    # Previously these only got set in RenderConfig.init_app(), which
+    # only runs when config_name == 'render'. Anywhere else — local
+    # dev against the Supabase pooler, Docker, staging — SQLAlchemy
+    # fell back to defaults with no pool_pre_ping and no pool_recycle.
+    # Against a pgbouncer-style pooler like Supabase's, that means
+    # idle connections get silently dropped server-side and the next
+    # request throws `server closed the connection unexpectedly`
+    # instead of transparently reconnecting. Skipped for SQLite, which
+    # doesn't use a connection pool the same way and doesn't accept
+    # these options.
+    if not SQLALCHEMY_DATABASE_URI.startswith("sqlite"):
+        SQLALCHEMY_ENGINE_OPTIONS = {
+            "pool_pre_ping": True,
+            "pool_recycle": 300,
+            "pool_size": 5,
+            "max_overflow": 10,
+        }
+
+
     # ✅ FIXED: Disable Redis for Render free tier
     if 'RENDER' in os.environ:
         # Render free tier doesn't have Redis

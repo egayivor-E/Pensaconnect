@@ -14,9 +14,47 @@ worship_songs_bp = Blueprint('worship_songs', __name__, url_prefix='/worship-son
 
 @worship_songs_bp.route('/', methods=['GET'])
 def get_worship_songs():
-    """Get all worship songs"""
+    """
+    Get worship songs.
+
+    Backward compatible: with no query params this still returns the
+    library in one response (the client currently loads everything
+    once into SongProvider and does its search/filter locally — see
+    frontend/lib/providers/app_providers.dart). What changed is that
+    the query is now capped at MAX_SONGS instead of being a fully
+    unbounded `.all()`, so a growing library can't turn this into an
+    ever-larger payload on every app open.
+
+    Opt-in pagination: pass ?page=&per_page= to get a bounded page
+    plus pagination metadata, for whenever the client is ready to
+    move to infinite scroll instead of load-everything.
+    """
+    MAX_SONGS = 1000  # safety cap for the unpaginated (default) response
+
     try:
-        songs = WorshipSong.query.order_by(WorshipSong.created_at.desc()).all()
+        page = request.args.get('page', type=int)
+        per_page = request.args.get('per_page', type=int)
+
+        query = WorshipSong.query.order_by(WorshipSong.created_at.desc())
+
+        if page or per_page:
+            page = page or 1
+            per_page = min(per_page or 100, 200)
+            pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+            return jsonify({
+                'status': 'success',
+                'data': [song.to_dict() for song in pagination.items],
+                'count': len(pagination.items),
+                'pagination': {
+                    'page': pagination.page,
+                    'per_page': pagination.per_page,
+                    'total': pagination.total,
+                    'pages': pagination.pages,
+                    'has_next': pagination.has_next,
+                },
+            })
+
+        songs = query.limit(MAX_SONGS).all()
         return jsonify({
             'status': 'success',
             'data': [song.to_dict() for song in songs],

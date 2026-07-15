@@ -191,6 +191,12 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                             width: double.infinity,
                             height: 250,
                             fit: BoxFit.cover,
+                            memCacheWidth: (MediaQuery.sizeOf(context).width *
+                                    MediaQuery.devicePixelRatioOf(context))
+                                .round(),
+                            memCacheHeight:
+                                (250 * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
                             errorWidget: (context, url, error) {
                               return Container(
                                 height: 250,
