@@ -10,6 +10,7 @@ class TimelinePost {
   final String authorName;
   final String? authorAvatarUrl;
   final int likeCount;
+  final int commentCount;
   final bool hasLiked;
 
   TimelinePost({
@@ -22,39 +23,11 @@ class TimelinePost {
     required this.authorName,
     this.authorAvatarUrl,
     this.likeCount = 0,
+    this.commentCount = 0,
     this.hasLiked = false,
   });
 
-  factory TimelinePost.fromJson(Map<String, dynamic> json) {
-    final Map<String, dynamic>? user = json['user'] as Map<String, dynamic>?;
-    return TimelinePost(
-      id: (json['id'] as num).toInt(),
-      content: json['content'] ?? '',
-      imageUrl: json['image_url'] as String?,
-      isVideo: json['is_video'] == true,
-      createdAt:
-          DateTime.tryParse(json['created_at']?.toString() ?? '') ??
-          DateTime.now(),
-      userId:
-          (json['user_id'] as num?)?.toInt() ??
-          (user?['id'] as num?)?.toInt() ??
-          0,
-      authorName: (user?['full_name'] as String?)?.trim().isNotEmpty == true
-          ? user!['full_name'] as String
-          : (user?['username'] as String? ?? 'You'),
-      authorAvatarUrl: user?['profile_picture'] as String?,
-      // ✅ Reactions: the server is expected to return these the same way
-      // Activity already does (see Activity.hasLiked / likeCount) — a
-      // per-post like count and whether the current user has liked it.
-      likeCount: (json['like_count'] as num?)?.toInt() ?? 0,
-      hasLiked: json['has_liked'] == true,
-    );
-  }
-
-  // Lets the profile screen apply an optimistic like/unlike (and roll it
-  // back on failure) without re-fetching the whole post list — same
-  // reasoning as Activity.copyWith in the home feed.
-  TimelinePost copyWith({int? likeCount, bool? hasLiked}) {
+  TimelinePost copyWith({int? likeCount, int? commentCount, bool? hasLiked}) {
     return TimelinePost(
       id: id,
       content: content,
@@ -65,7 +38,66 @@ class TimelinePost {
       authorName: authorName,
       authorAvatarUrl: authorAvatarUrl,
       likeCount: likeCount ?? this.likeCount,
+      commentCount: commentCount ?? this.commentCount,
       hasLiked: hasLiked ?? this.hasLiked,
+    );
+  }
+
+  factory TimelinePost.fromJson(Map<String, dynamic> json) {
+    final Map<String, dynamic>? user = json['user'] as Map<String, dynamic>?;
+    return TimelinePost(
+      id: (json['id'] as num).toInt(),
+      content: json['content'] ?? '',
+      imageUrl: json['imageUrl'] as String?,
+      isVideo: json['isVideo'] == true,
+      createdAt:
+          DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.now(),
+      userId:
+          (json['userId'] as num?)?.toInt() ??
+          (user?['id'] as num?)?.toInt() ??
+          0,
+      authorName: (user?['fullName'] as String?)?.trim().isNotEmpty == true
+          ? user!['fullName'] as String
+          : (user?['username'] as String? ?? 'You'),
+      authorAvatarUrl: user?['profilePicture'] as String?,
+      likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
+      commentCount: (json['commentCount'] as num?)?.toInt() ?? 0,
+      hasLiked: json['likedByMe'] == true || json['hasLiked'] == true,
+    );
+  }
+}
+
+class TimelineComment {
+  final int id;
+  final String content;
+  final DateTime createdAt;
+  final String authorName;
+  final String? authorAvatarUrl;
+  final int? authorId;
+
+  TimelineComment({
+    required this.id,
+    required this.content,
+    required this.createdAt,
+    required this.authorName,
+    this.authorAvatarUrl,
+    this.authorId,
+  });
+
+  factory TimelineComment.fromJson(Map<String, dynamic> json) {
+    final Map<String, dynamic>? user = json['user'] as Map<String, dynamic>?;
+    return TimelineComment(
+      id: (json['id'] as num).toInt(),
+      content: json['content'] ?? '',
+      createdAt:
+          DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.now(),
+      authorName: (user?['fullName'] as String?)?.trim().isNotEmpty == true
+          ? user!['fullName'] as String
+          : (user?['username'] as String? ?? 'Someone'),
+      authorAvatarUrl: user?['profilePicture'] as String?,
+      authorId: (user?['id'] as num?)?.toInt(),
     );
   }
 }

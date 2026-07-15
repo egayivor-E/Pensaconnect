@@ -21,13 +21,14 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
   final _picker = ImagePicker();
   final _contentController = TextEditingController();
 
-  // Kept as an XFile (not converted to dart:io's File) because File isn't
-  // usable on Flutter Web — that's what was causing "MultipartFile is only
-  // supported where dart:io is available" whenever a photo/video was
-  // attached to a share.
   XFile? _mediaFile;
   bool _mediaIsVideo = false;
   bool _posting = false;
+  // Distinguishes "uploading the attached photo/video" from "creating
+  // the post" so the button label reflects which (slower) step is
+  // actually in progress, instead of a single generic spinner that
+  // looks the same whether it's been 1 second or 30.
+  String? _postingLabel;
 
   @override
   void dispose() {
@@ -36,7 +37,15 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
-    final picked = await _picker.pickImage(source: source, imageQuality: 85);
+    // Capped size/quality so a phone photo (often 3-4k px, several MB)
+    // doesn't turn "attach a photo" into a multi-minute upload. 1280px
+    // and quality 70 is still sharp on any phone/tablet screen.
+    final picked = await _picker.pickImage(
+      source: source,
+      imageQuality: 70,
+      maxWidth: 1280,
+      maxHeight: 1280,
+    );
     if (picked == null) return;
     setState(() {
       _mediaFile = picked;
@@ -45,7 +54,13 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
   }
 
   Future<void> _pickVideo() async {
-    final picked = await _picker.pickVideo(source: ImageSource.gallery);
+    // Capped to 60 seconds so someone can't accidentally attach a huge
+    // clip that then sits uploading for minutes with no way to tell
+    // it's still working.
+    final picked = await _picker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(seconds: 60),
+    );
     if (picked == null) return;
     setState(() {
       _mediaFile = picked;
@@ -93,7 +108,7 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.videocam_outlined),
-              title: const Text('Attach a video'),
+              title: const Text('Attach a video (max 60s)'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickVideo();
@@ -118,7 +133,10 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
       return;
     }
 
-    setState(() => _posting = true);
+    setState(() {
+      _posting = true;
+      _postingLabel = _mediaFile != null ? 'Uploading...' : 'Posting...';
+    });
     try {
       String? imageUrl;
       bool isVideo = false;
@@ -127,6 +145,7 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
         final uploaded = await _repo.uploadMedia(_mediaFile!);
         imageUrl = uploaded.url;
         isVideo = uploaded.isVideo;
+        if (mounted) setState(() => _postingLabel = 'Posting...');
       }
 
       final post = await _repo.addPost(
@@ -143,7 +162,12 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to share post: $e')));
     } finally {
-      if (mounted) setState(() => _posting = false);
+      if (mounted) {
+        setState(() {
+          _posting = false;
+          _postingLabel = null;
+        });
+      }
     }
   }
 
@@ -158,10 +182,17 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
           TextButton(
             onPressed: _posting ? null : _submit,
             child: _posting
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(_postingLabel ?? 'Posting...'),
+                    ],
                   )
                 : const Text('Share'),
           ),
@@ -215,7 +246,7 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
                     top: 8,
                     right: 8,
                     child: GestureDetector(
-                      onTap: _removeMedia,
+                      onTap: _posting ? null : _removeMedia,
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: const BoxDecoration(
@@ -234,7 +265,7 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
               )
             else
               OutlinedButton.icon(
-                onPressed: _openMediaSheet,
+                onPressed: _posting ? null : _openMediaSheet,
                 icon: const Icon(Icons.add_photo_alternate_outlined),
                 label: const Text('Add a photo or video'),
                 style: OutlinedButton.styleFrom(

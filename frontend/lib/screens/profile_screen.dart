@@ -8,7 +8,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../config/config.dart';
 import '../models/badge.dart';
 import '../models/profile_view_model.dart';
 import '../models/timeline_post_model.dart';
@@ -17,6 +16,7 @@ import '../providers/auth_provider.dart';
 import '../repositories/timeline_post_repository.dart';
 import '../repositories/user_repository.dart';
 import '../theme/app_style.dart';
+import '../widgets/timeline_post_viewer.dart';
 import 'create_timeline_post_screen.dart';
 import 'edit_profile_screen.dart';
 import 'settings_screen.dart';
@@ -40,21 +40,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // one piece of the UI that's actually still a mock.
   File? _coverFile;
 
-  // ✅ Replaced the old Future<List<TimelinePost>>?/FutureBuilder pair with
-  // plain state we own directly. A FutureBuilder rebuilds its child from
-  // whatever Future is currently assigned, which made an optimistic
-  // like/unlike (see _toggleLike) impossible to express cleanly — there
-  // was no mutable list to update in place. This mirrors the pattern
-  // HomeScreen already uses for its activity feed.
+  // Plain state we own directly (not a FutureBuilder) so an optimistic
+  // like/unlike can update the list in place. Mirrors HomeScreen's
+  // activity feed pattern.
   List<TimelinePost> _posts = [];
   bool _postsLoading = true;
   String? _postsError;
   int? _postsLoadedForUserId;
 
-  // ✅ Reaction state for timeline posts — same target-keyed,
-  // optimistic-with-rollback pattern as HomeScreen's
-  // _likedTargetKeys/_actionInFlight, just keyed directly by post id
-  // since a timeline post (unlike an Activity row) *is* the real content.
+  // Reaction state for timeline posts — target-keyed (by post id),
+  // optimistic-with-rollback, same pattern as HomeScreen's
+  // _likedTargetKeys/_actionInFlight.
   final Set<int> _likedPostIds = {};
   final Set<int> _postActionInFlight = {};
 
@@ -88,9 +84,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _posts = fetched;
         _postsLoading = false;
         // Rebuilt fresh from each load's `hasLiked` flags rather than
-        // merged into the old set — same reasoning as HomeScreen: the
-        // server is the source of truth for like state, so a refresh
-        // should fully replace it, not just add to it.
+        // merged into the old set — the server is the source of truth
+        // for like state, so a refresh should fully replace it.
         _likedPostIds
           ..clear()
           ..addAll(fetched.where((p) => p.hasLiked).map((p) => p.id));
@@ -105,23 +100,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _refreshPosts(int userId) => _loadPosts(userId);
-
-  // Post media (images/videos) come back from the backend as a relative
-  // path — same convention as activity and user avatars elsewhere in the
-  // app (see HomeScreen._resolveAvatarUrl). Image.network needs an
-  // absolute URL, so without this a relative path silently fails to load
-  // and just shows the errorBuilder / nothing.
-  String? _resolvePostMediaUrl(String? path) {
-    if (path == null || path.isEmpty) return null;
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return path;
-    }
-    final base = Config.baseUrl.endsWith('/')
-        ? Config.baseUrl.substring(0, Config.baseUrl.length - 1)
-        : Config.baseUrl;
-    final normalizedPath = path.startsWith('/') ? path : '/$path';
-    return '$base$normalizedPath';
-  }
 
   Future<void> _openCreatePost(int userId) async {
     final created = await Navigator.push<TimelinePost>(
@@ -164,9 +142,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  // ✅ Optimistically flips a post's heart + count, then rolls both back
-  // if the API call fails — same pattern as HomeScreen._handleLike, just
-  // scoped to this profile's own post list instead of the global feed.
+  // Optimistically flips a post's heart + count, then rolls both back
+  // if the API call fails — same pattern as HomeScreen._handleLike,
+  // scoped to this profile's own post list.
   Future<void> _toggleLike(TimelinePost post) async {
     if (_postActionInFlight.contains(post.id)) return;
     final index = _posts.indexWhere((p) => p.id == post.id);
@@ -310,8 +288,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       MaterialPageRoute(builder: (context) => EditProfileScreen(user: user)),
     );
     if (updated != null && mounted) {
-      // The edit screen already persisted the change server-side; just
-      // reload so the rest of the profile (avatar, name, email) reflects it.
       await context.read<ProfileViewModel>().loadProfile();
       _showSnack('Profile updated');
     }
@@ -428,17 +404,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       expandedHeight: isWide ? 340 : 300,
       backgroundColor: primary,
       iconTheme: const IconThemeData(color: Colors.white),
-      // ✅ Back arrow: pops if this screen was pushed (e.g. reached from
-      // another user's profile, a notification, etc). If there's nothing
-      // to pop — e.g. Profile is a bottom-tab/root route in go_router with
-      // no back stack — falls back to navigating home instead of showing
-      // a dead/missing button.
+      // Back arrow: pops if this screen was pushed. If there's nothing
+      // to pop, falls back to going home. Uses go_router's own
+      // canPop/pop consistently (not the raw Navigator) so this agrees
+      // with how the rest of the app navigates.
       leading: IconButton(
         icon: const Icon(Icons.arrow_back, color: Colors.white),
         tooltip: 'Back',
         onPressed: () {
-          if (Navigator.of(context).canPop()) {
-            Navigator.of(context).pop();
+          if (context.canPop()) {
+            context.pop();
           } else {
             context.go('/home');
           }
@@ -798,22 +773,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final isOwnPost = post.userId == user.id;
         final isLiked = _likedPostIds.contains(post.id);
         final isInFlight = _postActionInFlight.contains(post.id);
-        final resolvedUrl = _resolvePostMediaUrl(post.imageUrl);
+        final resolvedUrl = resolveTimelineMediaUrl(post.imageUrl);
 
         return GestureDetector(
           onTap: () => _openPostViewer(context, post, isOwnPost),
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // ✅ Media rendering fix: a video's raw file URL is not a
-              // valid image, so the previous code's unconditional
-              // Image.network(resolvedUrl) attempted to decode video
-              // bytes as an image for every video post — that always
-              // failed and fell straight to the broken-image
-              // errorBuilder, which was the reported "media not
-              // rendering" bug. Videos now get their own placeholder
-              // tile (there's no thumbnail field from the backend yet)
-              // instead of a doomed Image.network call.
+              // A video's raw file URL is not a valid image, so an
+              // unconditional Image.network(resolvedUrl) always failed
+              // for video posts. Videos get their own placeholder tile
+              // (no thumbnail field from the backend yet) instead of a
+              // doomed Image.network call.
               if (post.isVideo)
                 Container(
                   color: Colors.black87,
@@ -851,11 +822,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
 
-              // ✅ Reaction pill — replaces the old always-visible tiny
-              // delete dot in this corner. Every post can be reacted to
-              // (owner or not); delete now lives behind the "⋮" menu in
-              // the full post viewer instead of a small, easy-to-mis-tap
-              // icon sitting on top of every one of the owner's tiles.
+              // Reaction pill — every post can be reacted to (owner or
+              // not); delete lives behind the "⋮" menu in the full post
+              // viewer instead of an easy-to-mis-tap icon on every tile.
               Positioned(
                 left: 6,
                 bottom: 6,
@@ -894,6 +863,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
               ),
+
+              // Comment-count badge, top-right, so it's clear the tile
+              // is tappable for comments too — not just likeable.
+              if (post.commentCount > 0)
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black45,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.mode_comment_outlined,
+                          color: Colors.white,
+                          size: 12,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${post.commentCount}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         );
@@ -901,6 +907,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // Opens the shared full-screen viewer (image/video + like + comments).
+  // Any like/comment change made there flows back into this screen's
+  // own `_posts` list via onPostUpdated, so the grid tile updates
+  // immediately without a full refetch.
   void _openPostViewer(
     BuildContext context,
     TimelinePost post,
@@ -910,12 +920,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       PageRouteBuilder(
         opaque: false,
         barrierColor: Colors.black87,
-        pageBuilder: (_, __, ___) => _PostViewer(
+        pageBuilder: (_, __, ___) => TimelinePostViewer(
           post: post,
-          resolvedImageUrl: _resolvePostMediaUrl(post.imageUrl),
           isOwnPost: isOwnPost,
-          isLiked: _likedPostIds.contains(post.id),
-          onToggleLike: () => _toggleLike(post),
+          onPostUpdated: (updated) {
+            if (!mounted) return;
+            final index = _posts.indexWhere((p) => p.id == updated.id);
+            if (index == -1) return;
+            setState(() {
+              _posts[index] = updated;
+              updated.hasLiked
+                  ? _likedPostIds.add(updated.id)
+                  : _likedPostIds.remove(updated.id);
+            });
+          },
           onDelete: isOwnPost
               ? () {
                   Navigator.pop(context);
@@ -1281,182 +1299,5 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
   bool shouldRebuild(covariant _StickyTabBarDelegate oldDelegate) {
     return oldDelegate.tabBar != tabBar ||
         oldDelegate.backgroundColor != backgroundColor;
-  }
-}
-
-// ✅ Now stateful: it needs to track its own local like/count so the
-// heart in the full-screen viewer can respond instantly to a tap (the
-// pushed route doesn't automatically rebuild when the profile screen's
-// own state changes underneath it). The actual persistence still goes
-// through the same _toggleLike on ProfileScreen via onToggleLike.
-class _PostViewer extends StatefulWidget {
-  final TimelinePost post;
-  final String? resolvedImageUrl;
-  final bool isOwnPost;
-  final bool isLiked;
-  final VoidCallback onToggleLike;
-  final VoidCallback? onDelete;
-
-  const _PostViewer({
-    required this.post,
-    required this.resolvedImageUrl,
-    required this.isOwnPost,
-    required this.isLiked,
-    required this.onToggleLike,
-    this.onDelete,
-  });
-
-  @override
-  State<_PostViewer> createState() => _PostViewerState();
-}
-
-class _PostViewerState extends State<_PostViewer> {
-  late bool _liked = widget.isLiked;
-  late int _count = widget.post.likeCount;
-
-  void _handleTapLike() {
-    setState(() {
-      _liked = !_liked;
-      _count = (_count + (_liked ? 1 : -1)).clamp(0, 1 << 30);
-    });
-    widget.onToggleLike();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final post = widget.post;
-    return GestureDetector(
-      onTap: () => Navigator.pop(context),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          iconTheme: const IconThemeData(color: Colors.white),
-          // ✅ Delete now lives here, behind an explicit "⋮" menu, and
-          // only shows up at all for the post's own owner — instead of
-          // a permanent tiny icon sitting on every grid tile.
-          actions: [
-            if (widget.isOwnPost && widget.onDelete != null)
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, color: Colors.white),
-                onSelected: (value) {
-                  if (value == 'delete') widget.onDelete!();
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete_outline, color: Colors.red),
-                        SizedBox(width: 8),
-                        Text('Delete post'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-          ],
-        ),
-        extendBodyBehindAppBar: true,
-        body: Stack(
-          children: [
-            Center(
-              child: GestureDetector(
-                // Swallow taps on the media itself so tapping the image
-                // to zoom (InteractiveViewer) doesn't also close the
-                // viewer via the outer GestureDetector.
-                onTap: () {},
-                child: widget.resolvedImageUrl == null
-                    ? Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(
-                          post.content,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      )
-                    : post.isVideo
-                    // A full inline video player is a separate dependency
-                    // decision (video_player/chewie are already used
-                    // elsewhere in the app for worship); wire the same
-                    // player in here once you want in-viewer playback.
-                    ? Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.play_circle_fill,
-                            color: Colors.white,
-                            size: 72,
-                          ),
-                          const SizedBox(height: 16),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            child: Text(
-                              post.content,
-                              style: const TextStyle(color: Colors.white),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ],
-                      )
-                    : InteractiveViewer(
-                        child: Image.network(
-                          widget.resolvedImageUrl!,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-              ),
-            ),
-            // ✅ The post's actual reaction affordance — a heart with a
-            // live count — replacing the old tiny delete dot as the
-            // thing that lives front-and-center on a post.
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 32,
-              child: Center(
-                child: GestureDetector(
-                  onTap: _handleTapLike,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _liked ? Icons.favorite : Icons.favorite_border,
-                          color: _liked ? Colors.redAccent : Colors.white,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _count > 0
-                              ? '$_count ${_count == 1 ? 'Like' : 'Likes'}'
-                              : 'Like',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

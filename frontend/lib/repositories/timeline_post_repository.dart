@@ -4,9 +4,6 @@ import 'package:http/http.dart' as http;
 import '../models/timeline_post_model.dart';
 import '../services/api_service.dart';
 
-/// Result of uploading a photo/video via [TimelinePostRepository.uploadMedia].
-/// `isVideo` comes back from the server (it decides based on the file
-/// extension), so the client never has to guess.
 class MediaUploadResult {
   final String url;
   final bool isVideo;
@@ -22,7 +19,6 @@ class MediaUploadResult {
 }
 
 class TimelinePostRepository {
-  // Singleton pattern, same as TestimonyRepository
   static final TimelinePostRepository _instance =
       TimelinePostRepository._internal();
   factory TimelinePostRepository() => _instance;
@@ -30,7 +26,6 @@ class TimelinePostRepository {
 
   final String endpoint = "timeline-posts";
 
-  /// Fetch all timeline posts for a given user (their profile feed).
   Future<List<TimelinePost>> fetchUserPosts(int userId) async {
     final res = await ApiService.get("$endpoint/user/$userId");
     final body = json.decode(res.body);
@@ -38,33 +33,19 @@ class TimelinePostRepository {
     return data.map((json) => TimelinePost.fromJson(json)).toList();
   }
 
-  /// Upload a photo or video to POST /timeline-posts/upload. The backend
-  /// determines is_video from the file extension itself, so we don't
-  /// send that flag — we just read it back off the response and hand
-  /// it straight to [addPost]. Uses ApiService.postMultipart so this
-  /// gets the same auth-header/token-refresh/interceptor handling as
-  /// every other call, and _handleResponse already throws ApiException
-  /// on a non-2xx, so there's no separate status check needed here.
   Future<MediaUploadResult> uploadMedia(XFile file) async {
-    // Read bytes directly off the XFile (works identically on web and
-    // native) instead of using MultipartFile.fromPath, which throws
-    // "MultipartFile is only supported where dart:io is available" on
-    // Flutter Web because dart:io isn't available there.
     final bytes = await file.readAsBytes();
     final res = await ApiService.postMultipart(
       "$endpoint/upload",
       files: [http.MultipartFile.fromBytes("file", bytes, filename: file.name)],
     );
     final body = json.decode(res.body);
-    // success_response() wraps the payload under "data".
     final data = (body is Map<String, dynamic> && body['data'] != null)
         ? body['data'] as Map<String, dynamic>
         : body as Map<String, dynamic>;
     return MediaUploadResult.fromJson(data);
   }
 
-  /// Create a new timeline post. Also logs an Activity server-side so it
-  /// shows up in the global Recent feed.
   Future<TimelinePost> addPost({
     required String content,
     String? imageUrl,
@@ -88,8 +69,6 @@ class TimelinePostRepository {
     );
   }
 
-  /// Delete a post. The backend also removes the matching Activity row,
-  /// so this deletes the post from the profile AND the Recent feed.
   Future<void> deletePost(int postId) async {
     final res = await ApiService.delete("$endpoint/$postId");
     if (res.statusCode != 200) {
@@ -101,16 +80,50 @@ class TimelinePostRepository {
     }
   }
 
-  /// Toggle a like/reaction on a timeline post. Follows the same
-  /// toggle-endpoint convention as TestimonyRepository/ForumRepository
-  /// elsewhere in the app — ApiService already throws ApiException on a
-  /// non-2xx, so a normal return here means the toggle succeeded.
-  Future<void> toggleLike(int postId) async {
-    final res = await ApiService.post("$endpoint/$postId/like", {});
+  Future<Map<String, dynamic>> toggleLike(int postId) async {
+    final res = await ApiService.post("$endpoint/$postId/react", {});
+    final body = json.decode(res.body);
+    final data = (body is Map<String, dynamic> && body['data'] != null)
+        ? body['data'] as Map<String, dynamic>
+        : body as Map<String, dynamic>;
+    return data; // {"liked": bool, "likeCount": int}
+  }
+
+  Future<List<TimelineComment>> fetchComments(int postId) async {
+    final res = await ApiService.get("$endpoint/$postId/comments");
+    final body = json.decode(res.body);
+    final data = (body is Map<String, dynamic> && body['data'] is List)
+        ? body['data'] as List
+        : (body is List ? body : const []);
+    return data
+        .map((c) => TimelineComment.fromJson(c as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<TimelineComment> addComment(int postId, String content) async {
+    final res = await ApiService.post("$endpoint/$postId/comments", {
+      "content": content,
+    });
+    if (res.statusCode != 201) {
+      throw ApiException(
+        statusCode: res.statusCode,
+        message: "Failed to add comment",
+        details: json.decode(res.body),
+      );
+    }
+    final body = json.decode(res.body);
+    final data = (body is Map<String, dynamic> && body['data'] != null)
+        ? body['data'] as Map<String, dynamic>
+        : body as Map<String, dynamic>;
+    return TimelineComment.fromJson(data);
+  }
+
+  Future<void> deleteComment(int commentId) async {
+    final res = await ApiService.delete("$endpoint/comments/$commentId");
     if (res.statusCode != 200) {
       throw ApiException(
         statusCode: res.statusCode,
-        message: "Failed to update reaction",
+        message: "Failed to delete comment",
         details: json.decode(res.body),
       );
     }

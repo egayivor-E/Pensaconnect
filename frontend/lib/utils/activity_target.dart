@@ -92,6 +92,22 @@ ActivityTargetInfo activityTargetInfo(String? targetType) {
         canLike: true,
         canOpenDetail: true,
       );
+
+    case 'timeline_post':
+      // A profile timeline post shared to the Home feed. Uses the same
+      // like endpoint as the profile grid/post viewer
+      // (POST /timeline-posts/:id/react) so like state stays consistent
+      // no matter where it's toggled from.
+      return const ActivityTargetInfo(
+        label: 'Like',
+        activeLabel: 'Liked',
+        icon: Icons.favorite_border,
+        activeIcon: Icons.favorite,
+        activeColor: Colors.redAccent,
+        canLike: true,
+        canOpenDetail: true,
+      );
+
     default:
       // Covers 'event' and null — no like/comment endpoint or detail
       // screen exists for these yet, so the card only offers Share.
