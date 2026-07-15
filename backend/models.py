@@ -189,7 +189,7 @@ class User(BaseModel,  UserMixin):
     testimony_comments = relationship("TestimonyComment", back_populates="user")
     testimony_likes = relationship("TestimonyLike", back_populates="user")
     timeline_posts = relationship("TimelinePost", back_populates="user", cascade="all, delete-orphan")
-    # ✅ new — required by TimelinePostLike.user's back_populates
+    # ✅ required by TimelinePostLike.user's back_populates
     timeline_post_likes = relationship("TimelinePostLike", back_populates="user", cascade="all, delete-orphan")
     group_chats_created = db.relationship('GroupChat',back_populates='created_by', foreign_keys='GroupChat.created_by_id', cascade='all, delete-orphan'
     )
@@ -1628,6 +1628,9 @@ class GroupMessage(BaseModel):
                 "content": self.replied_to.content
             } if self.replied_to else None
         }
+        
+        
+
 
 
 class WorshipSong(db.Model):
@@ -1741,6 +1744,16 @@ class TimelinePost(BaseModel):
     likes = db.relationship(
         "TimelinePostLike", back_populates="timeline_post", cascade="all, delete-orphan"
     )
+    # ✅ new — required by TimelinePostComment.timeline_post's back_populates.
+    # Without this, TimelinePostComment had nothing to point back to and
+    # the app failed to import ("cannot import name 'TimelinePostComment'"
+    # was actually masking this — the class existed nowhere yet at all).
+    comments = db.relationship(
+        "TimelinePostComment",
+        back_populates="timeline_post",
+        cascade="all, delete-orphan",
+        order_by="TimelinePostComment.created_at",
+    )
 
     def to_dict(self):
         return {
@@ -1755,6 +1768,8 @@ class TimelinePost(BaseModel):
             "is_video": self.is_video,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "user_id": self.user_id,
+            "like_count": len(self.likes),
+            "comment_count": len(self.comments),
             "user": {
                 "id": self.user.id if self.user else None,
                 "username": self.user.username if self.user else None,
@@ -1793,4 +1808,47 @@ class TimelinePostLike(BaseModel):
             "timeline_post_id": self.timeline_post_id,
             "user_id": self.user_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class TimelinePostComment(BaseModel):
+    """
+    A comment on a TimelinePost. Mirrors TestimonyComment: belongs to
+    one post and one user, listed via GET /timeline-posts/<id>/comments
+    and created via POST /timeline-posts/<id>/comments in
+    api/v1/timeline_posts.py.
+
+    ✅ This class was missing entirely, which is what broke the deploy:
+    backend/api/v1/activities.py imports TimelinePostComment for its
+    batched comment-count query, but nothing in this file defined it
+    yet. `TimelinePost.comments` and this class's `timeline_post`
+    relationship are the two ends of the same back_populates pair.
+    """
+    __tablename__ = "timeline_post_comments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    timeline_post_id = db.Column(
+        db.Integer, db.ForeignKey("timeline_posts.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    content = db.Column(db.Text, nullable=False)
+
+    timeline_post = relationship("TimelinePost", back_populates="comments")
+    # Deliberately one-directional (no back_populates) — User doesn't need
+    # a `timeline_post_comments` collection anywhere else in the app today.
+    user = relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "content": self.content,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "user": {
+                "id": self.user.id if self.user else None,
+                "username": self.user.username if self.user else None,
+                "full_name": self.user.get_full_name() if self.user and hasattr(self.user, "get_full_name") else None,
+                "profile_picture": getattr(self.user, "profile_picture", None) if self.user else None,
+            },
         }
