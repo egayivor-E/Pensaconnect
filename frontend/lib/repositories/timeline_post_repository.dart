@@ -33,6 +33,21 @@ class TimelinePostRepository {
     return data.map((json) => TimelinePost.fromJson(json)).toList();
   }
 
+  Future<TimelinePost> fetchPostById(int postId) async {
+    final res = await ApiService.get("$endpoint/$postId");
+    if (res.statusCode != 200) {
+      throw ApiException(
+        statusCode: res.statusCode,
+        message: "Failed to load post",
+        details: json.decode(res.body),
+      );
+    }
+    final body = json.decode(res.body);
+    return TimelinePost.fromJson(
+      body is Map<String, dynamic> ? body : body['data'],
+    );
+  }
+
   Future<MediaUploadResult> uploadMedia(XFile file) async {
     final bytes = await file.readAsBytes();
     final res = await ApiService.postMultipart(

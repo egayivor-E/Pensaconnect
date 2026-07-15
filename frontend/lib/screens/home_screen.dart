@@ -14,11 +14,13 @@ import 'package:pensaconnect/services/auth_service.dart';
 import '../config/config.dart';
 import '../widgets/app_drawer.dart';
 import '../widgets/chat_options_sheet.dart';
+import '../widgets/timeline_post_viewer.dart';
 import '../repositories/activity_repository.dart';
 import '../repositories/user_repository.dart';
 import '../repositories/testimony_repository.dart';
 import '../repositories/forum_repository.dart';
 import '../repositories/prayer_repository.dart';
+import '../repositories/timeline_post_repository.dart';
 import '../models/activity.dart';
 import '../models/user.dart';
 import '../utils/activity_target.dart';
@@ -534,6 +536,56 @@ class _HomeScreenState extends State<HomeScreen> {
           extra: {'threadId': activity.threadId ?? 0},
         );
         break;
+      case 'timeline_post':
+      case 'timeline_post_comment':
+        // Both point at the same underlying post (targetId is the
+        // post's id in both cases — a comment's Activity row still
+        // targets the post it was made on, not the comment itself).
+        // There's no go_router path for a single timeline post, so
+        // fetch it and push the same viewer ProfileScreen uses,
+        // imperatively rather than via context.push.
+        _openTimelinePostFromActivity(activity);
+        break;
+    }
+  }
+
+  // Fetches the full TimelinePost by id and opens it in the same
+  // full-screen viewer ProfileScreen's grid uses. Imperative
+  // Navigator.push (not context.push) because there's no registered
+  // go_router route for a single timeline post today, and
+  // TimelinePostViewer needs a complete TimelinePost object rather than
+  // just an id.
+  Future<void> _openTimelinePostFromActivity(Activity activity) async {
+    final postId = activity.targetId;
+    if (postId == null) return;
+    try {
+      final post = await TimelinePostRepository().fetchPostById(postId);
+      if (!mounted) return;
+      final isOwnPost = _currentUser != null && post.userId == _currentUser!.id;
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          opaque: false,
+          barrierColor: Colors.black87,
+          pageBuilder: (_, __, ___) => TimelinePostViewer(
+            post: post,
+            isOwnPost: isOwnPost,
+            onDelete: isOwnPost
+                ? () {
+                    Navigator.pop(context);
+                    // Home only shows the Activity log entry, not the
+                    // post itself, so nothing in _activities needs to
+                    // change when the underlying post is deleted from
+                    // this viewer.
+                  }
+                : null,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Couldn't open that post: $e")));
     }
   }
 
@@ -585,6 +637,15 @@ class _HomeScreenState extends State<HomeScreen> {
           break;
         case 'prayer_request':
           await PrayerRepository().togglePrayerById(activity.targetId!);
+          break;
+        case 'timeline_post':
+        case 'timeline_post_comment':
+          // Both target types point at the same underlying post
+          // (targetId is the post's id in both cases), so both use the
+          // same like endpoint — POST /timeline-posts/:id/like — so
+          // like state stays consistent with the profile grid/post
+          // viewer regardless of which activity row triggered it.
+          await TimelinePostRepository().toggleLike(activity.targetId!);
           break;
       }
     } catch (e) {

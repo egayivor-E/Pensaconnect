@@ -274,7 +274,27 @@ def add_timeline_post_comment(post_id):
 
     return jsonify(comment.to_dict()), 201
 
+# ---------------------------
+# Get a single timeline post by id
+# ---------------------------
+@timeline_posts_bp.route("/<int:post_id>", methods=["GET"])
+def get_timeline_post(post_id):
+    post = TimelinePost.query.get_or_404(post_id)
 
+    current_user_id = None
+    try:
+        verify_jwt_in_request(optional=True)
+        current_user_id = get_jwt_identity()
+    except Exception:
+        current_user_id = None
+
+    data = post.to_dict()
+    data["like_count"] = len(post.likes)
+    data["has_liked"] = (
+        current_user_id is not None
+        and any(l.user_id == current_user_id for l in post.likes)
+    )
+    return jsonify(data)
 # ---------------------------
 # Toggle a like/reaction on a timeline post
 # ---------------------------
@@ -351,3 +371,4 @@ def delete_timeline_post(post_id):
     db.session.delete(post)
     db.session.commit()
     return jsonify({"message": "Post deleted"})
+

@@ -107,6 +107,21 @@ ActivityTargetInfo activityTargetInfo(String? targetType) {
         canLike: true,
         canOpenDetail: true,
       );
+    case 'timeline_post_comment':
+      // A comment on a profile timeline post, shown in the Home feed.
+      // Deep-links to the same post the comment was made on (targetId
+      // is the post's id, not the comment's — see the backend's
+      // add_timeline_post_comment) — same like endpoint and detail
+      // screen as a plain 'timeline_post' activity.
+      return const ActivityTargetInfo(
+        label: 'Like',
+        activeLabel: 'Liked',
+        icon: Icons.favorite_border,
+        activeIcon: Icons.favorite,
+        activeColor: Colors.redAccent,
+        canLike: true,
+        canOpenDetail: true,
+      );
 
     default:
       // Covers 'event' and null — no like/comment endpoint or detail
