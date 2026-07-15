@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:pensaconnect/models/bible_models.dart';
@@ -151,6 +152,11 @@ class BibleRepository {
         'total_days': plan.dayCount ?? 7, // dayCount -> total_days
         'verses': plan.verses,
         'is_public': false,
+        // Previously dropped here, so per-day content generated on the
+        // create screen (placeholder or AI-drafted) never reached the
+        // database. The backend now has a days_json column to store it.
+        if (plan.days != null)
+          'days': plan.days!.map((d) => d.toJson()).toList(),
       };
 
       // Use the existing createPlan method that calls the real API
@@ -194,6 +200,38 @@ class BibleRepository {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _httpError(response);
     }
+  }
+
+  /// Uploads a devotional/study document (.docx, .pdf, .txt, .md) and asks
+  /// the AI assistant to draft a full multi-day study plan from it.
+  /// Returns the raw draft map — {title, description, level, total_days,
+  /// verses, days:[...]} — for the create-plan screen to prefill and let
+  /// the admin review/edit. Nothing is saved until the admin submits.
+  static Future<Map<String, dynamic>> extractStudyPlanFromDocument(
+    PlatformFile file, {
+    String instruction = '',
+  }) async {
+    final List<http.MultipartFile> files;
+    if (file.bytes != null) {
+      files = [
+        http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name),
+      ];
+    } else if (file.path != null) {
+      files = [await http.MultipartFile.fromPath('file', file.path!)];
+    } else {
+      throw Exception('Selected file has no readable data');
+    }
+
+    final response = await ApiService.postMultipart(
+      'bible/ai/extract-study-plan',
+      fields: instruction.trim().isNotEmpty ? {'instruction': instruction.trim()} : null,
+      files: files,
+    );
+
+    final map = _decodeToMap(response);
+    final data = map['data'];
+    if (data is Map<String, dynamic>) return data;
+    throw const FormatException('Unexpected AI draft response shape.');
   }
 
   // Study Plan Days

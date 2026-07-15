@@ -993,6 +993,13 @@ class StudyPlan(BaseModel):
     author_id = Column(db.BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     author = relationship("User", back_populates="study_plans")
     verses_json = Column(db.Text, nullable=True) 
+    # Per-day devotional content (topic/title, full write-up, verses for
+    # that day). Populated either by hand (admin edits one day at a time
+    # via PATCH /plans/<id>/days/<n>) or in bulk by the AI document
+    # importer. Stored as a JSON list of dicts shaped exactly like the
+    # frontend's StudyPlanDay so to_dict can hand it back untouched:
+    # [{"dayNumber": 1, "title": ..., "content": ..., "verses": [...]}]
+    days_json = Column(db.Text, nullable=True)
 
 
     progresses = relationship("StudyPlanProgress",back_populates="plan",cascade="all, delete-orphan",passive_deletes=True)
@@ -1001,6 +1008,12 @@ class StudyPlan(BaseModel):
         Index("ix_study_plans_public_active", "is_public", "is_active"),
         Index("ix_study_plans_author_level", "author_id", "level"),
     )
+
+    def get_days(self) -> list:
+        return json.loads(self.days_json) if self.days_json else []
+
+    def set_days(self, days: list) -> None:
+        self.days_json = json.dumps(days) if days else None
 
     def to_dict(self, include_author=False, include_progress=False):
         data = super().to_dict()
@@ -1013,6 +1026,7 @@ class StudyPlan(BaseModel):
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "verses": json.loads(self.verses_json) if self.verses_json else [],
+            "days": self.get_days(),
         })
         if include_author and self.author:
             data["author"] = {

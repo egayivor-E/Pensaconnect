@@ -38,6 +38,9 @@ Flask-Caching==2.1.0
 redis==5.0.1
 # HTTP
 requests==2.32.5
+# Document text extraction (Bible Study AI importer)
+python-docx==1.1.2
+pypdf==4.3.1
 yt-dlp==2025.11.12
 gevent==25.9.1
 # File Storage (Supabase)

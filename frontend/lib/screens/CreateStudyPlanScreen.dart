@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pensaconnect/models/bible_models.dart';
@@ -21,9 +22,18 @@ class _CreateStudyPlanScreenState extends State<CreateStudyPlanScreen> {
 
   StudyPlanDifficulty _selectedDifficulty = StudyPlanDifficulty.beginner;
   bool _isSubmitting = false;
+  bool _isImportingDocument = false;
 
   // For managing multiple verses
   final List<String> _versesList = [];
+
+  // When the admin imports a document, the AI's real per-day write-ups
+  // land here and are used instead of the placeholder generator below.
+  // Cleared if the admin edits the title/description/verses afterward
+  // would be nice, but for now: present once imported, reviewable in
+  // the day cards, and always overridable by re-importing.
+  List<StudyPlanDay>? _aiGeneratedDays;
+  String? _importedFileName;
 
   @override
   void dispose() {
@@ -48,6 +58,64 @@ class _CreateStudyPlanScreenState extends State<CreateStudyPlanScreen> {
     setState(() {
       _versesList.removeAt(index);
     });
+  }
+
+  Future<void> _pickAndImportDocument() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['docx', 'pdf', 'txt', 'md'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = result.files.first;
+    setState(() => _isImportingDocument = true);
+
+    try {
+      final draft = await BibleRepository.extractStudyPlanFromDocument(file);
+
+      final draftDays = (draft['days'] as List? ?? [])
+          .map((d) => StudyPlanDay.fromJson(d as Map<String, dynamic>))
+          .toList();
+      final draftVerses = ((draft['verses'] as List?) ?? const [])
+          .map((v) => v.toString())
+          .toList();
+
+      setState(() {
+        _titleController.text = (draft['title'] ?? '').toString();
+        _descriptionController.text = (draft['description'] ?? '').toString();
+        _dayCountController.text =
+            (draft['total_days'] ?? draftDays.length).toString();
+        _versesList
+          ..clear()
+          ..addAll(draftVerses);
+        _selectedDifficulty = switch (draft['level']) {
+          'INTERMEDIATE' => StudyPlanDifficulty.intermediate,
+          'ADVANCED' => StudyPlanDifficulty.advanced,
+          _ => StudyPlanDifficulty.beginner,
+        };
+        _aiGeneratedDays = draftDays;
+        _importedFileName = file.name;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Drafted ${draftDays.length} day(s) from "${file.name}" — review below before saving.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isImportingDocument = false);
+    }
   }
 
   Future<void> _submitStudyPlan() async {
@@ -75,8 +143,10 @@ class _CreateStudyPlanScreenState extends State<CreateStudyPlanScreen> {
         totalLessons: int.tryParse(_dayCountController.text) ?? 7,
       );
 
-      // Generate study plan days based on day count
-      final days = _generateStudyPlanDays(studyPlan);
+      // Prefer the AI-drafted days from an imported document (real
+      // per-day content); fall back to the placeholder generator only
+      // when the admin built the plan by hand.
+      final days = _aiGeneratedDays ?? _generateStudyPlanDays(studyPlan);
 
       final completeStudyPlan = studyPlan.copyWith(days: days);
 
@@ -186,6 +256,69 @@ Read the assigned verses and reflect on how they apply to your daily life.
             key: _formKey,
             child: ListView(
               children: [
+                // AI Document Import
+                Card(
+                  elevation: 2,
+                  color: colorScheme.primaryContainer.withOpacity(0.35),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.auto_awesome, color: colorScheme.primary),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Import from Document (AI)',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Upload a devotional guide (.docx, .pdf, .txt, .md) and '
+                          'the AI will draft the title, verses, and full day-by-day '
+                          'content below for you to review and edit.',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _isImportingDocument
+                              ? null
+                              : _pickAndImportDocument,
+                          icon: _isImportingDocument
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.upload_file),
+                          label: Text(
+                            _isImportingDocument
+                                ? 'Drafting from document…'
+                                : 'Upload document',
+                          ),
+                        ),
+                        if (_importedFileName != null && !_isImportingDocument) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            '✓ Drafted from "$_importedFileName" — ${_aiGeneratedDays?.length ?? 0} day(s). '
+                            'Edit any field below before saving.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
                 // Title Field
                 Card(
                   elevation: 2,

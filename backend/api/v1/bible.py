@@ -6,6 +6,9 @@ from datetime import datetime
 
 from backend.models import db, User, Devotion, StudyPlan, StudyPlanProgress, Archive
 from .utils import success_response, error_response, require_admin
+from .forums import roles_required, get_current_user
+from .document_extract import extract_text, DocumentExtractError
+from .ai_assistant import generate_study_plan_draft, AssistantError
 
 bible_bp = Blueprint("bible", __name__, url_prefix="/bible")
 
@@ -180,7 +183,12 @@ def create_plan():
     # Handle verses if provided
     if "verses" in data and isinstance(data["verses"], list):
         plan.verses_json = json.dumps(data["verses"])
-    
+
+    # Handle per-day content if provided (e.g. from the AI document
+    # importer, or hand-authored days from the create-plan screen).
+    if "days" in data and isinstance(data["days"], list):
+        plan.set_days(data["days"])
+
     db.session.add(plan)
     db.session.commit()
     return success_response(plan.to_dict(include_author=True), "Study plan created", 201)
@@ -209,8 +217,112 @@ def update_plan(plan_id):
                 continue
             setattr(plan, field, data[field])
 
+    if "verses" in data and isinstance(data["verses"], list):
+        plan.verses_json = json.dumps(data["verses"])
+
+    if "days" in data and isinstance(data["days"], list):
+        plan.set_days(data["days"])
+
     db.session.commit()
     return success_response(plan.to_dict(include_author=True), "Study plan updated")
+
+
+@bible_bp.route("/plans/<int:plan_id>/days", methods=["GET"])
+def list_plan_days(plan_id):
+    plan = StudyPlan.query.get_or_404(plan_id)
+    return success_response(plan.get_days())
+
+
+@bible_bp.route("/plans/<int:plan_id>/days/<int:day_number>", methods=["PATCH"])
+@jwt_required()
+def update_plan_day(plan_id, day_number):
+    user_id = get_jwt_identity()
+    user = User.query.get_or_404(user_id)
+
+    plan = StudyPlan.query.get_or_404(plan_id)
+    is_admin = any(role.name == 'admin' for role in user.roles) if user.roles else False
+    if not is_admin and plan.author_id != user.id:
+        return error_response("Not authorized to update this plan", 403)
+
+    data = request.get_json() or {}
+    days = plan.get_days()
+    day = next((d for d in days if d.get("dayNumber") == day_number), None)
+    if day is None:
+        return error_response(f"Day {day_number} not found on this plan", 404)
+
+    for field in ["title", "content", "verses", "isCompleted"]:
+        if field in data:
+            day[field] = data[field]
+
+    plan.set_days(days)
+    db.session.commit()
+    return success_response(day, "Day updated")
+
+
+# ======================================================
+# ---------------- AI Document Import -------------------
+# ======================================================
+# Lets an admin/moderator upload a source document (a devotional guide
+# they already wrote in Word, exported as PDF, or pasted from WhatsApp
+# into a .txt) and have Gemini turn it into a draft multi-day study
+# plan. This is deliberately a *draft* endpoint: it does not touch the
+# database. It hands back JSON shaped exactly like the payload
+# `POST /bible/plans` expects (title/description/level/total_days/
+# verses/days), so the admin app can prefill the create-plan screen,
+# let the admin review/edit each day, and only then call the normal
+# create endpoint. Reuses the same Gemini plumbing as the forum
+# assistant (see ai_assistant.py) — just a different system prompt and
+# response_mime_type=json instead of free text.
+@bible_bp.route("/ai/extract-study-plan", methods=["POST"])
+@roles_required("admin", "moderator")
+def ai_extract_study_plan():
+    if "file" not in request.files:
+        return error_response("No file provided. Attach it as multipart form field 'file'.", 400)
+
+    file = request.files["file"]
+    if not file or file.filename == "":
+        return error_response("No file selected", 400)
+
+    try:
+        source_text = extract_text(file)
+    except DocumentExtractError as e:
+        return error_response(str(e), 400)
+
+    instruction = (request.form.get("instruction") or "").strip()
+
+    try:
+        draft = generate_study_plan_draft(source_text=source_text, instruction=instruction)
+    except AssistantError as e:
+        return error_response(str(e), 502)
+
+    # Light normalization so a slightly-off model response still slots
+    # cleanly into the create-plan form instead of erroring the UI.
+    days = draft.get("days") if isinstance(draft.get("days"), list) else []
+    normalized_days = []
+    for i, day in enumerate(days, start=1):
+        if not isinstance(day, dict):
+            continue
+        normalized_days.append({
+            "dayNumber": day.get("dayNumber", i),
+            "title": day.get("title", f"Day {i}"),
+            "content": day.get("content", ""),
+            "verses": day.get("verses") if isinstance(day.get("verses"), list) else [],
+        })
+
+    level = str(draft.get("level", "BEGINNER")).upper()
+    if level not in ("BEGINNER", "INTERMEDIATE", "ADVANCED", "ALL_LEVELS"):
+        level = "BEGINNER"
+
+    result = {
+        "title": draft.get("title", "").strip() or "Untitled Study Plan",
+        "description": draft.get("description", "").strip(),
+        "level": level,
+        "total_days": draft.get("total_days") or len(normalized_days) or 1,
+        "verses": draft.get("verses") if isinstance(draft.get("verses"), list) else [],
+        "days": normalized_days,
+    }
+
+    return success_response(result, "Draft generated — review before saving")
 
 
 @bible_bp.route("/plans/<int:plan_id>", methods=["DELETE"])
