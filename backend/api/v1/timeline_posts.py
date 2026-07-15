@@ -7,7 +7,7 @@ from sqlalchemy import func
 from werkzeug.utils import secure_filename
 
 from backend.extensions import db
-from backend.models import TimelinePost, TimelinePostLike, Activity
+from backend.models import TimelinePost, TimelinePostLike, TimelinePostComment, Activity
 from backend.supabase_client import upload_file_to_supabase, TIMELINE_MEDIA_BUCKET
 from .utils import broadcast_new_activity, success_response, error_response
 
@@ -209,6 +209,73 @@ def get_user_timeline_posts(user_id):
 
 
 # ---------------------------
+# Get comments for a timeline post
+# ---------------------------
+@timeline_posts_bp.route("/<int:post_id>/comments", methods=["GET"])
+def get_timeline_post_comments(post_id):
+    # 404s if the post doesn't exist — same convention as like/delete.
+    TimelinePost.query.get_or_404(post_id)
+
+    comments = (
+        TimelinePostComment.query.filter_by(timeline_post_id=post_id)
+        .order_by(TimelinePostComment.created_at.asc())
+        .all()
+    )
+    return jsonify([c.to_dict() for c in comments])
+
+
+# ---------------------------
+# Add a comment to a timeline post
+# ---------------------------
+@timeline_posts_bp.route("/<int:post_id>/comments", methods=["POST"])
+@jwt_required()
+def add_timeline_post_comment(post_id):
+    post = TimelinePost.query.get_or_404(post_id)
+    user_id = get_jwt_identity()
+
+    data = request.get_json() or {}
+    content = (data.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "Content is required"}), 400
+
+    comment = TimelinePostComment(
+        timeline_post_id=post_id,
+        user_id=user_id,
+        content=content,
+    )
+    db.session.add(comment)
+    db.session.commit()
+
+    # ✅ Same pattern as create_timeline_post: log to the global activity
+    # feed so a comment shows up in "Recent" too, not just under the post.
+    # target_type is "timeline_post_comment" (not "timeline_post") so it's
+    # distinguishable from the post-creation activity and doesn't collide
+    # with it when looked up by (target_type, target_id) elsewhere (e.g.
+    # activities.py's batched like/comment-count queries, which key off
+    # target_type == "timeline_post" for the post itself).
+    try:
+        activity = Activity(
+            title="Commented on a post",
+            subtitle=content[:140],
+            icon="mode_comment",
+            color="blue",
+            user_id=user_id,
+            target_type="timeline_post_comment",
+            target_id=post.id,
+        )
+        db.session.add(activity)
+        db.session.commit()
+        broadcast_new_activity(activity)
+    except Exception:
+        logger.exception(
+            "Failed to log activity for comment on timeline post %s", post_id
+        )
+        db.session.rollback()
+
+    return jsonify(comment.to_dict()), 201
+
+
+# ---------------------------
 # Toggle a like/reaction on a timeline post
 # ---------------------------
 @timeline_posts_bp.route("/<int:post_id>/like", methods=["POST"])
@@ -260,8 +327,12 @@ def delete_timeline_post(post_id):
     # the profile. Activity.target_type/target_id is a polymorphic
     # pointer with no FK/cascade (see the comment on Activity in
     # models.py), so this cleanup has to be done explicitly here.
-    Activity.query.filter_by(
-        target_type="timeline_post", target_id=post.id
+    # Both "timeline_post" (the post-creation activity) and
+    # "timeline_post_comment" (any comment activities on this post)
+    # need to be cleaned up so nothing dangling is left in the feed.
+    Activity.query.filter(
+        Activity.target_type.in_(["timeline_post", "timeline_post_comment"]),
+        Activity.target_id == post.id,
     ).delete(synchronize_session=False)
 
     # ✅ Same reasoning for likes: TimelinePostLike rows reference this
@@ -271,6 +342,11 @@ def delete_timeline_post(post_id):
     TimelinePostLike.query.filter_by(timeline_post_id=post.id).delete(
         synchronize_session=False
     )
+
+    # ✅ Comments have a cascade="all, delete-orphan" relationship on
+    # TimelinePost.comments (see models.py), so db.session.delete(post)
+    # below already removes TimelinePostComment rows automatically. No
+    # explicit cleanup query needed here, unlike likes/activities above.
 
     db.session.delete(post)
     db.session.commit()
