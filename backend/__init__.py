@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 import secrets
+import click
 from flask import g, request
 
 from backend.admin import admin
@@ -648,6 +649,31 @@ def _register_cli(app: Flask):
                 logger.info("✅ Admin user created")
             except ImportError:
                 logger.warning("⚠️ Utils module not found")
+
+    @app.cli.command("cleanup-orphaned-activities")
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        default=False,
+        help="Show what would be deleted without actually deleting it.",
+    )
+    def cleanup_orphaned_activities_cmd(dry_run):
+        """
+        Delete Activity (Recent feed) rows whose target no longer
+        exists — the backlog left behind by delete endpoints that
+        didn't clean up their Activity rows before that was fixed,
+        plus any leftover timeline-post-comment activities from when
+        comments used to be logged to the feed. Safe to run more than
+        once. Use --dry-run to preview counts without deleting.
+        """
+        with app.app_context():
+            from backend.maintenance import cleanup_orphaned_activities
+            results = cleanup_orphaned_activities(dry_run=dry_run)
+            total = sum(results.values())
+            for target_type, count in results.items():
+                logger.info("  %-22s %d %s", target_type, count, "would be removed" if dry_run else "removed")
+            verb = "Would clean up" if dry_run else "Cleaned up"
+            logger.info("✅ %s %d orphaned activity row(s)", verb, total)
 
 # ---------------- Health ----------------
 def register_health(app: Flask):

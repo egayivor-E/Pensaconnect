@@ -6,7 +6,7 @@ import enum
 import re
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 from flask import current_app
-from sqlalchemy import Column, ForeignKey, Index, Numeric, Float
+from sqlalchemy import Column, ForeignKey, Index, Numeric, Float, func
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy.dialects.postgresql import TSVECTOR, ARRAY
 from slugify import slugify # type: ignore
@@ -477,12 +477,21 @@ class PrayerRequest(BaseModel):
         Index('ix_prayer_requests_public', 'is_public', 'created_at'),
         Index('ix_prayer_requests_urgency', 'urgency_level', 'created_at'),
     )
-    def to_dict(self, include_prayers=False, current_user_id=None):
+    def to_dict(self, include_prayers=False, current_user_id=None, has_prayed_ids=None):
         """
         Serialize prayer request to dictionary.
-        :param include_prayers: include prayers details
+        :param include_prayers: include prayers details. Costly (loads and
+            serializes every Prayer row on this request) and, as of this
+            writing, not consumed by the frontend's PrayerRequest.fromJson
+            — leave this False for list endpoints.
         :param current_user_id: JWT identity of the viewer, used both for
             has_prayed and is_owner checks.
+        :param has_prayed_ids: optional precomputed set of prayer_request
+            ids current_user_id has prayed for (see list_prayers in
+            prayers.py), so has_prayed doesn't have to lazy-load every
+            Prayer row on this request just to check membership. Falls
+            back to that lazy load when not provided, e.g. for a single
+            get_prayer() call where it's only one extra query anyway.
         """
         display_name = None
         profile_pic = None
@@ -524,7 +533,10 @@ class PrayerRequest(BaseModel):
             data["prayers"] = [p.to_dict() for p in self.prayers]
 
         if current_user_id:
-            data["has_prayed"] = any(p.user_id == current_user_id for p in self.prayers)
+            if has_prayed_ids is not None:
+                data["has_prayed"] = self.id in has_prayed_ids
+            else:
+                data["has_prayed"] = any(p.user_id == current_user_id for p in self.prayers)
 
         return data
         
@@ -1102,7 +1114,45 @@ class ForumThread(BaseModel):
     author = relationship("User", back_populates="forum_threads")
     category = relationship("ForumCategory", back_populates="threads")
 
-    def to_dict(self, include_posts=False, include_forum_posts=False, current_user_id=None):        
+    def to_dict(
+        self,
+        include_posts=False,
+        include_forum_posts=False,
+        current_user_id=None,
+        counts=None,
+        user_reaction=None,
+    ):
+        """
+        counts: optional precomputed {"posts_count", "forum_posts_count",
+            "like_count", "dislike_count"} dict for this thread. Pass this
+            (built with one batched query per metric across a whole page —
+            see _build_thread_counts in forums.py) when serializing a list
+            of threads, so this method doesn't run 4 separate queries per
+            thread (2 lazy relationship loads just to len() them, 2 COUNT
+            queries) — that N+1 pattern was ~5 queries per thread on the
+            threads list endpoint alone. Falls back to live per-instance
+            COUNT queries (not the old len(self.posts)/len(self.forum_posts)
+            relationship loads, which pulled full rows into memory just to
+            count them) when not provided, e.g. for a single get_thread().
+
+        user_reaction: optional precomputed "like"/"dislike"/None for
+            current_user_id on this thread, same batching reasoning.
+        """
+        if counts is not None:
+            posts_count = counts.get("posts_count", 0)
+            forum_posts_count = counts.get("forum_posts_count", 0)
+            like_count = counts.get("like_count", 0)
+            dislike_count = counts.get("dislike_count", 0)
+        else:
+            posts_count = db.session.query(func.count(Post.id)).filter(
+                Post.thread_id == self.id
+            ).scalar()
+            forum_posts_count = db.session.query(func.count(ForumPost.id)).filter(
+                ForumPost.thread_id == self.id
+            ).scalar()
+            like_count = ForumLike.query.filter_by(thread_id=self.id, reaction_type="like").count()
+            dislike_count = ForumLike.query.filter_by(thread_id=self.id, reaction_type="dislike").count()
+
         data = {
             "id": self.id,
             "title": self.title,
@@ -1115,23 +1165,26 @@ class ForumThread(BaseModel):
             "category_id": self.category_id,
             "is_pinned": self.is_pinned,
             "is_locked": self.is_locked,
-            "posts_count": len(self.posts),
-            "forum_posts_count": len(self.forum_posts),
-            "like_count": ForumLike.query.filter_by(thread_id=self.id, reaction_type="like").count(),
-            "dislike_count": ForumLike.query.filter_by(thread_id=self.id, reaction_type="dislike").count(),
+            "posts_count": posts_count,
+            "forum_posts_count": forum_posts_count,
+            "like_count": like_count,
+            "dislike_count": dislike_count,
             "liked_by_me": False,
             "disliked_by_me": False,
         }
 
         # ✅ Determine if the current user liked/disliked this thread
-        if current_user_id:
-            user_reaction = ForumLike.query.filter_by(
+        if user_reaction is not None:
+            data["liked_by_me"] = user_reaction == "like"
+            data["disliked_by_me"] = user_reaction == "dislike"
+        elif current_user_id:
+            reaction = ForumLike.query.filter_by(
                 thread_id=self.id, user_id=current_user_id
             ).first()
-            if user_reaction:
-                if user_reaction.reaction_type == "like":
+            if reaction:
+                if reaction.reaction_type == "like":
                     data["liked_by_me"] = True
-                elif user_reaction.reaction_type == "dislike":
+                elif reaction.reaction_type == "dislike":
                     data["disliked_by_me"] = True
 
         if include_posts:
@@ -1164,15 +1217,46 @@ class ForumPost(BaseModel):
     likes = relationship("ForumLike", back_populates="post", cascade="all, delete-orphan")
     
 
-    def to_dict(self, with_user=False, include_attachments=True):
-        liked_by_me = False
-        try:
-            verify_jwt_in_request(optional=True)
-            current_user_id = get_jwt_identity()
-            if current_user_id:
-                liked_by_me = any(l.user_id == current_user_id for l in self.likes)
-        except Exception:
-            pass
+    def to_dict(self, with_user=False, include_attachments=True, counts=None, liked_by_me=None):
+        """
+        counts: optional precomputed {"like_count", "comments_count"} dict
+            for this post (see _build_post_counts in forums.py). Without
+            this, like_count/comments_count each lazy-loaded the *entire*
+            likes/comments relationship into memory just to len() it — 2
+            extra queries per post on every posts-list call. Falls back to
+            single efficient COUNT queries (not the old len(relationship)
+            loads) when not provided.
+
+        liked_by_me: optional precomputed bool for the current viewer
+            (see _build_post_liked_ids in forums.py). Without this,
+            verify_jwt_in_request()/get_jwt_identity() ran — and, if a
+            user was logged in, self.likes lazy-loaded — on every single
+            row of a list. Falls back to that same per-instance check when
+            not provided, so single-object calls (get_post, create_post's
+            response, etc.) are unaffected.
+        """
+        if counts is not None:
+            like_count = counts.get("like_count", 0)
+            comments_count = counts.get("comments_count", 0)
+        else:
+            like_count = db.session.query(func.count(ForumLike.id)).filter(
+                ForumLike.post_id == self.id
+            ).scalar()
+            comments_count = db.session.query(func.count(ForumComment.id)).filter(
+                ForumComment.post_id == self.id
+            ).scalar()
+
+        if liked_by_me is not None:
+            resolved_liked_by_me = liked_by_me
+        else:
+            resolved_liked_by_me = False
+            try:
+                verify_jwt_in_request(optional=True)
+                current_user_id = get_jwt_identity()
+                if current_user_id:
+                    resolved_liked_by_me = any(l.user_id == current_user_id for l in self.likes)
+            except Exception:
+                pass
 
         data = {
             "id": self.id,
@@ -1185,9 +1269,9 @@ class ForumPost(BaseModel):
             "author_is_bot": bool(getattr(self.author, "is_bot", False)) if self.author else False,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "like_count": len(self.likes),
-            "liked_by_me": liked_by_me,
-            "comments_count": len(self.comments),
+            "like_count": like_count,
+            "liked_by_me": resolved_liked_by_me,
+            "comments_count": comments_count,
         }
 
         if include_attachments:

@@ -19,6 +19,7 @@ from backend.models import (
     ForumCategory,
     ForumLike,
     ForumReport,
+    Post,
     User,
     Activity,
     Notification,
@@ -227,6 +228,48 @@ def create_category():
 
 # ------------------------ THREADS ------------------------
 
+def _build_thread_counts(threads):
+    # ✅ Batched replacement for the N+1 pattern ForumThread.to_dict() used
+    # to have: without this, listing threads ran 2 lazy relationship loads
+    # (just to len() them) + 2 COUNT queries *per thread* — ~5 queries per
+    # row including the author lookup below. Same shape as
+    # activities.py's _build_target_counts: one grouped query per metric
+    # across the whole page, then O(1) dict lookups in to_dict().
+    thread_ids = [t.id for t in threads]
+    counts = {tid: {"posts_count": 0, "forum_posts_count": 0, "like_count": 0, "dislike_count": 0} for tid in thread_ids}
+    if not thread_ids:
+        return counts
+
+    for thread_id, count in (
+        db.session.query(Post.thread_id, db.func.count(Post.id))
+        .filter(Post.thread_id.in_(thread_ids))
+        .group_by(Post.thread_id)
+        .all()
+    ):
+        counts[thread_id]["posts_count"] = count
+
+    for thread_id, count in (
+        db.session.query(ForumPost.thread_id, db.func.count(ForumPost.id))
+        .filter(ForumPost.thread_id.in_(thread_ids))
+        .group_by(ForumPost.thread_id)
+        .all()
+    ):
+        counts[thread_id]["forum_posts_count"] = count
+
+    for thread_id, reaction_type, count in (
+        db.session.query(ForumLike.thread_id, ForumLike.reaction_type, db.func.count(ForumLike.id))
+        .filter(ForumLike.thread_id.in_(thread_ids))
+        .group_by(ForumLike.thread_id, ForumLike.reaction_type)
+        .all()
+    ):
+        if reaction_type == "like":
+            counts[thread_id]["like_count"] = count
+        elif reaction_type == "dislike":
+            counts[thread_id]["dislike_count"] = count
+
+    return counts
+
+
 @forums_bp.route("/threads", methods=["GET"])
 def get_threads():
     """
@@ -239,7 +282,7 @@ def get_threads():
               unbounded SELECT * as the forum grows.
     Pinned threads always sort first, regardless of `sort`.
     """
-    query = ForumThread.query
+    query = ForumThread.query.options(db.joinedload(ForumThread.author))
 
     q = (request.args.get("q") or "").strip()
     if q:
@@ -267,7 +310,12 @@ def get_threads():
 
     limit = min(request.args.get("limit", default=100, type=int) or 100, 200)
     threads = query.limit(limit).all()
-    return success_response([t.to_dict() for t in threads])
+
+    thread_counts = _build_thread_counts(threads)
+    return success_response(
+        [t.to_dict(counts=thread_counts.get(t.id)) for t in threads]
+    )
+
 
 @forums_bp.route("/threads/<int:thread_id>", methods=["GET"])
 def get_thread(thread_id):
@@ -424,6 +472,23 @@ def delete_thread(thread_id):
     if not can_manage(thread.author_id, current_user):
         return error_response("Unauthorized", 403)
 
+    # ✅ "Delete everywhere": Activity has no FK/cascade back to the
+    # things it points at (see the comment on Activity in models.py), so
+    # deleting the thread alone leaves its "started a new discussion"
+    # Activity — and one "shared a new post" Activity per ForumPost in
+    # the thread, since those get cascade-deleted along with it — as
+    # orphaned rows that keep showing up in the Recent feed and 404 when
+    # tapped. Clean up both target_types before deleting the thread.
+    forum_post_ids = [p.id for p in thread.forum_posts]
+    Activity.query.filter_by(target_type="forum_thread", target_id=thread.id).delete(
+        synchronize_session=False
+    )
+    if forum_post_ids:
+        Activity.query.filter(
+            Activity.target_type == "post",
+            Activity.target_id.in_(forum_post_ids),
+        ).delete(synchronize_session=False)
+
     db.session.delete(thread)
     db.session.commit()
     return success_response({"message": "Thread deleted"})
@@ -431,15 +496,83 @@ def delete_thread(thread_id):
 
 # ------------------------ POSTS ------------------------
 
+def _build_post_counts_and_likes(posts, current_user_id):
+    # ✅ Batched replacement for the N+1 pattern ForumPost.to_dict() used
+    # to have: without this, listing posts ran 2 lazy relationship loads
+    # (just to len() them for like_count/comments_count) plus a fresh
+    # JWT re-verification and (if logged in) another lazy load for
+    # liked_by_me — per post. Same shape as _build_thread_counts above.
+    post_ids = [p.id for p in posts]
+    counts = {pid: {"like_count": 0, "comments_count": 0} for pid in post_ids}
+    liked_post_ids = set()
+    if not post_ids:
+        return counts, liked_post_ids
+
+    for post_id, count in (
+        db.session.query(ForumLike.post_id, db.func.count(ForumLike.id))
+        .filter(ForumLike.post_id.in_(post_ids))
+        .group_by(ForumLike.post_id)
+        .all()
+    ):
+        counts[post_id]["like_count"] = count
+
+    for post_id, count in (
+        db.session.query(ForumComment.post_id, db.func.count(ForumComment.id))
+        .filter(ForumComment.post_id.in_(post_ids))
+        .group_by(ForumComment.post_id)
+        .all()
+    ):
+        counts[post_id]["comments_count"] = count
+
+    if current_user_id:
+        rows = (
+            ForumLike.query.filter(
+                ForumLike.user_id == current_user_id,
+                ForumLike.post_id.in_(post_ids),
+            )
+            .with_entities(ForumLike.post_id)
+            .all()
+        )
+        liked_post_ids = {row[0] for row in rows}
+
+    return counts, liked_post_ids
+
+
 @forums_bp.route("/posts", methods=["GET"])
 def get_posts():
     thread_id = request.args.get("thread_id", type=int)
-    query = ForumPost.query
+    query = ForumPost.query.options(db.joinedload(ForumPost.author))
     if thread_id:
         query = query.filter_by(thread_id=thread_id)
 
     query = query.order_by(ForumPost.created_at.desc())
-    return success_response(paginate_query(query))
+
+    page = request.args.get("page", default=1, type=int)
+    per_page = request.args.get("per_page", default=10, type=int)
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    current_user_id = None
+    try:
+        verify_jwt_in_request(optional=True)
+        current_user_id = get_jwt_identity()
+    except Exception:
+        current_user_id = None
+
+    post_counts, liked_post_ids = _build_post_counts_and_likes(pagination.items, current_user_id)
+
+    return success_response({
+        "items": [
+            p.to_dict(
+                counts=post_counts.get(p.id),
+                liked_by_me=(p.id in liked_post_ids) if current_user_id else False,
+            )
+            for p in pagination.items
+        ],
+        "total": pagination.total,
+        "page": pagination.page,
+        "pages": pagination.pages,
+    })
+
 
 @forums_bp.route("/posts/<int:post_id>", methods=["GET"])
 def get_post(post_id):
@@ -627,6 +760,13 @@ def delete_post(post_id):
 
     if not can_manage(post.author_id, current_user):
         return error_response("Unauthorized", 403)
+
+    # ✅ Same reasoning as delete_thread above: the "shared a new post"
+    # Activity has no FK back to this post, so it has to be removed
+    # explicitly or it lingers in Recent pointing at nothing.
+    Activity.query.filter_by(target_type="post", target_id=post.id).delete(
+        synchronize_session=False
+    )
 
     db.session.delete(post)
     db.session.commit()

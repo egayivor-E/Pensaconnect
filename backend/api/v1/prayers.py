@@ -25,7 +25,14 @@ def list_prayers():
         filter_type = request.args.get("filter", "wall")
         current_user_id = get_jwt_identity()
 
-        query = PrayerRequest.query
+        # ✅ Eager-load status and user so to_dict()'s `self.status.name`
+        # and `self.user.get_full_name()`/`.username`/`.profile_picture`
+        # don't each trigger a separate lazy-load query per row — that
+        # was 2 extra queries per prayer request on this list alone.
+        query = PrayerRequest.query.options(
+            db.joinedload(PrayerRequest.status),
+            db.joinedload(PrayerRequest.user),
+        )
 
         if filter_type == "answered":
             status_instance = PrayerStatus.query.filter_by(name="answered").first()
@@ -44,17 +51,33 @@ def list_prayers():
 
         paginated = query.paginate(page=page, per_page=per_page, error_out=False)
 
-        results = []
-        for r in paginated.items:
-            prayer_dict = r.to_dict(include_prayers=True, current_user_id=current_user_id)
-            # Include has_prayed for current user
-            if current_user_id:
-                prayer_dict['has_prayed'] = Prayer.query.filter_by(
-                    user_id=current_user_id, prayer_request_id=r.id
-                ).first() is not None
-            else:
-                prayer_dict['has_prayed'] = False
-            results.append(prayer_dict)
+        # ✅ Batched has_prayed lookup: one IN query across the whole page
+        # instead of a Prayer lazy-load (or worse, a separate live query,
+        # as this endpoint used to run) per row. This replaces what was
+        # effectively 2 extra queries per prayer request (one implicit via
+        # to_dict's self.prayers access, one explicit and fully redundant
+        # right below it) with exactly 1 query for the entire page.
+        has_prayed_ids = set()
+        if current_user_id and paginated.items:
+            page_ids = [r.id for r in paginated.items]
+            rows = (
+                Prayer.query.filter(
+                    Prayer.user_id == current_user_id,
+                    Prayer.prayer_request_id.in_(page_ids),
+                )
+                .with_entities(Prayer.prayer_request_id)
+                .all()
+            )
+            has_prayed_ids = {row[0] for row in rows}
+
+        # include_prayers is intentionally left False here — the frontend's
+        # PrayerRequest.fromJson never reads the embedded "prayers" array
+        # (it uses prayer_count/has_prayed instead), so serializing every
+        # Prayer row on every request in the page was pure wasted work.
+        results = [
+            r.to_dict(current_user_id=current_user_id, has_prayed_ids=has_prayed_ids)
+            for r in paginated.items
+        ]
 
         return success_response(results)
 
@@ -177,6 +200,18 @@ def delete_prayer(prayer_id: int):
         current_user_id = get_jwt_identity()
         if prayer.user_id != current_user_id:
             return error_response("You do not have permission to delete this prayer request", 403)
+
+        # ✅ "Delete everywhere": Activity has no FK/cascade back to the
+        # prayer request it points at (see the comment on Activity in
+        # models.py). A single prayer request can have *multiple*
+        # Activity rows sharing this target_id — one "New Prayer
+        # Request" from creation, plus one "Prayed for a Request" per
+        # distinct user who prayed (see toggle_prayer below) — so this
+        # has to delete all of them, not just one, or the feed keeps
+        # dangling entries pointing at a request that no longer exists.
+        Activity.query.filter_by(
+            target_type="prayer_request", target_id=prayer.id
+        ).delete(synchronize_session=False)
 
         db.session.delete(prayer)
         db.session.commit()
