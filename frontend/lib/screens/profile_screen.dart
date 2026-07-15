@@ -2,6 +2,7 @@
 // ignore_for_file: deprecated_member_use
 
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide Badge;
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -494,10 +495,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ],
                         ),
                         child: ClipOval(
-                          child: Image.network(
-                            avatarUrl,
+                          child: CachedNetworkImage(
+                            imageUrl: avatarUrl,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
+                            errorWidget: (_, __, ___) => Container(
                               color: theme.colorScheme.primaryContainer,
                               child: const Icon(Icons.person, size: 40),
                             ),
@@ -796,14 +797,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 )
               else if (resolvedUrl != null)
-                Image.network(
-                  resolvedUrl,
+                CachedNetworkImage(
+                  imageUrl: resolvedUrl,
                   fit: BoxFit.cover,
-                  loadingBuilder: (ctx, child, progress) {
-                    if (progress == null) return child;
-                    return Container(color: theme.colorScheme.surfaceVariant);
-                  },
-                  errorBuilder: (_, __, ___) => Container(
+                  placeholder: (ctx, url) =>
+                      Container(color: theme.colorScheme.surfaceVariant),
+                  errorWidget: (_, __, ___) => Container(
                     color: theme.colorScheme.surfaceVariant,
                     child: const Icon(Icons.image_not_supported_outlined),
                   ),

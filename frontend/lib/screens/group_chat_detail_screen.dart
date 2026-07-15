@@ -665,10 +665,10 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
       ),
       child: ClipOval(
         child: (url != null && url.isNotEmpty)
-            ? Image.network(
-                url,
+            ? CachedNetworkImage(
+                imageUrl: url,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
+                errorWidget: (_, __, ___) =>
                     _buildFallbackAvatar(colorScheme, fullName),
               )
             : _buildFallbackAvatar(colorScheme, fullName),

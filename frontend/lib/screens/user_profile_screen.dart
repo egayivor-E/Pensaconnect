@@ -5,6 +5,7 @@
 // utils/profile_navigation.dart openUserProfile()). The current user's own
 // avatar still opens the full, editable ProfileScreen — this screen is only
 // ever pushed for someone else's id.
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide Badge;
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -300,10 +301,10 @@ class _ProfileHeader extends StatelessWidget {
                   ],
                 ),
                 child: ClipOval(
-                  child: Image.network(
-                    avatarUrl,
+                  child: CachedNetworkImage(
+                    imageUrl: avatarUrl,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
+                    errorWidget: (_, __, ___) => Container(
                       color: AppColors.emberGold.withOpacity(0.25),
                       child: const Icon(
                         Icons.person,
@@ -472,10 +473,10 @@ class _PostCard extends StatelessWidget {
               const SizedBox(height: 10),
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  post.imageUrl!,
+                child: CachedNetworkImage(
+                  imageUrl: post.imageUrl!,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),
             ],

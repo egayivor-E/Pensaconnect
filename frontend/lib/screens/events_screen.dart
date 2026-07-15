@@ -1,7 +1,7 @@
 // ignore_for_file: unused_local_variable
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../models/event.dart';
 import '../repositories/event_repository.dart';
@@ -334,11 +334,15 @@ class _EventsScreenState extends State<EventsScreen> {
                     if (event.imageUrl != null)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: Image.network(
-                          event.imageUrl!,
+                        child: CachedNetworkImage(
+                          imageUrl: event.imageUrl!,
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) => Container(
+                            color: Colors.grey.shade300,
+                            child: const Icon(Icons.event_outlined),
+                          ),
                         ),
                       ),
                     Container(

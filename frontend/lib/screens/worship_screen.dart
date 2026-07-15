@@ -1,7 +1,5 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
-import '../models/worship_song.dart';
 import '../widgets/song_card.dart';
 import '../providers/app_providers.dart';
 import '../theme/app_style.dart';
@@ -468,12 +466,12 @@ class _WorshipScreenState extends State<WorshipScreen> {
                       (song) => ListTile(
                         leading: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            song.thumbnailUrl,
+                          child: CachedNetworkImage(
+                            imageUrl: song.thumbnailUrl,
                             width: 50,
                             height: 50,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
+                            errorWidget: (context, url, error) {
                               return Container(
                                 width: 50,
                                 height: 50,

@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../models/testimony_model.dart';
@@ -185,12 +186,12 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
-                          Image.network(
-                            testimony.imageUrl!,
+                          CachedNetworkImage(
+                            imageUrl: testimony.imageUrl!,
                             width: double.infinity,
                             height: 250,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
+                            errorWidget: (context, url, error) {
                               return Container(
                                 height: 250,
                                 width: double.infinity,
@@ -209,22 +210,14 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                 ),
                               );
                             },
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
+                            progressIndicatorBuilder: (context, url, progress) {
                               return Container(
                                 height: 250,
                                 width: double.infinity,
                                 color: Colors.grey[200],
                                 child: Center(
                                   child: CircularProgressIndicator(
-                                    value:
-                                        loadingProgress.expectedTotalBytes !=
-                                            null
-                                        ? loadingProgress
-                                                  .cumulativeBytesLoaded /
-                                              loadingProgress
-                                                  .expectedTotalBytes!
-                                        : null,
+                                    value: progress.progress,
                                   ),
                                 ),
                               );

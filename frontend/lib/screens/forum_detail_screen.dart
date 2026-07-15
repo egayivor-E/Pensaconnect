@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -908,12 +909,12 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
         onTap: () => _openMediaViewer(a, isVideo: false),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
-          child: Image.network(
-            ForumRepository.getAttachmentUrl(a.url),
+          child: CachedNetworkImage(
+            imageUrl: ForumRepository.getAttachmentUrl(a.url),
             width: size,
             height: size,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
+            errorWidget: (_, __, ___) => Container(
               width: size,
               height: size,
               color: tileSurface,
@@ -923,23 +924,20 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
                 color: AppColors.roseQuartz,
               ),
             ),
-            loadingBuilder: (context, child, progress) {
-              if (progress == null) return child;
-              return Container(
-                width: size,
-                height: size,
-                color: tileSurface,
-                alignment: Alignment.center,
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.emberGold,
-                  ),
+            placeholder: (context, url) => Container(
+              width: size,
+              height: size,
+              color: tileSurface,
+              alignment: Alignment.center,
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.emberGold,
                 ),
-              );
-            },
+              ),
+            ),
           ),
         ),
       );
@@ -2214,18 +2212,16 @@ class _ForumMediaViewerScreenState extends State<_ForumMediaViewerScreen> {
     return InteractiveViewer(
       minScale: 0.8,
       maxScale: 4,
-      child: Image.network(
-        widget.url,
+      child: CachedNetworkImage(
+        imageUrl: widget.url,
         fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => const Icon(
+        errorWidget: (context, url, error) => const Icon(
           Icons.broken_image_outlined,
           color: AppColors.roseQuartz,
           size: 48,
         ),
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return const CircularProgressIndicator(color: Colors.white70);
-        },
+        placeholder: (context, url) =>
+            const CircularProgressIndicator(color: Colors.white70),
       ),
     );
   }

@@ -1,6 +1,7 @@
 // screens/testimonies_screen.dart
 // ignore_for_file: deprecated_member_use
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
@@ -263,13 +264,15 @@ class _TestimonyCard extends StatelessWidget {
             if (testimony.imageUrl != null)
               AspectRatio(
                 aspectRatio: 16 / 10,
-                child: Image.network(
-                  testimony.imageUrl!,
+                child: CachedNetworkImage(
+                  imageUrl: testimony.imageUrl!,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
+                  errorWidget: (_, __, ___) => Container(
                     color: Colors.grey.shade300,
                     child: const Icon(Icons.image_not_supported_outlined),
                   ),
+                  placeholder: (_, __) =>
+                      Container(color: Colors.grey.shade200),
                 ),
               ),
             Padding(

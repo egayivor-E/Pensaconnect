@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -334,7 +335,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _activitySocketRetries++;
     if (_activitySocketRetries > Config.maxConnectionRetries) {
-      debugPrint('❌ HomeScreen: activity socket max reconnect attempts reached');
+      debugPrint(
+        '❌ HomeScreen: activity socket max reconnect attempts reached',
+      );
       return;
     }
 
@@ -964,10 +967,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     width: double.infinity,
                     color: activity.color.withOpacity(0.06),
-                    child: Image.network(
-                      _resolveAvatarUrl(activity.imageUrl)!,
+                    child: CachedNetworkImage(
+                      imageUrl: _resolveAvatarUrl(activity.imageUrl)!,
                       fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) => Container(
+                      errorWidget: (context, url, error) => Container(
                         height: 200,
                         color: activity.color.withOpacity(0.08),
                         alignment: Alignment.center,
@@ -977,19 +980,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           size: 32,
                         ),
                       ),
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return Container(
-                          height: 200,
-                          color: activity.color.withOpacity(0.06),
-                          alignment: Alignment.center,
-                          child: const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      },
+                      placeholder: (context, url) => Container(
+                        height: 200,
+                        color: activity.color.withOpacity(0.06),
+                        alignment: Alignment.center,
+                        child: const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
                     ),
                   ),
                   IgnorePointer(
@@ -2082,18 +2082,16 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
     return InteractiveViewer(
       minScale: 0.8,
       maxScale: 4,
-      child: Image.network(
-        widget.url,
+      child: CachedNetworkImage(
+        imageUrl: widget.url,
         fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => Icon(
+        errorWidget: (context, url, error) => Icon(
           Icons.broken_image_outlined,
           color: widget.accentColor,
           size: 48,
         ),
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return const CircularProgressIndicator(color: Colors.white70);
-        },
+        placeholder: (context, url) =>
+            const CircularProgressIndicator(color: Colors.white70),
       ),
     );
   }
