@@ -1,5 +1,3 @@
-// lib/models/timeline_post_model.dart
-
 class TimelinePost {
   final int id;
   final String content;
@@ -43,27 +41,48 @@ class TimelinePost {
     );
   }
 
+  // Reads a key from JSON trying snake_case first (what the Flask API
+  // actually returns via to_dict()/success_response), then falling
+  // back to camelCase in case a future endpoint switches conventions.
+  static T? _pick<T>(Map<String, dynamic> json, String snake, String camel) {
+    if (json.containsKey(snake) && json[snake] != null)
+      return json[snake] as T?;
+    if (json.containsKey(camel) && json[camel] != null)
+      return json[camel] as T?;
+    return null;
+  }
+
   factory TimelinePost.fromJson(Map<String, dynamic> json) {
     final Map<String, dynamic>? user = json['user'] as Map<String, dynamic>?;
+
+    final fullName = (user?['fullName'] ?? user?['full_name']) as String?;
+    final username = user?['username'] as String?;
+    final avatar =
+        (user?['profilePicture'] ?? user?['profile_picture']) as String?;
+    final authorUserId = (user?['id'] as num?)?.toInt();
+
     return TimelinePost(
       id: (json['id'] as num).toInt(),
-      content: json['content'] ?? '',
-      imageUrl: json['imageUrl'] as String?,
-      isVideo: json['isVideo'] == true,
+      content: json['content'] as String? ?? '',
+      imageUrl: _pick<String>(json, 'image_url', 'imageUrl'),
+      isVideo: _pick<bool>(json, 'is_video', 'isVideo') == true,
       createdAt:
-          DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.tryParse(
+            _pick<String>(json, 'created_at', 'createdAt') ?? '',
+          ) ??
           DateTime.now(),
       userId:
-          (json['userId'] as num?)?.toInt() ??
-          (user?['id'] as num?)?.toInt() ??
-          0,
-      authorName: (user?['fullName'] as String?)?.trim().isNotEmpty == true
-          ? user!['fullName'] as String
-          : (user?['username'] as String? ?? 'You'),
-      authorAvatarUrl: user?['profilePicture'] as String?,
-      likeCount: (json['likeCount'] as num?)?.toInt() ?? 0,
-      commentCount: (json['commentCount'] as num?)?.toInt() ?? 0,
-      hasLiked: json['likedByMe'] == true || json['hasLiked'] == true,
+          _pick<num>(json, 'user_id', 'userId')?.toInt() ?? authorUserId ?? 0,
+      authorName: (fullName?.trim().isNotEmpty ?? false)
+          ? fullName!
+          : (username ?? 'Member'),
+      authorAvatarUrl: avatar,
+      likeCount: _pick<num>(json, 'like_count', 'likeCount')?.toInt() ?? 0,
+      commentCount:
+          _pick<num>(json, 'comment_count', 'commentCount')?.toInt() ?? 0,
+      hasLiked:
+          _pick<bool>(json, 'has_liked', 'hasLiked') == true ||
+          json['likedByMe'] == true,
     );
   }
 }
@@ -87,16 +106,23 @@ class TimelineComment {
 
   factory TimelineComment.fromJson(Map<String, dynamic> json) {
     final Map<String, dynamic>? user = json['user'] as Map<String, dynamic>?;
+    final fullName = (user?['fullName'] ?? user?['full_name']) as String?;
+    final username = user?['username'] as String?;
+    final avatar =
+        (user?['profilePicture'] ?? user?['profile_picture']) as String?;
+
     return TimelineComment(
       id: (json['id'] as num).toInt(),
-      content: json['content'] ?? '',
+      content: json['content'] as String? ?? '',
       createdAt:
-          DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.tryParse(
+            (json['created_at'] ?? json['createdAt'])?.toString() ?? '',
+          ) ??
           DateTime.now(),
-      authorName: (user?['fullName'] as String?)?.trim().isNotEmpty == true
-          ? user!['fullName'] as String
-          : (user?['username'] as String? ?? 'Someone'),
-      authorAvatarUrl: user?['profilePicture'] as String?,
+      authorName: (fullName?.trim().isNotEmpty ?? false)
+          ? fullName!
+          : (username ?? 'Someone'),
+      authorAvatarUrl: avatar,
       authorId: (user?['id'] as num?)?.toInt(),
     );
   }

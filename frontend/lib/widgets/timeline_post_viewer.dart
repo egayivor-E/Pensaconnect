@@ -73,7 +73,9 @@ class _TimelinePostViewerState extends State<TimelinePostViewer> {
       _update(
         _post.copyWith(
           hasLiked: result['liked'] == true,
-          likeCount: (result['likeCount'] as num?)?.toInt() ?? _post.likeCount,
+          likeCount:
+              (result['like_count'] as num?)?.toInt() ??
+              _post.likeCount, // was 'likeCount'
         ),
       );
     } catch (e) {

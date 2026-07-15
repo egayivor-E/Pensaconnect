@@ -81,12 +81,15 @@ class TimelinePostRepository {
   }
 
   Future<Map<String, dynamic>> toggleLike(int postId) async {
-    final res = await ApiService.post("$endpoint/$postId/react", {});
+    final res = await ApiService.post(
+      "$endpoint/$postId/like",
+      {},
+    ); // was /react
     final body = json.decode(res.body);
     final data = (body is Map<String, dynamic> && body['data'] != null)
         ? body['data'] as Map<String, dynamic>
         : body as Map<String, dynamic>;
-    return data; // {"liked": bool, "likeCount": int}
+    return data; // {"liked": bool, "like_count": int}  <-- snake_case
   }
 
   Future<List<TimelineComment>> fetchComments(int postId) async {
