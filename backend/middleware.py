@@ -72,6 +72,15 @@ def register_error_handlers(app):
             'path': request.path
         }), 422
     
+    @app.errorhandler(413)
+    def request_entity_too_large(error):
+        logger.warning(f"Upload too large: {request.url}")
+        return jsonify({
+            'error': 'request_entity_too_large',
+            'message': 'The file is too large to upload. Please choose a smaller file or shorter video.',
+            'path': request.path
+        }), 413
+
     @app.errorhandler(429)
     def too_many_requests(error):
         logger.warning(f"Rate limit exceeded: {request.url}")

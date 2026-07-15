@@ -85,6 +85,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // avoid touching its already-intricate reconnect/typing/room logic for
   // an unrelated feature.
   io.Socket? _activitySocket;
+  Timer? _activitySocketReconnectTimer;
+  int _activitySocketRetries = 0;
 
   // --- Feed engagement ---
   // ✅ Keyed by the underlying (targetType, targetId) the activity points
@@ -283,15 +285,19 @@ class _HomeScreenState extends State<HomeScreen> {
         .setPath('/socket.io')
         .setExtraHeaders({'Authorization': 'Bearer $token'})
         .setQuery({'token': token})
-        .enableReconnection()
-        .setReconnectionAttempts(10)
-        .setReconnectionDelay(1000)
-        .setReconnectionDelayMax(5000)
+        // ✅ Socket.IO's built-in reconnection re-uses the token captured
+        // in this closure forever, so once it expires every auto-reconnect
+        // fails with "Signature has expired". Reconnection is instead
+        // handled manually below (_scheduleActivitySocketReconnect ->
+        // _connectActivitySocket), which re-reads the token from
+        // ApiService fresh on every attempt.
+        .disableReconnection()
         .disableAutoConnect()
         .build();
 
     final socket = io.io(Config.websocketUrl, options);
     _activitySocket = socket;
+    _activitySocketRetries = 0;
 
     socket.on('new_activity', (data) {
       try {
@@ -304,17 +310,45 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
 
-    socket.onConnect(
-      (_) => debugPrint('✅ HomeScreen: activity socket connected'),
-    );
-    socket.onConnectError(
-      (e) => debugPrint('❌ HomeScreen: activity socket connect error: $e'),
-    );
-    socket.onDisconnect(
-      (_) => debugPrint('🔌 HomeScreen: activity socket disconnected'),
-    );
+    socket.onConnect((_) {
+      debugPrint('✅ HomeScreen: activity socket connected');
+      _activitySocketRetries = 0;
+    });
+    socket.onConnectError((e) {
+      debugPrint('❌ HomeScreen: activity socket connect error: $e');
+      _scheduleActivitySocketReconnect();
+    });
+    socket.onDisconnect((_) {
+      debugPrint('🔌 HomeScreen: activity socket disconnected');
+      _scheduleActivitySocketReconnect();
+    });
 
     socket.connect();
+  }
+
+  // ✅ Manual reconnect with backoff, capped at Config.maxConnectionRetries,
+  // mirroring SocketIoService's group-chat retry policy. Always goes back
+  // through _connectActivitySocket so a fresh token is read on every try.
+  void _scheduleActivitySocketReconnect() {
+    if (!mounted || !Config.enableLiveChat) return;
+
+    _activitySocketRetries++;
+    if (_activitySocketRetries > Config.maxConnectionRetries) {
+      debugPrint('❌ HomeScreen: activity socket max reconnect attempts reached');
+      return;
+    }
+
+    _activitySocketReconnectTimer?.cancel();
+    _activitySocketReconnectTimer = Timer(
+      Duration(seconds: Config.connectionRetryDelay),
+      () {
+        if (!mounted) return;
+        debugPrint(
+          '🔄 HomeScreen: reconnecting activity socket (attempt $_activitySocketRetries)...',
+        );
+        _connectActivitySocket();
+      },
+    );
   }
 
   // Merges one freshly-pushed activity into the feed. Deliberately checks
@@ -347,6 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _heartBurstTimer?.cancel();
+    _activitySocketReconnectTimer?.cancel();
     _activitySocket?.offAny();
     _activitySocket?.disconnect();
     _activitySocket?.dispose();

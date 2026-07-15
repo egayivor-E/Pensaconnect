@@ -454,6 +454,12 @@ class ApiService {
   }
 
   // === MULTIPART ===
+  // ✅ Uploads (esp. video) can legitimately take much longer than the 30s
+  // used for ordinary JSON requests. The video picker now allows up to
+  // 5 minutes of footage (was 60s), which can be several hundred MB, so
+  // this needs real headroom on a slow connection.
+  static const Duration uploadTimeoutDuration = Duration(minutes: 10);
+
   static Future<http.Response> postMultipart(
     String endpoint, {
     Map<String, String>? fields,
@@ -471,7 +477,7 @@ class ApiService {
     if (files != null) request.files.addAll(files);
 
     _runRequestInterceptors(request);
-    final streamed = await request.send().timeout(timeoutDuration);
+    final streamed = await request.send().timeout(uploadTimeoutDuration);
     final response = await http.Response.fromStream(streamed);
     _runResponseInterceptors(response);
 
@@ -495,7 +501,7 @@ class ApiService {
     if (files != null) request.files.addAll(files);
 
     _runRequestInterceptors(request);
-    final streamed = await request.send().timeout(timeoutDuration);
+    final streamed = await request.send().timeout(uploadTimeoutDuration);
     final response = await http.Response.fromStream(streamed);
     _runResponseInterceptors(response);
 

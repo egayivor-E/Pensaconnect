@@ -32,7 +32,11 @@ class Config:
     DOCUMENT_EXTENSIONS = {"pdf", "docx", "txt"}
     ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | DOCUMENT_EXTENSIONS
 
-    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))  # 16 MB
+    # ✅ Was 16 MB, then 100 MB. The video picker in
+    # create_timeline_post_screen.dart now allows clips up to 5 minutes
+    # (was 60s), which can run several hundred MB at typical phone-camera
+    # bitrates, so the cap needs to scale with it. Still overridable via env.
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 500 * 1024 * 1024))  # 500 MB
 
     @classmethod
     def is_allowed_file(cls, filename: str) -> bool:
