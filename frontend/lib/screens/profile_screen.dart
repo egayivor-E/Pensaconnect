@@ -440,7 +440,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (Navigator.of(context).canPop()) {
             Navigator.of(context).pop();
           } else {
-            context.go('/');
+            context.go('/home');
           }
         },
       ),
