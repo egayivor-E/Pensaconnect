@@ -69,7 +69,17 @@ def create_testimony():
 # ---------------------------
 @testimonies_bp.route("/", methods=["GET"])
 def get_testimonies():
-    testimonies = Testimony.query.order_by(Testimony.created_at.desc()).all()
+    # ✅ Was an unbounded `.all()` with no eager loading: this refetched
+    # *every* testimony ever posted on every load (only getting slower
+    # as the community grows) and to_dict() lazy-loaded self.user once
+    # per row on top of that. Cap it and eager-load the author in the
+    # same query — same pattern used for the forum threads/posts lists.
+    testimonies = (
+        Testimony.query.options(db.joinedload(Testimony.user))
+        .order_by(Testimony.created_at.desc())
+        .limit(100)
+        .all()
+    )
     return jsonify([t.to_dict() for t in testimonies])
 
 
@@ -166,8 +176,11 @@ def add_comment(testimony_id):
 @testimonies_bp.route("/<int:testimony_id>/comments", methods=["GET"])
 def get_comments(testimony_id):
     testimony = Testimony.query.get_or_404(testimony_id)
+    # ✅ joinedload(user): to_dict() reads comment.user.*, so without
+    # this every comment triggered its own lazy SELECT on users.
     comments = (
-        TestimonyComment.query.filter_by(testimony_id=testimony.id)
+        TestimonyComment.query.options(db.joinedload(TestimonyComment.user))
+        .filter_by(testimony_id=testimony.id)
         .order_by(TestimonyComment.created_at.desc())
         .all()
     )

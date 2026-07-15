@@ -1596,7 +1596,13 @@ class GroupChat(BaseModel):
             raise ValueError("Group name must be between 3 and 200 characters")
         return name
 
-    def to_dict(self, include_members=False, include_messages=False):
+    def to_dict(self, include_members=False, include_messages=False, member_count=None):
+        # ✅ member_count lets list endpoints pass in a value computed by
+        # one batched GROUP BY query (see get_group_chats/discover_group_chats
+        # in api/v1/group_chats.py). Without it, every group chat on a
+        # list screen loaded its *entire* members collection just to
+        # len() the active ones — and self.created_by below is another
+        # lazy query per row unless the caller's query eager-loads it.
         data = super().to_dict()
         data.update({
             "id": self.id,
@@ -1608,7 +1614,10 @@ class GroupChat(BaseModel):
             "tags": self.tags,
             "chat_type": self.chat_type,
             "created_by_id": self.created_by_id,
-            "member_count": len([m for m in self.members if m.is_active]),
+            "member_count": (
+                member_count if member_count is not None
+                else len([m for m in self.members if m.is_active])
+            ),
             "created_by": {
                 "id": self.created_by.id,
                 "username": self.created_by.username,
@@ -1839,7 +1848,15 @@ class TimelinePost(BaseModel):
         order_by="TimelinePostComment.created_at",
     )
 
-    def to_dict(self):
+    def to_dict(self, like_count=None, comment_count=None):
+        # ✅ like_count/comment_count are optional overrides: callers
+        # listing many posts (see get_user_timeline_posts) compute these
+        # in one or two batched GROUP BY queries and pass them in here.
+        # Without them, len(self.likes)/len(self.comments) below would
+        # lazy-load *every* like/comment row for the post just to count
+        # them — a full-collection fetch per post, per field, on every
+        # listing. Falling back to len() keeps single-post fetches (e.g.
+        # get_timeline_post) working exactly as before.
         return {
             "id": self.id,
             "content": self.content,
@@ -1852,8 +1869,8 @@ class TimelinePost(BaseModel):
             "is_video": self.is_video,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "user_id": self.user_id,
-            "like_count": len(self.likes),
-            "comment_count": len(self.comments),
+            "like_count": like_count if like_count is not None else len(self.likes),
+            "comment_count": comment_count if comment_count is not None else len(self.comments),
             "user": {
                 "id": self.user.id if self.user else None,
                 "username": self.user.username if self.user else None,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 import '../config/config.dart';
 import '../models/timeline_post_model.dart';
 import '../repositories/timeline_post_repository.dart';
@@ -46,10 +47,89 @@ class _TimelinePostViewerState extends State<TimelinePostViewer> {
   late TimelinePost _post;
   bool _liking = false;
 
+  // ✅ The video branch below used to just show a static play icon —
+  // no VideoPlayerController was ever created, so a video post never
+  // actually rendered any video. Same setup pattern as
+  // _ForumMediaViewerScreen in forum_detail_screen.dart.
+  VideoPlayerController? _videoController;
+  bool _videoInitialized = false;
+  bool _videoFailed = false;
+
   @override
   void initState() {
     super.initState();
     _post = widget.post;
+    if (_post.isVideo) _setUpVideo();
+  }
+
+  Future<void> _setUpVideo() async {
+    final url = resolveTimelineMediaUrl(_post.imageUrl);
+    if (url == null) {
+      setState(() => _videoFailed = true);
+      return;
+    }
+    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    _videoController = controller;
+    try {
+      await controller.initialize();
+      if (!mounted) return;
+      setState(() => _videoInitialized = true);
+      controller.play();
+    } catch (e) {
+      debugPrint('Timeline post video failed to load: $e');
+      if (mounted) setState(() => _videoFailed = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  Widget _buildVideo() {
+    if (_videoFailed) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(Icons.videocam_off_outlined, color: Colors.white54, size: 56),
+          SizedBox(height: 12),
+          Text(
+            "Couldn't load this video.",
+            style: TextStyle(color: Colors.white70),
+          ),
+        ],
+      );
+    }
+    if (!_videoInitialized || _videoController == null) {
+      return const CircularProgressIndicator(color: Colors.white70);
+    }
+    final controller = _videoController!;
+    return AspectRatio(
+      aspectRatio: controller.value.aspectRatio,
+      child: GestureDetector(
+        onTap: () => setState(() {
+          controller.value.isPlaying ? controller.pause() : controller.play();
+        }),
+        child: Stack(
+          alignment: Alignment.center,
+          fit: StackFit.expand,
+          children: [
+            VideoPlayer(controller),
+            AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) => controller.value.isPlaying
+                  ? const SizedBox.shrink()
+                  : const Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 64,
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _update(TimelinePost updated) {
@@ -163,27 +243,7 @@ class _TimelinePostViewerState extends State<TimelinePostViewer> {
                           ),
                         )
                       : post.isVideo
-                      ? Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.play_circle_fill,
-                              color: Colors.white,
-                              size: 72,
-                            ),
-                            const SizedBox(height: 16),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                              ),
-                              child: Text(
-                                post.content,
-                                style: const TextStyle(color: Colors.white),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ],
-                        )
+                      ? _buildVideo()
                       : InteractiveViewer(
                           child: Image.network(
                             resolvedUrl,

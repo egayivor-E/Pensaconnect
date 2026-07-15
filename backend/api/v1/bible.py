@@ -18,7 +18,10 @@ def list_devotions():
     per_page = request.args.get("per_page", 20, type=int)
     date = request.args.get("date")
 
-    query = Devotion.query.filter_by(is_active=True)
+    # ✅ joinedload(author): to_dict(include_author=True) below reads
+    # devotion.author.*, so without this every devotion on the page
+    # triggered its own lazy SELECT on users.
+    query = Devotion.query.options(db.joinedload(Devotion.author)).filter_by(is_active=True)
 
     if date:
         try:
@@ -110,7 +113,12 @@ def delete_devotion(devotion_id):
 def list_plans():
     user_id = get_jwt_identity()
 
-    query = StudyPlan.query.filter_by(is_active=True)
+    # ✅ joinedload(author): to_dict(include_author=True) reads
+    # plan.author.*, so without this every plan triggered its own lazy
+    # SELECT on users (N+1). Also cap the previously-unbounded `.all()`
+    # so this doesn't turn into a full table scan as plans accumulate —
+    # matches the safety limit already used on the forum threads list.
+    query = StudyPlan.query.options(db.joinedload(StudyPlan.author)).filter_by(is_active=True)
 
     if user_id:
         # Authenticated: show all public plans + user's own private plans
@@ -121,7 +129,7 @@ def list_plans():
         # Guests: only public plans
         query = query.filter(StudyPlan.is_public == True)
 
-    plans = query.order_by(StudyPlan.created_at.desc()).all()
+    plans = query.order_by(StudyPlan.created_at.desc()).limit(200).all()
     return success_response({"items": [p.to_dict(include_author=True) for p in plans]})
 
 
@@ -436,7 +444,10 @@ def list_archives():
     per_page = request.args.get("per_page", 20, type=int)
     category = request.args.get("category")
 
-    query = Archive.query.filter_by(is_active=True)
+    # ✅ joinedload(author): to_dict(include_author=True) reads
+    # archive.author.*, so without this every archive on the page did
+    # its own lazy SELECT on users.
+    query = Archive.query.options(db.joinedload(Archive.author)).filter_by(is_active=True)
     if category:
         query = query.filter(Archive.category == category)
 

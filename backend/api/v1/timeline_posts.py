@@ -164,7 +164,8 @@ def get_user_timeline_posts(user_id):
         current_user_id = None
 
     posts = (
-        TimelinePost.query.filter_by(user_id=user_id)
+        TimelinePost.query.options(db.joinedload(TimelinePost.user))
+        .filter_by(user_id=user_id)
         .order_by(TimelinePost.created_at.desc())
         .all()
     )
@@ -186,6 +187,22 @@ def get_user_timeline_posts(user_id):
         )
         counts_by_post_id = {row[0]: row[1] for row in rows}
 
+    # ✅ Same batching for comment counts — to_dict() used to fall back
+    # to len(self.comments), which lazy-loaded every comment row for
+    # every post on the page just to count them.
+    comment_counts_by_post_id = {}
+    if post_ids:
+        comment_rows = (
+            db.session.query(
+                TimelinePostComment.timeline_post_id,
+                func.count(TimelinePostComment.id),
+            )
+            .filter(TimelinePostComment.timeline_post_id.in_(post_ids))
+            .group_by(TimelinePostComment.timeline_post_id)
+            .all()
+        )
+        comment_counts_by_post_id = {row[0]: row[1] for row in comment_rows}
+
     liked_post_ids = set()
     if current_user_id is not None and post_ids:
         liked_rows = (
@@ -200,8 +217,10 @@ def get_user_timeline_posts(user_id):
 
     result = []
     for p in posts:
-        d = p.to_dict()
-        d["like_count"] = counts_by_post_id.get(p.id, 0)
+        d = p.to_dict(
+            like_count=counts_by_post_id.get(p.id, 0),
+            comment_count=comment_counts_by_post_id.get(p.id, 0),
+        )
         d["has_liked"] = p.id in liked_post_ids
         result.append(d)
 
@@ -216,8 +235,11 @@ def get_timeline_post_comments(post_id):
     # 404s if the post doesn't exist — same convention as like/delete.
     TimelinePost.query.get_or_404(post_id)
 
+    # ✅ joinedload(user): to_dict() reads comment.user.*, so without
+    # this every comment triggered its own lazy SELECT on users.
     comments = (
-        TimelinePostComment.query.filter_by(timeline_post_id=post_id)
+        TimelinePostComment.query.options(db.joinedload(TimelinePostComment.user))
+        .filter_by(timeline_post_id=post_id)
         .order_by(TimelinePostComment.created_at.asc())
         .all()
     )

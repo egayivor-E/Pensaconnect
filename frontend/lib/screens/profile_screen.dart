@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../models/badge.dart';
 import '../models/profile_view_model.dart';
@@ -781,21 +782,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // A video's raw file URL is not a valid image, so an
-              // unconditional Image.network(resolvedUrl) always failed
-              // for video posts. Videos get their own placeholder tile
-              // (no thumbnail field from the backend yet) instead of a
-              // doomed Image.network call.
+              // ✅ Was a flat black Container + static play icon —
+              // never showed anything from the actual video. Now shows
+              // the video's real first frame (paused, muted) with a
+              // play badge on top, same approach already used for
+              // forum video attachments (_AttachmentVideoThumb).
               if (post.isVideo)
-                Container(
-                  color: Colors.black87,
-                  alignment: Alignment.center,
-                  child: const Icon(
-                    Icons.play_circle_fill,
-                    color: Colors.white,
-                    size: 32,
-                  ),
-                )
+                resolvedUrl != null
+                    ? _TimelineVideoThumb(url: resolvedUrl)
+                    : Container(
+                        color: Colors.black87,
+                        alignment: Alignment.center,
+                        child: const Icon(
+                          Icons.videocam_off_outlined,
+                          color: Colors.white,
+                          size: 32,
+                        ),
+                      )
               else if (resolvedUrl != null)
                 CachedNetworkImage(
                   imageUrl: resolvedUrl,
@@ -1298,5 +1301,108 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
   bool shouldRebuild(covariant _StickyTabBarDelegate oldDelegate) {
     return oldDelegate.tabBar != tabBar ||
         oldDelegate.backgroundColor != backgroundColor;
+  }
+}
+
+// ==========================================
+// TIMELINE VIDEO THUMBNAIL (profile grid)
+// ==========================================
+
+/// Fills its grid cell with the video's real first frame (paused, no
+/// audio) plus a play badge, instead of a flat placeholder box. Same
+/// approach as _AttachmentVideoThumb in forum_detail_screen.dart, just
+/// sized to stretch across a GridView tile (StackFit.expand) rather
+/// than a fixed square.
+class _TimelineVideoThumb extends StatefulWidget {
+  final String url;
+
+  const _TimelineVideoThumb({required this.url});
+
+  @override
+  State<_TimelineVideoThumb> createState() => _TimelineVideoThumbState();
+}
+
+class _TimelineVideoThumbState extends State<_TimelineVideoThumb> {
+  VideoPlayerController? _controller;
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _controller = controller;
+    try {
+      await controller.initialize();
+      // Thumbnails just show the first frame — muted and paused, never
+      // autoplaying inside a scrolling grid.
+      await controller.setVolume(0);
+      await controller.seekTo(Duration.zero);
+      if (!mounted) return;
+      setState(() => _ready = true);
+    } catch (e) {
+      debugPrint('Timeline video thumbnail failed to load: $e');
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black87,
+      child: Stack(
+        alignment: Alignment.center,
+        fit: StackFit.expand,
+        children: [
+          if (_ready && _controller != null)
+            FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: _controller!.value.size.width,
+                height: _controller!.value.size.height,
+                child: VideoPlayer(_controller!),
+              ),
+            )
+          else if (_failed)
+            const Icon(
+              Icons.videocam_off_outlined,
+              color: Colors.white54,
+              size: 28,
+            )
+          else
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white70,
+              ),
+            ),
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.black.withOpacity(0.35),
+            ),
+            padding: const EdgeInsets.all(6),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

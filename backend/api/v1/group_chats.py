@@ -133,7 +133,7 @@ def get_group_chats():
     group_ids = [membership.group_chat_id for membership in memberships]
     
     # Get the actual group chats
-    query = GroupChat.query.filter(
+    query = GroupChat.query.options(db.joinedload(GroupChat.created_by)).filter(
         GroupChat.id.in_(group_ids),
         GroupChat.is_active == True
     )
@@ -141,11 +141,28 @@ def get_group_chats():
         query = query.filter(GroupChat.chat_type == chat_type)
 
     group_chats = query.order_by(GroupChat.created_at.desc()).all()
-    
+
+    # ✅ Batched member counts: to_dict() used to len() the full
+    # `members` collection per group chat (a full row fetch just to
+    # count), plus a lazy created_by query per row above without the
+    # joinedload. One GROUP BY here covers every group on the list.
+    chat_ids = [gc.id for gc in group_chats]
+    member_counts = {}
+    if chat_ids:
+        member_counts = dict(
+            db.session.query(GroupMember.group_chat_id, db.func.count(GroupMember.id))
+            .filter(GroupMember.group_chat_id.in_(chat_ids), GroupMember.is_active == True)
+            .group_by(GroupMember.group_chat_id)
+            .all()
+        )
+
     # ❌ PREVIOUS: return jsonify([gc.to_dict() for gc in group_chats])
     # ✅ FIX: Wrap the list in a dictionary with 'data', 'message', and 'status' keys
     return jsonify({
-        "data": [gc.to_dict() for gc in group_chats],
+        "data": [
+            gc.to_dict(member_count=member_counts.get(gc.id, 0))
+            for gc in group_chats
+        ],
         "message": "Groups fetched successfully",
         "status": "success"
     }), 200 # Ensure the status code is 200
@@ -170,7 +187,7 @@ def discover_group_chats():
         for m in GroupMember.query.filter_by(user_id=user_id, is_active=True).all()
     ]
 
-    query = GroupChat.query.filter(
+    query = GroupChat.query.options(db.joinedload(GroupChat.created_by)).filter(
         GroupChat.chat_type == "group",
         GroupChat.is_public == True,
         GroupChat.is_active == True,
@@ -182,8 +199,21 @@ def discover_group_chats():
         page=page, per_page=per_page, error_out=False
     )
 
+    chat_ids = [gc.id for gc in pagination.items]
+    member_counts = {}
+    if chat_ids:
+        member_counts = dict(
+            db.session.query(GroupMember.group_chat_id, db.func.count(GroupMember.id))
+            .filter(GroupMember.group_chat_id.in_(chat_ids), GroupMember.is_active == True)
+            .group_by(GroupMember.group_chat_id)
+            .all()
+        )
+
     return jsonify({
-        "data": [gc.to_dict() for gc in pagination.items],
+        "data": [
+            gc.to_dict(member_count=member_counts.get(gc.id, 0))
+            for gc in pagination.items
+        ],
         "page": pagination.page,
         "pages": pagination.pages,
         "total": pagination.total,
@@ -372,10 +402,15 @@ def get_group_members(group_id):
     if not membership:
         return jsonify({"error": "Access denied"}), 403
     
-    members = GroupMember.query.filter_by(
-        group_chat_id=group_id,
-        is_active=True
-    ).order_by(GroupMember.group_role.desc(), GroupMember.joined_at).all()
+    # ✅ joinedload(GroupMember.user): to_dict() reads member.user.*, so
+    # without this every member in the list triggered its own lazy
+    # SELECT on users — N+1 on a screen that's opened constantly.
+    members = (
+        GroupMember.query.options(db.joinedload(GroupMember.user))
+        .filter_by(group_chat_id=group_id, is_active=True)
+        .order_by(GroupMember.group_role.desc(), GroupMember.joined_at)
+        .all()
+    )
     
     return jsonify([member.to_dict() for member in members])
 
@@ -511,11 +546,28 @@ def get_messages(group_id):
     if not membership:
         return jsonify({"error": "Access denied"}), 403
     
-    messages = GroupMessage.query.filter_by(
-        group_chat_id=group_id,
-        is_active=True
-    ).order_by(GroupMessage.created_at.asc()).all()
-    
+    # ✅ Was an unbounded `.all()` with no eager loading: every open of a
+    # chat re-fetched the group's *entire* message history (slower every
+    # day the group is alive) and to_dict() triggered two extra lazy
+    # queries per message (sender + replied_to) — 2N round trips for N
+    # messages. Cap to the most recent page worth of history (matches
+    # the per_page default in the paginated /messages/<group_id> route)
+    # and eager-load both relationships in the single initial query.
+    # Fetched newest-first so the LIMIT actually gets the *latest*
+    # messages, then reversed back to chronological order for display.
+    limit = request.args.get("limit", default=200, type=int)
+    messages = (
+        GroupMessage.query.options(
+            db.joinedload(GroupMessage.sender),
+            db.joinedload(GroupMessage.replied_to),
+        )
+        .filter_by(group_chat_id=group_id, is_active=True)
+        .order_by(GroupMessage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    messages.reverse()
+
     return jsonify([message.to_dict() for message in messages])
 
 

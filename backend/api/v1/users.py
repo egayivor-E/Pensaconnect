@@ -26,7 +26,16 @@ def allowed_file(filename):
 def list_users():
     page = int(request.args.get("page", 1))
     per_page = int(request.args.get("per_page", 20))
-    users = User.query.paginate(page=page, per_page=per_page, error_out=False)
+    # ✅ User.to_dict() reads self.roles, self.group_memberships, and
+    # self.group_chats_created (the last two just to len() them) — that's
+    # 3 lazy collection loads per user, unbounded in size, times per_page
+    # users on every directory page. selectinload issues one extra
+    # query per relationship for the *whole page* instead of 3*N.
+    users = User.query.options(
+        db.selectinload(User.roles),
+        db.selectinload(User.group_memberships),
+        db.selectinload(User.group_chats_created),
+    ).paginate(page=page, per_page=per_page, error_out=False)
     return success_response(
         [u.to_dict(exclude=["password_hash"]) for u in users.items]
     )

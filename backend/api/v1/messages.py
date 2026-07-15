@@ -50,13 +50,22 @@ def get_group_messages(group_id):
             error_out=False
         )
         
+        # ✅ Batched sender lookup: this used to call User.query.get()
+        # once per message inside the loop below — a fresh round trip to
+        # the DB for every single row on the page (50 messages = 50
+        # extra queries just to open a chat). One IN-query for the whole
+        # page, then an O(1) dict lookup per message instead.
+        sender_ids = {msg.sender_id for msg in messages.items}
+        senders_by_id = {
+            u.id: u for u in User.query.filter(User.id.in_(sender_ids)).all()
+        } if sender_ids else {}
+
         # Format response with sender information
         formatted_messages = []
         for msg in messages.items:
             message_data = msg.to_dict()
-            
-            # Add sender information
-            sender = User.query.get(msg.sender_id)
+
+            sender = senders_by_id.get(msg.sender_id)
             if sender:
                 message_data['sender'] = {
                     'id': sender.id,

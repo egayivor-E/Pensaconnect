@@ -159,8 +159,13 @@ def _build_target_counts(activities):
 @activities_bp.route("/recent", methods=["GET"])
 @jwt_required()
 def get_recent_activities():
+    # ✅ joinedload(Activity.user): to_dict(include_user=True) reads
+    # activity.user.*, so without this every row on the home feed did
+    # its own lazy SELECT on users — 20 extra queries on the single
+    # most-frequently-hit endpoint in the app.
     activities = (
-        Activity.query.filter_by(is_active=True)
+        Activity.query.options(db.joinedload(Activity.user))
+        .filter_by(is_active=True)
         .order_by(Activity.created_at.desc())
         .limit(20)
         .all()
