@@ -246,31 +246,13 @@ def add_timeline_post_comment(post_id):
     db.session.add(comment)
     db.session.commit()
 
-    # ✅ Same pattern as create_timeline_post: log to the global activity
-    # feed so a comment shows up in "Recent" too, not just under the post.
-    # target_type is "timeline_post_comment" (not "timeline_post") so it's
-    # distinguishable from the post-creation activity and doesn't collide
-    # with it when looked up by (target_type, target_id) elsewhere (e.g.
-    # activities.py's batched like/comment-count queries, which key off
-    # target_type == "timeline_post" for the post itself).
-    try:
-        activity = Activity(
-            title="Commented on a post",
-            subtitle=content[:140],
-            icon="mode_comment",
-            color="blue",
-            user_id=user_id,
-            target_type="timeline_post_comment",
-            target_id=post.id,
-        )
-        db.session.add(activity)
-        db.session.commit()
-        broadcast_new_activity(activity)
-    except Exception:
-        logger.exception(
-            "Failed to log activity for comment on timeline post %s", post_id
-        )
-        db.session.rollback()
+    # Note: comments intentionally do NOT create an Activity row. The
+    # post itself already has one Activity (from create_timeline_post),
+    # which is what should show up in the global "Recent" feed. Logging
+    # every comment as its own Activity made each comment appear as a
+    # separate, near-duplicate post in Recent — same reasoning as forum
+    # comments (forums.py add_comment), which only notify the post
+    # author and don't touch the Activity feed either.
 
     return jsonify(comment.to_dict()), 201
 
@@ -371,4 +353,3 @@ def delete_timeline_post(post_id):
     db.session.delete(post)
     db.session.commit()
     return jsonify({"message": "Post deleted"})
-
