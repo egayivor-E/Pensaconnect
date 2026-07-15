@@ -189,6 +189,8 @@ class User(BaseModel,  UserMixin):
     testimony_comments = relationship("TestimonyComment", back_populates="user")
     testimony_likes = relationship("TestimonyLike", back_populates="user")
     timeline_posts = relationship("TimelinePost", back_populates="user", cascade="all, delete-orphan")
+    # ✅ new — required by TimelinePostLike.user's back_populates
+    timeline_post_likes = relationship("TimelinePostLike", back_populates="user", cascade="all, delete-orphan")
     group_chats_created = db.relationship('GroupChat',back_populates='created_by', foreign_keys='GroupChat.created_by_id', cascade='all, delete-orphan'
     )
     
@@ -1423,49 +1425,6 @@ class Testimony(BaseModel):
         if include_comments:
             data["comments"] = [c.to_dict() for c in self.comments]
         return data
-    
-    
-
-class TimelinePost(BaseModel):
-    """
-    A post a user makes on their own profile/timeline. Distinct from the
-    forum `Post` model (which always belongs to a `ForumThread`) — a
-    TimelinePost has no thread, it just belongs to the author.
-
-    Every TimelinePost that gets created also gets a matching Activity
-    row (target_type="timeline_post") so it shows up in the global
-    "Recent" feed. Deleting the post deletes that Activity row too (see
-    the DELETE route in api/v1/timeline_posts.py) so it disappears from
-    both places at once, per the "delete everywhere" requirement.
-    """
-    __tablename__ = "timeline_posts"
-
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    content = db.Column(db.Text, nullable=False)
-    image_url = db.Column(db.String(500), nullable=True)
-    # True when image_url actually points at a video file (uploaded via
-    # POST /timeline-posts/upload). Kept as an explicit flag rather than
-    # sniffing the URL's extension client-side every render.
-    is_video = db.Column(db.Boolean, nullable=False, default=False)
-
-    user = db.relationship("User", back_populates="timeline_posts")
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "content": self.content,
-            "imageUrl": self.image_url,
-            "isVideo": self.is_video,
-            "createdAt": self.created_at.isoformat() if self.created_at else None,
-            "userId": self.user_id,
-            "user": {
-                "id": self.user.id if self.user else None,
-                "username": self.user.username if self.user else None,
-                "fullName": self.user.get_full_name() if self.user and hasattr(self.user, "get_full_name") else None,
-                "profilePicture": getattr(self.user, "profile_picture", None) if self.user else None,
-            },
-        }
 
 
 class TestimonyComment(BaseModel):
@@ -1669,9 +1628,6 @@ class GroupMessage(BaseModel):
                 "content": self.replied_to.content
             } if self.replied_to else None
         }
-        
-        
-
 
 
 class WorshipSong(db.Model):
@@ -1756,3 +1712,85 @@ class WorshipSong(db.Model):
             thumb_url = self.thumbnail_url
         
         return f'{base_url}{thumb_url}'
+
+
+class TimelinePost(BaseModel):
+    """
+    A post a user makes on their own profile/timeline. Distinct from the
+    forum `Post` model (which always belongs to a `ForumThread`) — a
+    TimelinePost has no thread, it just belongs to the author.
+
+    Every TimelinePost that gets created also gets a matching Activity
+    row (target_type="timeline_post") so it shows up in the global
+    "Recent" feed. Deleting the post deletes that Activity row too (see
+    the DELETE route in api/v1/timeline_posts.py) so it disappears from
+    both places at once, per the "delete everywhere" requirement.
+    """
+    __tablename__ = "timeline_posts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    image_url = db.Column(db.String(500), nullable=True)
+    # True when image_url actually points at a video file (uploaded via
+    # POST /timeline-posts/upload). Kept as an explicit flag rather than
+    # sniffing the URL's extension client-side every render.
+    is_video = db.Column(db.Boolean, nullable=False, default=False)
+
+    user = db.relationship("User", back_populates="timeline_posts")
+    likes = db.relationship(
+        "TimelinePostLike", back_populates="timeline_post", cascade="all, delete-orphan"
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "content": self.content,
+            # ✅ snake_case — matches TimelinePost.fromJson in the Flutter
+            # app, which reads image_url/is_video/created_at/user_id
+            # directly. (Activity uses camelCase deliberately for its own
+            # consumers; TimelinePost has its own Dart model that expects
+            # snake_case, so don't copy Activity's convention here.)
+            "image_url": self.image_url,
+            "is_video": self.is_video,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "user_id": self.user_id,
+            "user": {
+                "id": self.user.id if self.user else None,
+                "username": self.user.username if self.user else None,
+                "full_name": self.user.get_full_name() if self.user and hasattr(self.user, "get_full_name") else None,
+                "profile_picture": getattr(self.user, "profile_picture", None) if self.user else None,
+            },
+        }
+
+
+class TimelinePostLike(BaseModel):
+    """
+    One user's like on one TimelinePost. Mirrors TestimonyLike: a simple
+    unique(user, target) row, toggled on/off by the
+    POST /timeline-posts/<id>/like route in api/v1/timeline_posts.py.
+    """
+    __tablename__ = "timeline_post_likes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    timeline_post_id = db.Column(
+        db.Integer, db.ForeignKey("timeline_posts.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    timeline_post = relationship("TimelinePost", back_populates="likes")
+    user = relationship("User", back_populates="timeline_post_likes")
+
+    __table_args__ = (
+        db.UniqueConstraint("timeline_post_id", "user_id", name="uq_timeline_post_like"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "timeline_post_id": self.timeline_post_id,
+            "user_id": self.user_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

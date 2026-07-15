@@ -2,11 +2,12 @@ import uuid
 import logging
 
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
+from sqlalchemy import func
 from werkzeug.utils import secure_filename
 
 from backend.extensions import db
-from backend.models import TimelinePost, Activity
+from backend.models import TimelinePost, TimelinePostLike, Activity
 from backend.supabase_client import upload_file_to_supabase, TIMELINE_MEDIA_BUCKET
 from .utils import broadcast_new_activity, success_response, error_response
 
@@ -64,7 +65,13 @@ def create_timeline_post():
         logger.exception("Failed to log activity for timeline post %s", post.id)
         db.session.rollback()
 
-    return jsonify(post.to_dict()), 201
+    # A freshly created post has no likes yet — include the fields so the
+    # client's TimelinePost.fromJson always sees them, same shape as the
+    # list endpoint below.
+    data = post.to_dict()
+    data["like_count"] = 0
+    data["has_liked"] = False
+    return jsonify(data), 201
 
 
 # ---------------------------
@@ -145,12 +152,95 @@ def upload_timeline_media():
 # ---------------------------
 @timeline_posts_bp.route("/user/<int:user_id>", methods=["GET"])
 def get_user_timeline_posts(user_id):
+    # Optional auth: viewing a profile doesn't require being logged in,
+    # but if the request does carry a valid token we use it to mark
+    # which of these posts the *viewer* (not the profile owner) has
+    # already liked — same idea as Activity.hasLiked on the home feed.
+    current_user_id = None
+    try:
+        verify_jwt_in_request(optional=True)
+        current_user_id = get_jwt_identity()
+    except Exception:
+        current_user_id = None
+
     posts = (
         TimelinePost.query.filter_by(user_id=user_id)
         .order_by(TimelinePost.created_at.desc())
         .all()
     )
-    return jsonify([p.to_dict() for p in posts])
+    post_ids = [p.id for p in posts]
+
+    # Single grouped query for all like counts, instead of one COUNT(*)
+    # per post — avoids an N+1 query pattern as a profile's post list
+    # grows.
+    counts_by_post_id = {}
+    if post_ids:
+        rows = (
+            db.session.query(
+                TimelinePostLike.timeline_post_id,
+                func.count(TimelinePostLike.id),
+            )
+            .filter(TimelinePostLike.timeline_post_id.in_(post_ids))
+            .group_by(TimelinePostLike.timeline_post_id)
+            .all()
+        )
+        counts_by_post_id = {row[0]: row[1] for row in rows}
+
+    liked_post_ids = set()
+    if current_user_id is not None and post_ids:
+        liked_rows = (
+            TimelinePostLike.query.filter(
+                TimelinePostLike.user_id == current_user_id,
+                TimelinePostLike.timeline_post_id.in_(post_ids),
+            )
+            .with_entities(TimelinePostLike.timeline_post_id)
+            .all()
+        )
+        liked_post_ids = {row[0] for row in liked_rows}
+
+    result = []
+    for p in posts:
+        d = p.to_dict()
+        d["like_count"] = counts_by_post_id.get(p.id, 0)
+        d["has_liked"] = p.id in liked_post_ids
+        result.append(d)
+
+    return jsonify(result)
+
+
+# ---------------------------
+# Toggle a like/reaction on a timeline post
+# ---------------------------
+@timeline_posts_bp.route("/<int:post_id>/like", methods=["POST"])
+@jwt_required()
+def toggle_timeline_post_like(post_id):
+    user_id = get_jwt_identity()
+    # 404s if the post doesn't exist, same behavior as delete below.
+    TimelinePost.query.get_or_404(post_id)
+
+    existing = TimelinePostLike.query.filter_by(
+        user_id=user_id, timeline_post_id=post_id
+    ).first()
+
+    if existing:
+        db.session.delete(existing)
+        liked = False
+    else:
+        db.session.add(
+            TimelinePostLike(user_id=user_id, timeline_post_id=post_id)
+        )
+        liked = True
+
+    db.session.commit()
+
+    like_count = TimelinePostLike.query.filter_by(
+        timeline_post_id=post_id
+    ).count()
+
+    return success_response(
+        {"liked": liked, "like_count": like_count},
+        "Reaction updated",
+    )
 
 
 # ---------------------------
@@ -173,6 +263,14 @@ def delete_timeline_post(post_id):
     Activity.query.filter_by(
         target_type="timeline_post", target_id=post.id
     ).delete(synchronize_session=False)
+
+    # ✅ Same reasoning for likes: TimelinePostLike rows reference this
+    # post's id directly rather than through a cascading FK, so they'd
+    # otherwise be orphaned (and could collide with a future post that
+    # happens to reuse the id) if not cleaned up here.
+    TimelinePostLike.query.filter_by(timeline_post_id=post.id).delete(
+        synchronize_session=False
+    )
 
     db.session.delete(post)
     db.session.commit()
