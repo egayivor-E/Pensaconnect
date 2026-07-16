@@ -28,7 +28,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final response = await ApiService.post("auth/register", {
+      await ApiService.post("auth/register", {
         "first_name": _firstNameController.text.trim(),
         "last_name": _lastNameController.text.trim(),
         "username": _usernameController.text.trim(),
@@ -40,28 +40,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
       setState(() => _isLoading = false);
 
-      if (response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Account created — welcome! Please log in."),
-            backgroundColor: Colors.green,
-          ),
-        );
-        context.go('/'); // back to login
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Registration failed: ${response.body}"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      // ApiService.post() throws an ApiException for any non-2xx status
+      // (see ApiService._handleResponse) — it never returns here with a
+      // failing status code, so `response` reaching this point is
+      // always the 201 success case. A validation failure, duplicate
+      // email/username, etc. is caught below instead.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Account created — welcome! Please log in."),
+          backgroundColor: Colors.green,
+        ),
+      );
+      context.go('/'); // back to login
+    } on ApiException catch (e) {
+      // The backend's validation message (e.g. "Password must contain
+      // an uppercase letter", "username already exists") lives here —
+      // show it directly instead of falling into the generic catch
+      // below, which would otherwise print a raw exception dump.
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Something went wrong: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Couldn't reach the server. Check your connection and try again.",
+          ),
+        ),
+      );
     }
   }
 

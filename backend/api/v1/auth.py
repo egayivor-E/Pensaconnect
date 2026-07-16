@@ -63,8 +63,11 @@ def register():
         validation_result = validate_user_registration(validation_data)
         if not validation_result.is_valid:
             logger.warning(f"Registration validation failed: {validation_result.errors}")
-            # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
-            return error_response(validation_result.errors, 400)
+            return error_response(
+                "; ".join(validation_result.errors.values()) or "Registration validation failed",
+                400,
+                errors=validation_result.errors,
+            )
 
         # ✅ CHECK FOR EXISTING USER (case-insensitive)
         existing_user = User.query.filter(
@@ -76,17 +79,22 @@ def register():
         ).first()
         
         if existing_user:
-            # Determine which field caused the conflict
+            # Determine which field caused the conflict. phone_number is
+            # optional/nullable — without the `phone_number and` guard,
+            # two users who both simply left phone blank (both None)
+            # compared equal here and got incorrectly flagged as a
+            # "phone_number already exists" conflict on top of whatever
+            # field actually collided.
             conflict_fields = []
             if existing_user.email.lower() == email.lower():
                 conflict_fields.append("email")
             if existing_user.username.lower() == username.lower():
                 conflict_fields.append("username")
-            if existing_user.phone_number == phone_number:
+            if phone_number and existing_user.phone_number == phone_number:
                 conflict_fields.append("phone_number")
-                
+
             return error_response(
-                f"{', '.join(conflict_fields)} already exists", 
+                f"{', '.join(conflict_fields) or 'Account details'} already exists",
                 400
             )
 
@@ -296,8 +304,12 @@ def reset_password():
     
     password_validation = validate_password(new_password)
     if not password_validation.is_valid:
-        # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
-        return error_response(password_validation.errors, 400)
+        return error_response(
+            "; ".join(password_validation.errors.values())
+            or password_validation.message,
+            400,
+            errors=password_validation.errors,
+        )
     
     return success_response(message="Password reset successfully")
 
@@ -326,8 +338,12 @@ def update_profile():
         from backend.utils import validate_user_profile_update
         validation_result = validate_user_profile_update(update_data)
         if not validation_result.is_valid:
-            # ✅ FIXED: Replaced jsonify(format_validation_errors) with error_response
-            return error_response(validation_result.errors, 400)
+            return error_response(
+                "; ".join(validation_result.errors.values())
+                or validation_result.message,
+                400,
+                errors=validation_result.errors,
+            )
         
         for field, value in update_data.items():
             setattr(user, field, value)
