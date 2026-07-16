@@ -28,6 +28,7 @@ if RENDER:
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
+from werkzeug.middleware.proxy_fix import ProxyFix
 from backend import create_app, db, get_socketio
 
 
@@ -281,7 +282,19 @@ def run_app():
         env = os.getenv('FLASK_ENV', 'development')
         print(f"🎯 Using {env} configuration")
         app = create_app(env)
-    
+
+    # ✅ FIX: Render terminates TLS at its edge and forwards plain HTTP to
+    # this process, setting X-Forwarded-Proto: https on the way in. Without
+    # this, Flask's request.is_secure is always False here, so Talisman's
+    # force_https redirects EVERY request — including the Socket.IO
+    # handshake/upgrade — with a 301. Browsers never follow a redirect on a
+    # WebSocket upgrade, so that 301 surfaces client-side as "WebSocket is
+    # closed before the connection is established." ProxyFix makes Flask
+    # trust the proxy's X-Forwarded-Proto (and X-Forwarded-Host), so
+    # request.is_secure is correctly True for HTTPS traffic and Talisman
+    # stops redirecting requests that are already secure.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
     # --- CRITICAL: Register frontend routes BEFORE anything else ---
     if os.getenv('RUN_FRONTEND', 'true') == 'true':
         print("📱 Adding frontend routes...")
