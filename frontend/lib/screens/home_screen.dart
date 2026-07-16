@@ -111,6 +111,46 @@ class _HomeScreenState extends State<HomeScreen> {
   int? _loadedForUserId;
   late final VoidCallback _authListener;
 
+  // ✅ Static (so it survives State recreation, not just rebuilds): with
+  // a flat GoRoute list (no StatefulShellRoute), context.go(Routes.home)
+  // tears down and rebuilds this entire widget/State on every bottom-nav
+  // round trip. That used to reset _hasLoadedOnce/_loadedForUserId to
+  // their initial values on every return to this tab, making the
+  // skeleton reappear even though this session had already loaded once.
+  // Mirroring the settled state here lets a freshly-created State
+  // hydrate itself (see _hydrateFromStaticCache) before its first build
+  // instead of starting from scratch. This also gets cleared implicitly
+  // on logout, since _loadData() always writes the (now-empty)
+  // post-logout state back into these fields too — see the end of
+  // _loadData().
+  static bool _cacheHasLoadedOnce = false;
+  static int? _cachedUserId;
+  static User? _cachedUser;
+  static List<Activity>? _cachedActivities;
+  static Set<String>? _cachedLikedTargetKeys;
+  static bool _cachedHasMoreActivities = false;
+  static int? _cachedNextActivitiesCursor;
+  static int _cachedUnreadNotifications = 0;
+
+  // Restores whatever the previous instance of this screen last loaded
+  // (see the static fields above), so switching tabs away and back
+  // paints real content immediately instead of the skeleton. The
+  // regular _loadData() call still runs right after this in initState —
+  // but as a quiet background refresh, since _hasLoadedOnce is already
+  // true by the time it runs.
+  void _hydrateFromStaticCache() {
+    if (!_cacheHasLoadedOnce) return;
+    _currentUser = _cachedUser;
+    _activities = List<Activity>.from(_cachedActivities ?? const []);
+    _likedTargetKeys.addAll(_cachedLikedTargetKeys ?? const {});
+    _hasMoreActivities = _cachedHasMoreActivities;
+    _nextActivitiesCursor = _cachedNextActivitiesCursor;
+    _unreadNotifications = _cachedUnreadNotifications;
+    _hasLoadedOnce = true;
+    _loadedForUserId = _cachedUserId;
+    _loading = false;
+  }
+
   // ✅ Dedicated connection just for live "new_activity" pushes, separate
   // from SocketIoService (which is scoped to per-group-chat rooms and has
   // no notion of a standing, app-wide connection). Kept deliberately small
@@ -210,7 +250,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _authListener = _onAuthChanged;
     AuthService().addListener(_authListener);
     _scrollController.addListener(_onScroll);
-    _loadData();
+    _hydrateFromStaticCache();
+    // Only fire the real load immediately if we already know the actual
+    // auth state (e.g. returning to this tab after auto-login already
+    // resolved earlier in the session). Calling _loadData() here while
+    // AuthService is still mid auto-login would see a `null` userId
+    // that isn't really "logged out" — just "not resolved yet" — and
+    // that false reading used to get recorded as the loaded state,
+    // making the real login moments later look like a user switch and
+    // re-flash the skeleton. AuthService.initialize() always calls
+    // notifyListeners() once it settles (see its `finally` block),
+    // whether that resolves to a real user or a genuine logged-out
+    // state, so _onAuthChanged below is guaranteed to fire and load for
+    // us in that case.
+    if (AuthService().isInitialized) {
+      _loadData();
+    }
     _connectActivitySocket();
   }
 
@@ -218,9 +273,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     final newUserId = AuthService().userId;
 
-    // Only reload if the logged-in user actually changed (covers both
-    // "logged out" -> null and "different user logged in" -> new id).
-    if (newUserId != _loadedForUserId) {
+    // Reload when either: this is the first time we're learning the
+    // real auth state (the deferred initState() call above resolving),
+    // or the logged-in user actually changed (covers both "logged out"
+    // -> null and "different user logged in" -> new id).
+    if (!_hasLoadedOnce || newUserId != _loadedForUserId) {
       debugPrint(
         '🔄 HomeScreen: auth changed ($_loadedForUserId → $newUserId), reloading',
       );
@@ -355,6 +412,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasLoadedOnce = true;
       _loadedForUserId = loggedInUserId;
       _unreadNotifications = unreadNotifications;
+
+      // Mirror the freshly-settled state into the static cache so the
+      // *next* HomeScreen State (created when navigating back to this
+      // tab) can hydrate instantly instead of starting from the
+      // skeleton again. This also naturally clears the cache on
+      // logout, since a logout drives loggedInUserId/activities/etc
+      // back to null/empty here too.
+      _cacheHasLoadedOnce = true;
+      _cachedUserId = loggedInUserId;
+      _cachedUser = _currentUser;
+      _cachedActivities = List<Activity>.from(_activities);
+      _cachedLikedTargetKeys = Set<String>.from(_likedTargetKeys);
+      _cachedHasMoreActivities = _hasMoreActivities;
+      _cachedNextActivitiesCursor = _nextActivitiesCursor;
+      _cachedUnreadNotifications = _unreadNotifications;
     });
   }
 
