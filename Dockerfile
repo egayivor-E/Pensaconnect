@@ -48,4 +48,10 @@ COPY . .
 EXPOSE 8000
 
 # Run the application.
-CMD gunicorn '.venv.Lib.site-packages.werkzeug.wsgi' --bind=0.0.0.0:8000
+# NOTE: We run run.py directly (not gunicorn) because Flask-SocketIO's
+# gevent async_mode needs gevent.monkey.patch_all() to run before any
+# other import, and it starts its own gevent WSGI server via
+# socketio.run() which correctly handles WebSocket upgrades on top of
+# HTTP on a single port. Gunicorn's default sync worker cannot upgrade
+# WebSocket connections, which is what caused the handshake to fail.
+CMD ["python", "run.py"]
