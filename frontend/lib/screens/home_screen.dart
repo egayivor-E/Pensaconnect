@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
@@ -54,6 +55,17 @@ class _HomeScreenState extends State<HomeScreen> {
       NotificationRepository();
   int _unreadNotifications = 0;
 
+  // ✅ Pagination for the activity feed. `_hasMoreActivities` and
+  // `_nextCursor` come straight from the server's `meta` block on each
+  // page (see ActivityRepository.fetchRecentActivities) — the feed
+  // trusts the backend's answer rather than guessing "probably more"
+  // off a page being full. `_loadingMoreActivities` is separate from
+  // `_loading` on purpose: appending an older page shouldn't blank the
+  // whole feed back to the skeleton state the way a fresh load does.
+  bool _hasMoreActivities = false;
+  int? _nextActivitiesCursor;
+  bool _loadingMoreActivities = false;
+
   // ✅ Search + quick actions now scroll away with the rest of the feed
   // instead of staying pinned. This controller/flag pair replaces that
   // pinned header with a small floating search button that fades in at
@@ -72,6 +84,15 @@ class _HomeScreenState extends State<HomeScreen> {
     if (shouldShow != _showMiniSearch) {
       setState(() => _showMiniSearch = shouldShow);
     }
+
+    // Fire the next page a bit before the actual end (400px) so the
+    // "load more" round trip has a head start and ideally finishes
+    // before the user physically reaches the bottom, rather than
+    // making them stare at a spinner they scrolled straight into.
+    final nearBottom =
+        _scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 400;
+    if (nearBottom) _loadMoreActivities();
   }
 
   Future<void> _revealSearch() async {
@@ -231,6 +252,8 @@ class _HomeScreenState extends State<HomeScreen> {
     User? user;
     List<Activity> activities = [];
     bool activitiesFailed = false;
+    bool hasMoreActivities = false;
+    int? nextActivitiesCursor;
     // Rebuilt fresh from each load's `hasLiked` flags below rather than
     // merged into the old set — the server is the source of truth for
     // like state, so a refresh should fully replace it, not just add to it.
@@ -262,7 +285,7 @@ class _HomeScreenState extends State<HomeScreen> {
             }),
         ActivityRepository()
             .fetchRecentActivities(limit: 20)
-            .then<Object?>((a) => a)
+            .then<Object?>((page) => page)
             .catchError((e) {
               debugPrint('❌ HomeScreen: failed to load activities: $e');
               return null;
@@ -280,15 +303,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
       user = results[0] as User?;
 
-      final fetched = results[1] as List<Activity>?;
-      if (fetched != null) {
+      final fetchedPage = results[1] as ActivityFeedPage?;
+      if (fetchedPage != null) {
         // De-duplicate by id so a rebuild/refresh that re-triggers this
         // never piles duplicate rows into the feed.
         final unique = <int, Activity>{};
-        for (final a in fetched) {
+        for (final a in fetchedPage.activities) {
           unique[a.id] = a;
         }
         activities = unique.values.toList();
+        hasMoreActivities = fetchedPage.hasMore;
+        nextActivitiesCursor = fetchedPage.nextCursor;
         // ✅ Hydrate liked state from the server's per-activity `hasLiked`
         // flag, keyed the same way _targetKey() does, so a fresh app
         // launch (or any refresh) shows previously-liked/prayed items as
@@ -322,6 +347,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _likedTargetKeys
             ..clear()
             ..addAll(likedTargetKeys);
+          _hasMoreActivities = hasMoreActivities;
+          _nextActivitiesCursor = nextActivitiesCursor;
         }
       }
       _loading = false;
@@ -329,6 +356,48 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadedForUserId = loggedInUserId;
       _unreadNotifications = unreadNotifications;
     });
+  }
+
+  // Appends the next-older page of activity to the bottom of the feed.
+  // Guarded by _loadingMoreActivities (avoid firing twice while one is
+  // already in flight — _onScroll can call this repeatedly as the user
+  // keeps scrolling) and by _hasMoreActivities (stop asking once the
+  // server has said there's nothing older left).
+  Future<void> _loadMoreActivities() async {
+    if (!mounted) return;
+    if (_loading || _loadingMoreActivities) return;
+    if (!_hasMoreActivities || _nextActivitiesCursor == null) return;
+
+    setState(() => _loadingMoreActivities = true);
+
+    try {
+      final page = await ActivityRepository().fetchRecentActivities(
+        limit: 20,
+        beforeId: _nextActivitiesCursor,
+      );
+      if (!mounted) return;
+      setState(() {
+        // Same de-duplication reasoning as the initial load: a
+        // concurrent live-push (_handleIncomingActivity) could in
+        // theory already have inserted one of these rows.
+        final unique = <int, Activity>{for (final a in _activities) a.id: a};
+        for (final a in page.activities) {
+          unique[a.id] = a;
+        }
+        _activities = unique.values.toList()
+          ..sort((a, b) => b.id.compareTo(a.id));
+        _hasMoreActivities = page.hasMore;
+        _nextActivitiesCursor = page.nextCursor;
+      });
+    } catch (e) {
+      debugPrint('❌ HomeScreen: failed to load more activities: $e');
+      // Deliberately don't flip _hasMoreActivities to false here — a
+      // network blip loading more shouldn't permanently cut the user
+      // off from older content. The next scroll-triggered attempt (or
+      // a pull-to-refresh) will just retry from the same cursor.
+    } finally {
+      if (mounted) setState(() => _loadingMoreActivities = false);
+    }
   }
 
   // ✅ Opens a standing connection just to receive "new_activity" broadcasts
@@ -1552,8 +1621,41 @@ class _HomeScreenState extends State<HomeScreen> {
       return SliverToBoxAdapter(child: _buildEmptyFeedState(context, theme));
     }
 
+    // One extra trailing slot for the "load more" footer — a spinner
+    // while a page is in flight, or a quiet "you're all caught up" once
+    // the server's said there's nothing older left. Skipped entirely
+    // while a search/filter is active (filteredActivities is a client-
+    // side filter of the already-loaded feed, not a new server page, so
+    // "load more" doesn't apply to it).
+    final showFooter = _searchQuery.isEmpty;
+    final itemCount = filteredActivities.length + (showFooter ? 1 : 0);
+
     return SliverList(
       delegate: SliverChildBuilderDelegate((context, index) {
+        if (index >= filteredActivities.length) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: _loadingMoreActivities
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : (_hasMoreActivities
+                        ? const SizedBox.shrink()
+                        : Text(
+                            "You're all caught up",
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.5,
+                              ),
+                            ),
+                          )),
+            ),
+          );
+        }
+
         final activity = filteredActivities[index];
         final isLast = index == filteredActivities.length - 1;
         return Padding(
@@ -1566,7 +1668,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         );
-      }, childCount: filteredActivities.length),
+      }, childCount: itemCount),
     );
   }
 }
@@ -1978,6 +2080,19 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
   static const double _minFrameHeight = 220;
   static const double _maxFrameHeight = 360;
 
+  // A raw 9:16 phone video (aspectRatio ≈ 0.56) rendered at its exact
+  // native ratio inside the frame above comes out as a narrow centered
+  // column with a lot of empty space either side — technically "not
+  // cropped", but reads as tiny. Clamping the *displayed* ratio to a
+  // wider floor (closer to the 4:5 that Instagram/TikTok use for
+  // portrait feed cards) trades a small, even top/bottom crop for a
+  // noticeably bigger, more filled-in looking video — the same
+  // trade-off every reels-style feed makes. Landscape/near-square clips
+  // are already wider than this floor, so they're completely unaffected
+  // and still render with zero cropping.
+  static const double _minDisplayAspectRatio = 0.78;
+  static const double _maxDisplayAspectRatio = 1.91;
+
   @override
   Widget build(BuildContext context) {
     if (_failed) {
@@ -2014,44 +2129,93 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                if (_initialized && _controller != null)
-                  // Center + AspectRatio (rather than sizing the whole
-                  // frame to the video's own ratio) is what actually
-                  // compresses things: it lets the video sit centered and
-                  // "contained" inside the fixed-height black frame — full
-                  // width for a landscape clip, a neat centered column for
-                  // a tall portrait one — so nothing is ever cropped and
-                  // no single reel can blow the frame out bigger than its
-                  // neighbors.
-                  Center(
-                    child: AspectRatio(
-                      aspectRatio: _controller!.value.aspectRatio,
-                      child: AnimatedBuilder(
-                        animation: _controller!,
-                        builder: (context, child) => Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            VideoPlayer(_controller!),
-                            // Reflects the controller's *actual* play
-                            // state — which can change from
-                            // autoplay-on-scroll (not just the manual
-                            // tap-to-toggle), so this has to listen to the
-                            // controller itself rather than rely on local
-                            // setState calls.
-                            if (!_controller!.value.isPlaying)
-                              const Center(
-                                child: Icon(
-                                  Icons.play_arrow_rounded,
-                                  color: Colors.white,
-                                  size: 56,
-                                ),
-                              ),
-                          ],
+                if (_initialized && _controller != null) ...[
+                  // Backdrop: the same video, blown up to cover the
+                  // *entire* frame and heavily blurred, sitting behind
+                  // the real (sharp) video. This is what actually makes
+                  // the margins left over from the clamp above feel
+                  // designed rather than empty — the same trick
+                  // Facebook/Instagram/Spotify use for media that
+                  // doesn't match its container's shape: instead of flat
+                  // black bars, the "bars" are a soft, on-brand blur of
+                  // the clip itself. A dark scrim on top keeps the sharp
+                  // foreground video readable against it.
+                  Positioned.fill(
+                    child: ClipRect(
+                      child: ImageFiltered(
+                        imageFilter: ui.ImageFilter.blur(
+                          sigmaX: 24,
+                          sigmaY: 24,
+                          tileMode: TileMode.decal,
+                        ),
+                        child: FittedBox(
+                          fit: BoxFit.cover,
+                          child: SizedBox(
+                            width: _controller!.value.size.width,
+                            height: _controller!.value.size.height,
+                            child: VideoPlayer(_controller!),
+                          ),
                         ),
                       ),
                     ),
-                  )
-                else
+                  ),
+                  const Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(color: Colors.black38),
+                    ),
+                  ),
+                  // Foreground: Center + AspectRatio sizes the box as big
+                  // as possible inside the fixed-height frame — but using
+                  // a *clamped* ratio (not the video's raw one) is what
+                  // actually enlarges a narrow portrait clip: it gives
+                  // the box more width to grow into. FittedBox(fit:
+                  // cover) then fills that (possibly wider-than-native)
+                  // box with the real video, cropping evenly top/bottom
+                  // only for the narrow case — a landscape clip's ratio
+                  // is already within the clamp range, so its box matches
+                  // the video exactly and cover crops nothing at all.
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: _controller!.value.aspectRatio.clamp(
+                        _minDisplayAspectRatio,
+                        _maxDisplayAspectRatio,
+                      ),
+                      child: ClipRect(
+                        child: FittedBox(
+                          fit: BoxFit.cover,
+                          child: SizedBox(
+                            width: _controller!.value.size.width,
+                            height: _controller!.value.size.height,
+                            child: AnimatedBuilder(
+                              animation: _controller!,
+                              builder: (context, child) => Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  VideoPlayer(_controller!),
+                                  // Reflects the controller's *actual*
+                                  // play state — which can change from
+                                  // autoplay-on-scroll (not just the
+                                  // manual tap-to-toggle), so this has to
+                                  // listen to the controller itself
+                                  // rather than rely on local setState
+                                  // calls.
+                                  if (!_controller!.value.isPlaying)
+                                    const Center(
+                                      child: Icon(
+                                        Icons.play_arrow_rounded,
+                                        color: Colors.white,
+                                        size: 56,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ] else
                   const Center(
                     child: SizedBox(
                       width: 26,

@@ -1,4 +1,4 @@
-from flask import Blueprint
+from flask import Blueprint, request
 from sqlalchemy import func
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.models import (
@@ -12,6 +12,12 @@ from backend.models import (
 )
 from backend.extensions import db
 from .utils import success_response
+
+# Hard ceiling on page size regardless of what a client asks for — a
+# `?limit=5000` from a misbehaving/compromised client shouldn't be able
+# to force one query to pull the whole activity table.
+_MAX_PAGE_SIZE = 50
+_DEFAULT_PAGE_SIZE = 20
 
 activities_bp = Blueprint("activities", __name__, url_prefix="/activities")
 
@@ -159,17 +165,48 @@ def _build_target_counts(activities):
 @activities_bp.route("/recent", methods=["GET"])
 @jwt_required()
 def get_recent_activities():
-    # ✅ joinedload(Activity.user): to_dict(include_user=True) reads
-    # activity.user.*, so without this every row on the home feed did
-    # its own lazy SELECT on users — 20 extra queries on the single
-    # most-frequently-hit endpoint in the app.
+    # ✅ Real pagination. This used to be a flat `.limit(20)` — the
+    # frontend already sent a `limit` query param, but it was silently
+    # ignored, and there was no way to ask for anything *older* than the
+    # newest 20 rows at all, so scrolling to the bottom of the home feed
+    # could never load more.
+    #
+    # Cursor-based (before_id) rather than offset-based on purpose: this
+    # feed gets new rows pushed into it live (see the socket broadcast in
+    # utils.py), and offset pagination silently skips/duplicates rows
+    # once the underlying set has shifted under it mid-scroll. A cursor
+    # keyed off the last row's own id doesn't have that problem — it
+    # just asks for "everything older than this specific row".
+    try:
+        limit = int(request.args.get("limit", _DEFAULT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        limit = _DEFAULT_PAGE_SIZE
+    limit = max(1, min(limit, _MAX_PAGE_SIZE))
+
+    before_id = request.args.get("before_id", type=int)
+
+    query = Activity.query.options(db.joinedload(Activity.user)).filter_by(
+        is_active=True
+    )
+    if before_id is not None:
+        query = query.filter(Activity.id < before_id)
+
+    # Tie-broken by id (not just created_at) so rows sharing a timestamp
+    # — bulk-seeded data, or several activities in the same second —
+    # still come back in a single, stable order across pages instead of
+    # being able to land on either side of a page boundary differently
+    # each request.
     activities = (
-        Activity.query.options(db.joinedload(Activity.user))
-        .filter_by(is_active=True)
-        .order_by(Activity.created_at.desc())
-        .limit(20)
+        query.order_by(Activity.created_at.desc(), Activity.id.desc())
+        # Fetch one extra row purely to answer "is there more after
+        # this page?" without a second COUNT query — sliced back off
+        # before returning.
+        .limit(limit + 1)
         .all()
     )
+
+    has_more = len(activities) > limit
+    activities = activities[:limit]
 
     current_user_id = get_jwt_identity()
     liked_target_keys = _build_liked_target_keys(activities, current_user_id)
@@ -183,5 +220,9 @@ def get_recent_activities():
                 target_counts=target_counts,
             )
             for a in activities
-        ]
+        ],
+        meta={
+            "has_more": has_more,
+            "next_cursor": activities[-1].id if activities else None,
+        },
     )
