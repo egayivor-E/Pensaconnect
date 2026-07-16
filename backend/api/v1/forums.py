@@ -355,7 +355,14 @@ def create_thread():
     # already-successful thread creation.
     try:
         activity = Activity(
-            title=f"{current_user.get_full_name()} started a new discussion",
+            # Deliberately doesn't embed the author's name (unlike an
+            # earlier version of this string) — the feed card already
+            # renders `user.fullName`/`username` as its own bold header
+            # right above this title, so a name baked in here showed up
+            # twice on screen (e.g. "John Doe" / "John Doe started a new
+            # discussion"). Matches the plain-action style already used
+            # by prayers.py's Activity titles.
+            title="Started a new discussion",
             subtitle=(thread.description or thread.title)[:140],
             icon="forum",
             color="orange",
@@ -673,7 +680,7 @@ def create_post():
             media_meta["image_url"] = first_image.to_dict()["url"]
 
         activity = Activity(
-            title=f"{current_user.get_full_name()} shared a new post",
+            title="Shared a new post",
             subtitle=(post.content or post.title)[:140],
             icon="forum",
             color="blue",
@@ -718,7 +725,7 @@ def create_post():
     db.session.commit()
 
     activity = Activity(
-        title=f"{current_user.get_full_name()} shared a new post",
+        title="Shared a new post",
         subtitle=(post.content or post.title)[:140],
         icon="forum",
         color="blue",

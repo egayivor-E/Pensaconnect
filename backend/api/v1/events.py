@@ -172,7 +172,10 @@ def create_event():
         # turn an already-successful event creation into an error response.
         try:
             activity = Activity(
-                title=f"{current_user.get_full_name()} created a new event",
+                # See forums.py's Activity titles for why this doesn't
+                # embed the author's name — the feed card already shows
+                # it as its own header, so it was rendering twice.
+                title="Created a new event",
                 subtitle=(event.description or event.title)[:140],
                 icon="event",
                 color="blue",
