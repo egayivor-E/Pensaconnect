@@ -219,20 +219,46 @@ class _HomeScreenState extends State<HomeScreen> {
     // ran with real credentials.
     final token = await ApiService.getToken();
 
-    if (token != null && loggedInUserId != null) {
-      // Profile and activity feed are fetched independently so a
-      // failure in one doesn't take down the other — e.g. a slow/broken
-      // profile endpoint shouldn't blank out an otherwise-working feed.
-      try {
-        user = await UserRepository().getCurrentUser(token);
-      } catch (e) {
-        debugPrint('⚠️ HomeScreen: failed to load profile: $e');
-      }
+    int unreadNotifications = 0;
 
-      try {
-        final fetched = await ActivityRepository().fetchRecentActivities(
-          limit: 20,
-        );
+    if (token != null && loggedInUserId != null) {
+      // Profile, activity feed, and unread count are three independent
+      // endpoints, but were previously awaited one after another —
+      // making every load AND every pull-to-refresh take the sum of all
+      // three round trips instead of the slowest one. Firing them with
+      // Future.wait runs them concurrently while still isolating each
+      // one's failure (a slow/broken profile endpoint still shouldn't
+      // blank out an otherwise-working feed).
+      final results = await Future.wait([
+        UserRepository()
+            .getCurrentUser(token)
+            .then<Object?>((u) => u)
+            .catchError((e) {
+              debugPrint('⚠️ HomeScreen: failed to load profile: $e');
+              return null;
+            }),
+        ActivityRepository()
+            .fetchRecentActivities(limit: 20)
+            .then<Object?>((a) => a)
+            .catchError((e) {
+              debugPrint('❌ HomeScreen: failed to load activities: $e');
+              return null;
+            }),
+        _notificationRepository
+            .fetchUnreadCount()
+            .then<Object?>((c) => c)
+            .catchError((e) {
+              debugPrint(
+                '⚠️ HomeScreen: failed to load unread notification count: $e',
+              );
+              return null;
+            }),
+      ]);
+
+      user = results[0] as User?;
+
+      final fetched = results[1] as List<Activity>?;
+      if (fetched != null) {
         // De-duplicate by id so a rebuild/refresh that re-triggers this
         // never piles duplicate rows into the feed.
         final unique = <int, Activity>{};
@@ -249,23 +275,13 @@ class _HomeScreenState extends State<HomeScreen> {
             likedTargetKeys.add(_targetKey(a));
           }
         }
-      } catch (e) {
-        debugPrint('❌ HomeScreen: failed to load activities: $e');
+      } else {
         activitiesFailed = true;
       }
+
+      unreadNotifications = results[2] as int? ?? 0;
     } else {
       debugPrint('⚠️ HomeScreen: no valid session, skipping activity fetch');
-    }
-
-    int unreadNotifications = 0;
-    if (token != null && loggedInUserId != null) {
-      try {
-        unreadNotifications = await _notificationRepository.fetchUnreadCount();
-      } catch (e) {
-        debugPrint(
-          '⚠️ HomeScreen: failed to load unread notification count: $e',
-        );
-      }
     }
 
     if (!mounted) return;

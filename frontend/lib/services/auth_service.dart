@@ -275,6 +275,22 @@ class AuthService extends ChangeNotifier {
   Future<void> refreshUser({int retries = 5}) async {
     developer.log("🔄 Refreshing user data...", name: "AuthService");
 
+    // Nothing to refresh for a logged-out device: retrying auth/me here
+    // just burns ~3s of exponential-backoff delay (300+600+900+1200ms)
+    // plus 5 doomed network round trips on every cold start, since a
+    // missing token can never become valid by waiting. Bail out fast so
+    // guests reach the app immediately.
+    final token = await getToken();
+    if (token == null || token.isEmpty) {
+      developer.log(
+        "ℹ️ No stored token — skipping refresh retries (guest session)",
+        name: "AuthService",
+      );
+      _isInitialized = true;
+      notifyListeners();
+      return;
+    }
+
     for (int i = 0; i < retries; i++) {
       await _loadCurrentUser();
 

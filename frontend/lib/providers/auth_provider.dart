@@ -154,6 +154,20 @@ class AuthProvider with ChangeNotifier {
   Future<void> fetchProfile() async {
     if (_token == null) return;
 
+    // ✅ Avoid a second /auth/me round trip: main.dart already calls
+    // AuthService.refreshUser() before AuthProvider.tryAutoLogin() runs,
+    // so on a normal cold start AuthService.currentUser is already
+    // populated with the exact same profile this method would otherwise
+    // fetch again over the network. Reuse it when present; only hit the
+    // API if AuthService genuinely has nothing cached (e.g. this is
+    // called standalone, outside the main.dart boot sequence).
+    final cached = AuthService().currentUser;
+    if (cached != null) {
+      _currentUser = UserModel.fromJson(cached);
+      notifyListeners();
+      return;
+    }
+
     try {
       final response = await ApiService.get("auth/me");
       if (response.statusCode == 200) {

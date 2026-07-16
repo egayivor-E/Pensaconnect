@@ -128,6 +128,18 @@ class SocketIoService {
       return;
     }
 
+    // ✅ Guest device (no stored token): there is no user to wait for, so
+    // don't enter the retry loop below. Each iteration sleeps
+    // 500ms*(i+1) between attempts regardless of why the previous one
+    // failed, so a guest previously paid up to ~5s of pure delay here on
+    // every cold start (300..1500ms) — on top of whatever refreshUser()
+    // itself had already spent. Skip straight to "no user" instead.
+    final guestToken = await AuthService().getToken();
+    if (guestToken == null || guestToken.isEmpty) {
+      debugPrint('ℹ️ No stored token — skipping socket user-load retries (guest session)');
+      return;
+    }
+
     for (int i = 0; i < retries; i++) {
       try {
         final authService = AuthService();
