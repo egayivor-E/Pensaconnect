@@ -9,13 +9,16 @@ logger = logging.getLogger(__name__)
 
 # Blueprint registered under /api/v1/testimonies
 testimonies_bp = Blueprint("testimonies", __name__, url_prefix="/testimonies")
-testimonies_bp.strict_slashes = False  # accept with or without trailing slash
+# Note: a bare `blueprint.strict_slashes = False` attribute is a no-op in
+# Flask — it must be passed to each @route(...) call instead (see the
+# "/" routes below), otherwise a caller that omits the trailing slash
+# gets a 308 redirect that breaks CORS preflights. See notifications.py.
 
 
 # ---------------------------
 # Create a new testimony
 # ---------------------------
-@testimonies_bp.route("/", methods=["POST"])
+@testimonies_bp.route("/", methods=["POST"], strict_slashes=False)
 @jwt_required()
 def create_testimony():
     data = request.get_json()
@@ -67,7 +70,7 @@ def create_testimony():
 # ---------------------------
 # Get all testimonies
 # ---------------------------
-@testimonies_bp.route("/", methods=["GET"])
+@testimonies_bp.route("/", methods=["GET"], strict_slashes=False)
 def get_testimonies():
     # ✅ Was an unbounded `.all()` with no eager loading: this refetched
     # *every* testimony ever posted on every load (only getting slower

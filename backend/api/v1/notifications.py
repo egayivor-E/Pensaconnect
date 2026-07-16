@@ -11,18 +11,23 @@ def get_notification_model():
 
 
 notifications_bp = Blueprint("notifications", __name__, url_prefix="/notifications")
-# ✅ FIX: without this, GET /notifications (no trailing slash — what the
-# frontend actually calls, see ApiService.get('notifications', ...)) hit
-# a route registered as "/", so Flask 308-redirected it to "/notifications/".
-# That redirect is harmless for a plain GET, but a CORS *preflight*
-# (OPTIONS) response is not allowed to be a redirect — browsers reject it
-# outright — so the real GET never went out and Flutter web saw
-# "ClientException: Failed to fetch". Same pattern already used by
-# testimonies_bp and timeline_posts_bp.
-notifications_bp.strict_slashes = False
+# ✅ REAL FIX: `notifications_bp.strict_slashes = False` (the previous
+# attempt) is a no-op — Flask's Blueprint.add_url_rule() never reads a
+# bare `strict_slashes` attribute off the blueprint instance, it only
+# honors `strict_slashes` passed directly to the route/add_url_rule call.
+# So GET/OPTIONS /api/v1/notifications (no trailing slash — what the
+# frontend actually calls, see ApiService.get('notifications', ...)) kept
+# hitting the route registered as "/" and Flask 308-redirected it to
+# "/notifications/". That redirect is harmless for a plain GET, but a
+# CORS *preflight* (OPTIONS) response is not allowed to be a redirect —
+# browsers reject it outright — so the real GET never went out and
+# Flutter web saw "ClientException: Failed to fetch".
+#
+# Passing strict_slashes=False here makes Flask register the rule so it
+# matches *with or without* the trailing slash, no redirect either way.
 
 
-@notifications_bp.route("/", methods=["GET"])
+@notifications_bp.route("/", methods=["GET"], strict_slashes=False)
 @jwt_required()
 def list_notifications():
     Notification = get_notification_model()

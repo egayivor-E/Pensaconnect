@@ -15,13 +15,16 @@ logger = logging.getLogger(__name__)
 
 # Blueprint registered under /api/v1/timeline-posts
 timeline_posts_bp = Blueprint("timeline_posts", __name__, url_prefix="/timeline-posts")
-timeline_posts_bp.strict_slashes = False
+# Note: a bare `blueprint.strict_slashes = False` attribute is a no-op in
+# Flask — it must be passed to each @route(...) call instead, otherwise a
+# caller that omits the trailing slash gets a 308 redirect that breaks
+# CORS preflights. See notifications.py.
 
 
 # ---------------------------
 # Create a new timeline post
 # ---------------------------
-@timeline_posts_bp.route("/", methods=["POST"])
+@timeline_posts_bp.route("/", methods=["POST"], strict_slashes=False)
 @jwt_required()
 def create_timeline_post():
     data = request.get_json()

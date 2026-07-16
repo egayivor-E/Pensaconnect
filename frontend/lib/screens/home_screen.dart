@@ -44,6 +44,12 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Activity> _activities = [];
   bool _loading = true;
   bool _activitiesFailed = false;
+  // Tracks whether we've ever successfully painted real content for the
+  // current user. Used so a *reload* (pull-to-refresh, auth-state ping,
+  // socket reconnect) doesn't blank the whole feed back to the skeleton
+  // and force the user to stare at placeholders again for the round trip
+  // — only the very first load (or a genuine user switch) should do that.
+  bool _hasLoadedOnce = false;
   final NotificationRepository _notificationRepository =
       NotificationRepository();
   int _unreadNotifications = 0;
@@ -207,12 +213,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadData() async {
     if (!mounted) return;
+    final loggedInUserId = AuthService().userId;
+    // A genuine user switch (login/logout/different account) means the
+    // data on screen belongs to someone else and must not linger — that
+    // case still gets the full skeleton treatment. A same-user reload
+    // (pull-to-refresh, the auth-ping in didChangeDependencies, a socket
+    // reconnect) should just refresh quietly with the old content still
+    // visible, instead of flashing back to placeholders and making every
+    // reload feel like a slow first load.
+    final isUserSwitch = loggedInUserId != _loadedForUserId;
+    final showSkeleton = !_hasLoadedOnce || isUserSwitch;
     setState(() {
-      _loading = true;
+      if (showSkeleton) _loading = true;
       _activitiesFailed = false;
     });
 
-    final loggedInUserId = AuthService().userId;
     User? user;
     List<Activity> activities = [];
     bool activitiesFailed = false;
@@ -294,17 +309,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
     setState(() {
-      _currentUser = user;
-      _activities = activities;
-      _activitiesFailed = activitiesFailed;
+      if (activitiesFailed && !showSkeleton) {
+        // A background refresh (pull-to-refresh, auth ping, socket
+        // reconnect) failed — leave whatever's already on screen alone
+        // instead of replacing a working feed with an empty/error state.
+        // The next successful refresh will replace it normally.
+      } else {
+        _currentUser = user;
+        _activities = activities;
+        _activitiesFailed = activitiesFailed;
+        if (!activitiesFailed) {
+          _likedTargetKeys
+            ..clear()
+            ..addAll(likedTargetKeys);
+        }
+      }
       _loading = false;
+      _hasLoadedOnce = true;
       _loadedForUserId = loggedInUserId;
       _unreadNotifications = unreadNotifications;
-      if (!activitiesFailed) {
-        _likedTargetKeys
-          ..clear()
-          ..addAll(likedTargetKeys);
-      }
     });
   }
 
@@ -1965,97 +1988,106 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
     return VisibilityDetector(
       key: Key('reel-${widget.activityId}'),
       onVisibilityChanged: _onVisibilityChanged,
-      child: AspectRatio(
-        aspectRatio: 16 / 10,
-        child: GestureDetector(
-          onTap: _togglePlayPause,
-          child: Container(
-            color: Colors.black,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (_initialized && _controller != null)
-                  AnimatedBuilder(
-                    animation: _controller!,
-                    builder: (context, child) => Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        FittedBox(
-                          fit: BoxFit.cover,
-                          // FittedBox doesn't clip its child by default —
-                          // without this, a video whose native aspect
-                          // ratio doesn't match the fixed 16:10 reel box
-                          // gets scaled up by `cover` but NOT cropped,
-                          // so it visually spills out over the caption
-                          // above and the like/comment bar below instead
-                          // of staying confined to the reel.
-                          clipBehavior: Clip.hardEdge,
-                          child: SizedBox(
-                            width: _controller!.value.size.width,
-                            height: _controller!.value.size.height,
-                            child: VideoPlayer(_controller!),
-                          ),
-                        ),
-                        // Reflects the controller's *actual* play state —
-                        // which can change from autoplay-on-scroll (not
-                        // just the manual tap-to-toggle), so this has to
-                        // listen to the controller itself rather than
-                        // rely on local setState calls.
-                        if (!_controller!.value.isPlaying)
-                          const Center(
-                            child: Icon(
-                              Icons.play_arrow_rounded,
-                              color: Colors.white,
-                              size: 56,
+      // Uses the video's real aspect ratio once known — same "never
+      // cropped" treatment as the image thumbnail above and the
+      // full-screen media viewer — instead of force-fitting every video
+      // into a fixed 16:10 box. A portrait phone video (very common)
+      // forced into a wide 16:10 box via BoxFit.cover was being zoomed
+      // and cropped hard enough to hide most of the frame, which is what
+      // read as the video being "covered up"/badly fitted. Falls back to
+      // a placeholder ratio only for the brief moment before the
+      // controller reports real dimensions.
+      //
+      // AnimatedSize smooths the one-time jump from the 16:9 placeholder
+      // to the real ratio once the video initializes, instead of the
+      // card instantly snapping to a new height (which read as content
+      // jumping/overlapping the neighboring card for a frame).
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignment: Alignment.topCenter,
+        child: AspectRatio(
+          aspectRatio: (_initialized && _controller != null)
+              ? _controller!.value.aspectRatio
+              : 16 / 9,
+          child: GestureDetector(
+            onTap: _togglePlayPause,
+            child: Container(
+              color: Colors.black,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (_initialized && _controller != null)
+                    AnimatedBuilder(
+                      animation: _controller!,
+                      builder: (context, child) => Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // AspectRatio above already matches the video's
+                          // own dimensions exactly, so VideoPlayer can fill
+                          // it directly — no FittedBox/cover crop needed.
+                          VideoPlayer(_controller!),
+                          // Reflects the controller's *actual* play state —
+                          // which can change from autoplay-on-scroll (not
+                          // just the manual tap-to-toggle), so this has to
+                          // listen to the controller itself rather than
+                          // rely on local setState calls.
+                          if (!_controller!.value.isPlaying)
+                            const Center(
+                              child: Icon(
+                                Icons.play_arrow_rounded,
+                                color: Colors.white,
+                                size: 56,
+                              ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
+                    )
+                  else
+                    const Center(
+                      child: SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white70,
+                        ),
+                      ),
                     ),
-                  )
-                else
-                  const Center(
-                    child: SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white70,
+                  Positioned(
+                    right: 10,
+                    bottom: 10,
+                    child: GestureDetector(
+                      onTap: _toggleMute,
+                      child: CircleAvatar(
+                        backgroundColor: Colors.black45,
+                        radius: 16,
+                        child: Icon(
+                          _muted ? Icons.volume_off : Icons.volume_up,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                       ),
                     ),
                   ),
-                Positioned(
-                  right: 10,
-                  bottom: 10,
-                  child: GestureDetector(
-                    onTap: _toggleMute,
-                    child: CircleAvatar(
-                      backgroundColor: Colors.black45,
-                      radius: 16,
-                      child: Icon(
-                        _muted ? Icons.volume_off : Icons.volume_up,
-                        color: Colors.white,
-                        size: 18,
+                  Positioned(
+                    right: 10,
+                    top: 10,
+                    child: GestureDetector(
+                      onTap: widget.onExpand,
+                      child: const CircleAvatar(
+                        backgroundColor: Colors.black45,
+                        radius: 16,
+                        child: Icon(
+                          Icons.fullscreen_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Positioned(
-                  right: 10,
-                  top: 10,
-                  child: GestureDetector(
-                    onTap: widget.onExpand,
-                    child: const CircleAvatar(
-                      backgroundColor: Colors.black45,
-                      radius: 16,
-                      child: Icon(
-                        Icons.fullscreen_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

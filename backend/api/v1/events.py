@@ -1,9 +1,9 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 # Import the new EventReminder model
-from backend.models import Event, EventAttendee, EventReminder, EventType, User, Activity, Notification
+from backend.models import Event, EventAttendee, EventReminder, EventType, User, Notification
 from backend.extensions import db
-from .utils import success_response, error_response, broadcast_new_activity
+from .utils import success_response, error_response
 # Reuse the notification-type helper already established by the forum
 # reply-notification feature instead of duplicating it here.
 from .forums import get_or_create_notification_type, roles_required
@@ -167,31 +167,10 @@ def create_event():
 
         current_user = User.query.get(user_id)
 
-        # Activity feed logging — same pattern as posts.py/testimonies.py/forums.py.
-        # Runs in its own try/except and commit so a logging failure can't
-        # turn an already-successful event creation into an error response.
-        try:
-            activity = Activity(
-                # See forums.py's Activity titles for why this doesn't
-                # embed the author's name — the feed card already shows
-                # it as its own header, so it was rendering twice.
-                title="Created a new event",
-                subtitle=(event.description or event.title)[:140],
-                icon="event",
-                color="blue",
-                user_id=user_id,
-                target_type="event",
-                target_id=event.id,
-            )
-            db.session.add(activity)
-            db.session.commit()
-            broadcast_new_activity(activity)
-        except Exception:
-            logger.exception("Failed to log activity for event %s", event.id)
-            db.session.rollback()
-
-        # Notify users — same isolated best-effort pattern as the
-        # activity log above.
+        # Intentionally NOT logging an Activity feed entry here — a new
+        # event should surface to users via their notification bell
+        # (notify_new_event below), not as a card in the Home screen's
+        # Recent Activity feed.
         notify_new_event(event, current_user)
 
         return success_response(event.to_dict(), "Event created", 201)
