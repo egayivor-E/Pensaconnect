@@ -93,6 +93,14 @@ class _HomeScreenState extends State<HomeScreen> {
   io.Socket? _activitySocket;
   Timer? _activitySocketReconnectTimer;
   int _activitySocketRetries = 0;
+  // ✅ Guards against _connectActivitySocket() being called again while a
+  // previous call is still mid-flight (see that method's doc comment for
+  // why this happens routinely: initState() calls it immediately, then
+  // _onAuthChanged() calls it again moments later once auto-login
+  // resolves). Each call captures the generation at entry and checks it
+  // again after its async gaps; a call that's no longer current bails out
+  // instead of tearing down a socket a *newer* call already owns.
+  int _activitySocketConnectGeneration = 0;
 
   // --- Feed engagement ---
   // ✅ Keyed by the underlying (targetType, targetId) the activity points
@@ -303,12 +311,28 @@ class _HomeScreenState extends State<HomeScreen> {
   // ✅ Opens a standing connection just to receive "new_activity" broadcasts
   // (see backend/api/v1/utils.py's broadcast_new_activity) so activity
   // created elsewhere shows up here live, without pulling to refresh.
-  // Safe to call more than once — no-ops if already connected.
+  //
+  // Called from both initState() (immediately, before auth may have
+  // resolved) and _onAuthChanged() (again, moments later, once
+  // auto-login actually completes) — so two calls landing within
+  // milliseconds of each other is the normal case here, not an edge
+  // case. Without the generation guard below, the second call's
+  // "tear down the old socket" step could fire while the first call's
+  // socket was still mid-handshake, producing "WebSocket is closed
+  // before the connection is established" in the console. The guard
+  // makes only the most recent call actually own `_activitySocket`;
+  // any call that's been superseded by a newer one quietly bails out
+  // after its `await` instead of racing it.
   Future<void> _connectActivitySocket() async {
     if (!Config.enableLiveChat) return;
 
+    final myGeneration = ++_activitySocketConnectGeneration;
+
     final token = await ApiService.getToken();
     if (token == null) return; // no session yet — _onAuthChanged will retry
+    if (myGeneration != _activitySocketConnectGeneration) {
+      return; // a newer call started while we were awaiting the token
+    }
 
     _activitySocket?.offAny();
     _activitySocket?.disconnect();
@@ -328,6 +352,10 @@ class _HomeScreenState extends State<HomeScreen> {
         .disableReconnection()
         .disableAutoConnect()
         .build();
+
+    if (myGeneration != _activitySocketConnectGeneration) {
+      return; // superseded again while building options — don't connect
+    }
 
     final socket = io.io(Config.websocketUrl, options);
     _activitySocket = socket;

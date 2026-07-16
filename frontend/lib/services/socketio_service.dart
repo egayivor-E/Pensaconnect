@@ -136,7 +136,9 @@ class SocketIoService {
     // itself had already spent. Skip straight to "no user" instead.
     final guestToken = await AuthService().getToken();
     if (guestToken == null || guestToken.isEmpty) {
-      debugPrint('ℹ️ No stored token — skipping socket user-load retries (guest session)');
+      debugPrint(
+        'ℹ️ No stored token — skipping socket user-load retries (guest session)',
+      );
       return;
     }
 
@@ -159,7 +161,9 @@ class SocketIoService {
         }
 
         // ✅ Try to load from storage
-        debugPrint('🔄 Attempting to load user data (attempt ${i + 1}/$retries)...');
+        debugPrint(
+          '🔄 Attempting to load user data (attempt ${i + 1}/$retries)...',
+        );
         await authService.refreshUser();
 
         if (authService.currentUser != null) {
@@ -294,10 +298,14 @@ class SocketIoService {
       // ✅ CRITICAL: Ensure user data is loaded (and not stale) before connecting
       await _loadUserData();
 
-      debugPrint('👤 Socket: User ID=${_cachedUserId}, Username=${_cachedUser?['username']}');
+      debugPrint(
+        '👤 Socket: User ID=${_cachedUserId}, Username=${_cachedUser?['username']}',
+      );
 
       if (_cachedUserId == null || _cachedUserId == 0) {
-        debugPrint('⚠️ WARNING: No valid user ID found! Socket may not work properly.');
+        debugPrint(
+          '⚠️ WARNING: No valid user ID found! Socket may not work properly.',
+        );
         debugPrint('🔄 Attempting one more time to load user...');
         await _loadUserData(retries: 5);
 
@@ -319,10 +327,20 @@ class SocketIoService {
                 : {},
           )
           .setQuery({'token': token})
-          .enableReconnection()
-          .setReconnectionAttempts(10)
-          .setReconnectionDelay(1000)
-          .setReconnectionDelayMax(5000)
+          // ✅ FIX: was .enableReconnection() + setReconnectionAttempts/
+          // Delay/DelayMax. Socket.IO's built-in reconnection re-uses the
+          // token captured in `options` above forever — it has no way to
+          // ask the app for a fresh one — so once the access token
+          // expires (typically ~1hr), every automatic reconnect attempt
+          // fails server-side with "Signature has expired" and just
+          // keeps retrying with the same dead token indefinitely.
+          // _handleDisconnection()/_scheduleReconnection() below already
+          // implement app-level reconnection that calls _connectToGroup()
+          // again, which re-reads AuthService().getToken() fresh on every
+          // attempt — so disabling the built-in mechanism here doesn't
+          // lose reconnection, it just stops a second, token-blind
+          // reconnection loop from racing it with stale credentials.
+          .disableReconnection()
           .setTimeout(30000)
           .disableAutoConnect()
           .build();
@@ -412,8 +430,9 @@ class SocketIoService {
             return;
           }
 
-          final isHistorical = messageData['historical'] == true ||
-                               messageData['is_historical'] == true;
+          final isHistorical =
+              messageData['historical'] == true ||
+              messageData['is_historical'] == true;
 
           if (isHistorical) {
             debugPrint('📜 Historical message received - skipping');
@@ -424,10 +443,11 @@ class SocketIoService {
 
           if (message.senderId == 0) {
             debugPrint('⚠️ Message parsed with senderId=0!');
-            final altSenderId = messageData['userId'] ??
-                                messageData['user_id'] ??
-                                messageData['senderId'] ??
-                                messageData['sender_id'];
+            final altSenderId =
+                messageData['userId'] ??
+                messageData['user_id'] ??
+                messageData['senderId'] ??
+                messageData['sender_id'];
             if (altSenderId != null) {
               debugPrint('🔄 Found alternative sender ID: $altSenderId');
             }
@@ -445,7 +465,6 @@ class SocketIoService {
           }
 
           _handleIncomingMessage(groupId, message);
-
         } catch (e, stackTrace) {
           debugPrint('❌ Failed to parse message: $e');
           debugPrint('❌ Stack trace: $stackTrace');
@@ -602,7 +621,9 @@ class SocketIoService {
       }
 
       if (_messageIds[groupId]?.contains(message.id) == true) {
-        debugPrint('🔄 Duplicate message ${message.id} already exists, skipping');
+        debugPrint(
+          '🔄 Duplicate message ${message.id} already exists, skipping',
+        );
         return;
       }
 
@@ -613,7 +634,8 @@ class SocketIoService {
       }
 
       final currentMessages = _messageCache[groupId] ?? [];
-      final updatedMessages = List<GroupMessage>.from(currentMessages)..add(message);
+      final updatedMessages = List<GroupMessage>.from(currentMessages)
+        ..add(message);
       updatedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
       _messageCache[groupId] = updatedMessages;
@@ -804,7 +826,9 @@ class SocketIoService {
       });
 
     socket.emit('send_message', enhancedMessage);
-    debugPrint('📤 Sent message to group $groupId: ${enhancedMessage['content']}');
+    debugPrint(
+      '📤 Sent message to group $groupId: ${enhancedMessage['content']}',
+    );
   }
 
   void sendTyping(int groupId, bool isTyping) {
@@ -843,7 +867,9 @@ class SocketIoService {
       'timestamp': DateTime.now().toIso8601String(),
     });
 
-    debugPrint('💬 Sent typing event [$event] for user $userId in group $groupId');
+    debugPrint(
+      '💬 Sent typing event [$event] for user $userId in group $groupId',
+    );
   }
 
   void markRead(int groupId, int messageId) {

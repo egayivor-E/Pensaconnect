@@ -11,6 +11,15 @@ def get_notification_model():
 
 
 notifications_bp = Blueprint("notifications", __name__, url_prefix="/notifications")
+# ✅ FIX: without this, GET /notifications (no trailing slash — what the
+# frontend actually calls, see ApiService.get('notifications', ...)) hit
+# a route registered as "/", so Flask 308-redirected it to "/notifications/".
+# That redirect is harmless for a plain GET, but a CORS *preflight*
+# (OPTIONS) response is not allowed to be a redirect — browsers reject it
+# outright — so the real GET never went out and Flutter web saw
+# "ClientException: Failed to fetch". Same pattern already used by
+# testimonies_bp and timeline_posts_bp.
+notifications_bp.strict_slashes = False
 
 
 @notifications_bp.route("/", methods=["GET"])
