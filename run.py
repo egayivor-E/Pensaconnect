@@ -1,3 +1,15 @@
+# ✅ MUST be the very first thing that runs, before any other imports.
+# Flask-SocketIO is configured with async_mode='gevent' (see backend/__init__.py),
+# which requires gevent's cooperative greenlets to be patched into the standard
+# library (socket, ssl, threading, etc.) before anything else — including the
+# DB driver, requests, or Flask itself — gets a reference to the un-patched
+# versions. Without this, gevent's WSGI server can't yield during blocking I/O,
+# so one slow request (e.g. a DB query or an open websocket) blocks every other
+# connection on the same worker, which is what caused requests like
+# GET /socket.io/... to hang for 100+ seconds and then fail with status 000.
+from gevent import monkey
+monkey.patch_all()
+
 import os
 import sys
 from pathlib import Path
