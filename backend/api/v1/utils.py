@@ -17,25 +17,20 @@ def success_response(data=None, message="Success", status_code=200, meta=None):
     return jsonify(payload), status_code
 
 def error_response(message="Error", status_code=400, errors=None):
-    """
-    `message` MUST be a plain string — it lands in the Flutter app's
-    ApiException.message, which is strictly typed as `String`. Several
-    call sites pass a ValidationResult's `.errors` dict (e.g.
-    {"special": "Password must contain at least one special character"})
-    — if that ever reaches here as `message` on its own, flatten it to a
-    readable string as a safety net. Callers that already have a
-    structured per-field errors dict should pass it via `errors=`
-    instead, so `message` stays a clean summary and the structured
-    detail still reaches clients that want it.
-    """
+    # `message` must reach the client as a plain string — Flutter's
+    # ApiException.message is strictly typed `String`, so a dict/list
+    # landing there crashes the app instead of showing the error. If a
+    # caller passes a validation-errors dict/list as `message` (instead
+    # of via `errors=`), flatten it here as a safety net rather than
+    # letting that crash happen again.
     if isinstance(message, dict):
-        errors = errors or message
+        errors = errors if errors is not None else message
         message = "; ".join(str(v) for v in message.values()) or "Validation failed"
     elif isinstance(message, (list, tuple)):
         message = "; ".join(str(v) for v in message) or "Validation failed"
 
     payload = {"status": "error", "message": message}
-    if errors:
+    if errors is not None:
         payload["errors"] = errors
     return jsonify(payload), status_code
 
