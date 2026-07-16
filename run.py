@@ -193,8 +193,19 @@ def setup_database():
             print("✅ Admin role exists")
         
         # 2. Create admin user
-        admin_email = 'gayivore@gmail.com'
-        admin_username = 'admin'
+        # ✅ FIXED: no more hardcoded email/password baked into source
+        # control. Both are read from the environment now; if
+        # ADMIN_PASSWORD isn't set, a random one-time password is
+        # generated and printed to the deploy log ONCE at creation time
+        # (never re-printed or persisted anywhere) instead of every
+        # instance of this app shipping with the same known credentials.
+        admin_email = os.getenv('ADMIN_EMAIL', 'admin@pensaconnect.local')
+        admin_username = os.getenv('ADMIN_USERNAME', 'admin')
+        admin_password = os.getenv('ADMIN_PASSWORD')
+        generated_password = admin_password is None
+        if generated_password:
+            import secrets
+            admin_password = secrets.token_urlsafe(12)
         
         # Check if a user with the target username OR email already exists.
         admin = User.query.filter(
@@ -214,7 +225,7 @@ def setup_database():
                 email_verified=True,
                 status='active'
             )
-            admin.set_password('JesusSave123!')
+            admin.set_password(admin_password)
             
             # Add admin role to user
             admin.roles.append(admin_role)
@@ -222,7 +233,12 @@ def setup_database():
             db.session.add(admin)
             db.session.commit()
             print(f"✅ Admin user created: {admin_email}")
-            print("   Password: JesusSave123!")
+            if generated_password:
+                print(f"   🔑 Generated one-time password: {admin_password}")
+                print("   ⚠️  Save this now — it will not be shown again.")
+                print("   💡 Set ADMIN_PASSWORD in your env to control it yourself instead.")
+            else:
+                print("   Password: (set via ADMIN_PASSWORD env var)")
         else:
             # User exists, ensure they have the admin role
             if admin_role not in admin.roles:
