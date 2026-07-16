@@ -42,8 +42,8 @@ def create_timeline_post():
 
     # ✅ Log to the community activity feed, same pattern as testimonies:
     # every timeline post also shows up in the global "Recent" feed via
-    # an Activity row. meta_data.image_url lets the feed render the
-    # post's image the same way it does for other activity types.
+    # an Activity row. meta_data.image_url/video_url lets the feed render
+    # the post's media the same way it does for other activity types.
     try:
         activity = Activity(
             title="Shared a new post",
@@ -54,7 +54,15 @@ def create_timeline_post():
             target_type="timeline_post",
             target_id=post.id,
             meta_data={
-                "image_url": post.image_url,
+                # ✅ FIX: was always "image_url", so a video posted from
+                # the timeline/profile got stuffed into the field the
+                # frontend's Activity.imageUrl reads — home rendered it
+                # with Image.network() (broken image) instead of
+                # Activity.hasVideo's video-player treatment, which only
+                # looks at meta_data.video_url (see Activity.to_dict in
+                # models.py and forums.py's media_meta for the working
+                # version of this same pattern).
+                ("video_url" if post.is_video else "image_url"): post.image_url,
                 "is_video": post.is_video,
             } if post.image_url else {},
         )
