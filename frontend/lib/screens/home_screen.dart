@@ -23,6 +23,7 @@ import '../repositories/testimony_repository.dart';
 import '../repositories/forum_repository.dart';
 import '../repositories/prayer_repository.dart';
 import '../repositories/timeline_post_repository.dart';
+import '../repositories/notification_repository.dart';
 import '../models/activity.dart';
 import '../models/user.dart';
 import '../utils/activity_target.dart';
@@ -43,6 +44,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Activity> _activities = [];
   bool _loading = true;
   bool _activitiesFailed = false;
+  final NotificationRepository _notificationRepository =
+      NotificationRepository();
+  int _unreadNotifications = 0;
 
   // ✅ Search + quick actions now scroll away with the rest of the feed
   // instead of staying pinned. This controller/flag pair replaces that
@@ -253,6 +257,17 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint('⚠️ HomeScreen: no valid session, skipping activity fetch');
     }
 
+    int unreadNotifications = 0;
+    if (token != null && loggedInUserId != null) {
+      try {
+        unreadNotifications = await _notificationRepository.fetchUnreadCount();
+      } catch (e) {
+        debugPrint(
+          '⚠️ HomeScreen: failed to load unread notification count: $e',
+        );
+      }
+    }
+
     if (!mounted) return;
     setState(() {
       _currentUser = user;
@@ -260,6 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _activitiesFailed = activitiesFailed;
       _loading = false;
       _loadedForUserId = loggedInUserId;
+      _unreadNotifications = unreadNotifications;
       if (!activitiesFailed) {
         _likedTargetKeys
           ..clear()
@@ -405,10 +421,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return UserAvatar(
-      profilePicture: _currentUser!.profilePicture,
-      size: 38,
-    );
+    return UserAvatar(profilePicture: _currentUser!.profilePicture, size: 38);
   }
 
   Widget _buildSearchField(ThemeData theme) {
@@ -948,9 +961,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CachedNetworkImage(
                       imageUrl: _resolveAvatarUrl(activity.imageUrl)!,
                       fit: BoxFit.contain,
-                      memCacheWidth: (MediaQuery.sizeOf(context).width *
-                              MediaQuery.devicePixelRatioOf(context))
-                          .round(),
+                      memCacheWidth:
+                          (MediaQuery.sizeOf(context).width *
+                                  MediaQuery.devicePixelRatioOf(context))
+                              .round(),
                       memCacheHeight:
                           (420 * MediaQuery.devicePixelRatioOf(context))
                               .round(),
@@ -1141,6 +1155,52 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildNotificationBell(ThemeData theme) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.notifications_none_rounded),
+          onPressed: () async {
+            await context.push('/notifications');
+            // The badge may be stale after visiting the screen (some
+            // notifications likely got marked read there), so refresh it
+            // rather than waiting for the next full pull-to-refresh.
+            if (mounted) {
+              final count = await _notificationRepository.fetchUnreadCount();
+              if (mounted) setState(() => _unreadNotifications = count);
+            }
+          },
+          tooltip: 'Notifications',
+        ),
+        if (_unreadNotifications > 0)
+          Positioned(
+            right: 6,
+            top: 6,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.error,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _unreadNotifications > 99 ? '99+' : '$_unreadNotifications',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: theme.colorScheme.onError,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1168,11 +1228,7 @@ class _HomeScreenState extends State<HomeScreen> {
         centerTitle: false,
         elevation: 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_none_rounded),
-            onPressed: () {},
-            tooltip: 'Notifications',
-          ),
+          _buildNotificationBell(theme),
           Padding(
             padding: const EdgeInsets.only(right: 12, left: 4),
             child: GestureDetector(
@@ -1217,13 +1273,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                           ),
                                     ),
                                   ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.notifications_none_rounded,
-                                    ),
-                                    onPressed: () {},
-                                    tooltip: 'Notifications',
-                                  ),
+                                  _buildNotificationBell(theme),
                                   GestureDetector(
                                     onTap: () => context.go('/profile'),
                                     child: _buildProfileAvatar(theme),

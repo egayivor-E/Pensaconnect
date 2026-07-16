@@ -340,9 +340,10 @@ class _EventsScreenState extends State<EventsScreen> {
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,
-                          memCacheWidth: (MediaQuery.sizeOf(context).width *
-                                  MediaQuery.devicePixelRatioOf(context))
-                              .round(),
+                          memCacheWidth:
+                              (MediaQuery.sizeOf(context).width *
+                                      MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
                           memCacheHeight:
                               (height * MediaQuery.devicePixelRatioOf(context))
                                   .round(),
@@ -398,7 +399,10 @@ class _EventsScreenState extends State<EventsScreen> {
     );
   }
 
-  void _showAddEditEventDialog(BuildContext context, [EventModel? event]) {
+  void _showAddEditEventDialog(
+    BuildContext context, [
+    EventModel? event,
+  ]) async {
     final titleController = TextEditingController(text: event?.title ?? '');
     final descriptionController = TextEditingController(
       text: event?.description ?? '',
@@ -410,100 +414,228 @@ class _EventsScreenState extends State<EventsScreen> {
     DateTime endTime =
         event?.endTime ?? DateTime.now().add(const Duration(hours: 1));
 
-    Future<void> pickTime({required bool isStart}) async {
-      final initialTime = TimeOfDay.fromDateTime(isStart ? startTime : endTime);
-      final picked = await showTimePicker(
-        context: context,
-        initialTime: initialTime,
-      );
-      if (picked != null) {
-        final date = DateTime(
-          DateTime.now().year,
-          DateTime.now().month,
-          DateTime.now().day,
-          picked.hour,
-          picked.minute,
-        );
-        // NOTE: In a real app, you would use a StateFulBuilder or Stateful Dialog
-        // to update the displayed time here, but we rely on the final refresh.
-      }
-    }
+    List<Map<String, dynamic>> eventTypes = [];
+    int? selectedEventTypeId = event?.eventTypeId;
+    bool loadingTypes = true;
+    String? submitError;
+    bool submitting = false;
+
+    if (!context.mounted) return;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(event == null ? 'Add Event' : 'Edit Event'),
-        content: SingleChildScrollView(
-          child: Column(
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: 'Title'),
-              ),
-              TextField(
-                controller: descriptionController,
-                decoration: const InputDecoration(labelText: 'Description'),
-              ),
-              TextField(
-                controller: locationController,
-                decoration: const InputDecoration(labelText: 'Location'),
-              ),
-              const SizedBox(height: 8),
-              Row(
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          if (loadingTypes) {
+            // Kick off the fetch once; guard re-entry since builder can
+            // rerun on every setDialogState call.
+            loadingTypes = false;
+            _repository.fetchEventTypes().then((types) {
+              setDialogState(() {
+                eventTypes = types;
+                selectedEventTypeId ??= types.isNotEmpty
+                    ? types.first['id'] as int?
+                    : null;
+              });
+            });
+          }
+
+          Future<void> pickDateTime({required bool isStart}) async {
+            final current = isStart ? startTime : endTime;
+            final pickedDate = await showDatePicker(
+              context: dialogContext,
+              initialDate: current,
+              firstDate: DateTime.now().subtract(const Duration(days: 365)),
+              lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+            );
+            if (pickedDate == null) return;
+            if (!dialogContext.mounted) return;
+
+            final pickedTime = await showTimePicker(
+              context: dialogContext,
+              initialTime: TimeOfDay.fromDateTime(current),
+            );
+            if (pickedTime == null) return;
+
+            final combined = DateTime(
+              pickedDate.year,
+              pickedDate.month,
+              pickedDate.day,
+              pickedTime.hour,
+              pickedTime.minute,
+            );
+
+            setDialogState(() {
+              if (isStart) {
+                startTime = combined;
+                // Keep end time sane if it was pushed before the new start.
+                if (!endTime.isAfter(startTime)) {
+                  endTime = startTime.add(const Duration(hours: 1));
+                }
+              } else {
+                endTime = combined;
+              }
+            });
+          }
+
+          return AlertDialog(
+            title: Text(event == null ? 'Add Event' : 'Edit Event'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Start Time: '),
-                  TextButton(
-                    child: Text(DateFormat.jm().format(startTime)),
-                    onPressed: () => pickTime(isStart: true),
+                  TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(labelText: 'Title'),
                   ),
+                  TextField(
+                    controller: descriptionController,
+                    decoration: const InputDecoration(labelText: 'Description'),
+                  ),
+                  TextField(
+                    controller: locationController,
+                    decoration: const InputDecoration(labelText: 'Location'),
+                  ),
+                  const SizedBox(height: 12),
+                  loadingTypes ||
+                          eventTypes.isEmpty && selectedEventTypeId == null
+                      ? const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: LinearProgressIndicator(),
+                        )
+                      : DropdownButtonFormField<int>(
+                          value: selectedEventTypeId,
+                          decoration: const InputDecoration(
+                            labelText: 'Event Type',
+                          ),
+                          items: eventTypes
+                              .map(
+                                (t) => DropdownMenuItem<int>(
+                                  value: t['id'] as int,
+                                  child: Text(
+                                    (t['name'] as String)
+                                        .replaceAll('_', ' ')
+                                        .toUpperCase(),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) =>
+                              setDialogState(() => selectedEventTypeId = value),
+                        ),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Start'),
+                    subtitle: Text(
+                      DateFormat.yMMMd().add_jm().format(startTime),
+                    ),
+                    trailing: const Icon(Icons.edit_calendar_outlined),
+                    onTap: () => pickDateTime(isStart: true),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('End'),
+                    subtitle: Text(DateFormat.yMMMd().add_jm().format(endTime)),
+                    trailing: const Icon(Icons.edit_calendar_outlined),
+                    onTap: () => pickDateTime(isStart: false),
+                  ),
+                  if (submitError != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      submitError!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ],
                 ],
               ),
-              Row(
-                children: [
-                  const Text('End Time: '),
-                  TextButton(
-                    child: Text(DateFormat.jm().format(endTime)),
-                    onPressed: () => pickTime(isStart: false),
+            ),
+            actions: [
+              if (event != null)
+                TextButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          await _repository.deleteEvent(event.id);
+                          if (dialogContext.mounted)
+                            Navigator.pop(dialogContext);
+                          _fetchEventsFromBackend();
+                        },
+                  child: const Text(
+                    'Delete',
+                    style: TextStyle(color: Colors.red),
                   ),
-                ],
+                ),
+              TextButton(
+                onPressed: submitting
+                    ? null
+                    : () async {
+                        if (titleController.text.trim().isEmpty) {
+                          setDialogState(
+                            () => submitError = 'Title is required',
+                          );
+                          return;
+                        }
+                        if (selectedEventTypeId == null) {
+                          setDialogState(
+                            () => submitError = 'Please select an event type',
+                          );
+                          return;
+                        }
+                        if (!endTime.isAfter(startTime)) {
+                          setDialogState(
+                            () => submitError =
+                                'End time must be after start time',
+                          );
+                          return;
+                        }
+
+                        setDialogState(() {
+                          submitting = true;
+                          submitError = null;
+                        });
+
+                        final newEvent = EventModel(
+                          id:
+                              event?.id ??
+                              DateTime.now().millisecondsSinceEpoch.toString(),
+                          title: titleController.text.trim(),
+                          description: descriptionController.text.trim(),
+                          eventType: '',
+                          eventTypeId: selectedEventTypeId,
+                          startTime: startTime,
+                          endTime: endTime,
+                          location: locationController.text.trim(),
+                        );
+
+                        final ok = event == null
+                            ? await _repository.addEvent(newEvent)
+                            : await _repository.updateEvent(newEvent);
+
+                        if (!dialogContext.mounted) return;
+
+                        if (ok) {
+                          Navigator.pop(dialogContext);
+                          _fetchEventsFromBackend();
+                        } else {
+                          setDialogState(() {
+                            submitting = false;
+                            submitError =
+                                'Failed to save event. Please try again.';
+                          });
+                        }
+                      },
+                child: submitting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Save'),
               ),
             ],
-          ),
-        ),
-        actions: [
-          if (event != null)
-            TextButton(
-              onPressed: () async {
-                await _repository.deleteEvent(event.id);
-                Navigator.pop(context);
-                _fetchEventsFromBackend();
-              },
-              child: const Text('Delete', style: TextStyle(color: Colors.red)),
-            ),
-          TextButton(
-            onPressed: () async {
-              final newEvent = EventModel(
-                id:
-                    event?.id ??
-                    DateTime.now().millisecondsSinceEpoch.toString(),
-                title: titleController.text,
-                description: descriptionController.text,
-                eventType: '',
-                startTime: startTime,
-                endTime: endTime,
-                location: locationController.text,
-              );
-              if (event == null) {
-                await _repository.addEvent(newEvent);
-              } else {
-                await _repository.updateEvent(newEvent);
-              }
-              Navigator.pop(context);
-              _fetchEventsFromBackend();
-            },
-            child: const Text('Save'),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

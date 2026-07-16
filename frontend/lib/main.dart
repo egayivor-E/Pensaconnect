@@ -34,6 +34,7 @@ import 'screens/home_screen.dart';
 import 'screens/live_stream_screen.dart';
 import 'screens/test_connection_screen.dart';
 import 'screens/events_screen.dart';
+import 'screens/notifications_screen.dart';
 import 'screens/bible_study_screen.dart';
 import 'screens/thread_form_screen.dart';
 import 'screens/threads_screen.dart';
@@ -82,6 +83,7 @@ class Routes {
   static const anonymousChat = '/anonymous-chat';
   static const profile = '/profile';
   static const userProfile = '/profile/:userId';
+  static const notifications = '/notifications';
   static const settings = '/settings';
   static const changePassword = '/change-password';
   static const termsPrivacy = '/terms-privacy';
@@ -423,7 +425,19 @@ class MyApp extends StatelessWidget {
           path: Routes.test,
           builder: (_, __) => const TestConnectionScreen(),
         ),
-        GoRoute(path: Routes.events, builder: (_, __) => const EventsScreen()),
+        GoRoute(
+          path: Routes.events,
+          builder: (context, __) => EventsScreen(
+            isAdmin: context.watch<AuthProvider>().hasAnyRole(const [
+              'admin',
+              'moderator',
+            ]),
+          ),
+        ),
+        GoRoute(
+          path: Routes.notifications,
+          builder: (_, __) => const NotificationsScreen(),
+        ),
         GoRoute(
           path: Routes.bible,
           builder: (_, __) => const BibleStudyScreen(),

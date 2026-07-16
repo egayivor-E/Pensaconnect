@@ -1,14 +1,21 @@
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 # Import the new EventReminder model
-from backend.models import Event, EventAttendee, EventReminder, EventType, User, Activity
+from backend.models import Event, EventAttendee, EventReminder, EventType, User, Activity, Notification
 from backend.extensions import db
 from .utils import success_response, error_response, broadcast_new_activity
+# Reuse the notification-type helper already established by the forum
+# reply-notification feature instead of duplicating it here.
+from .forums import get_or_create_notification_type, roles_required
 from datetime import datetime, timezone 
 import json # Import json for JSON handling if needed
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Hard cap on how many users get a bulk notification row per event, so a
+# very large church doesn't turn "create event" into a slow, giant insert.
+MAX_EVENT_NOTIFICATION_RECIPIENTS = 3000
 
 # ✅ Use url_prefix without trailing slash
 events_bp = Blueprint("events", __name__, url_prefix="/events")
@@ -45,7 +52,73 @@ def resolve_event_type_id(data: dict) -> int:
     raise KeyError("event_type_id")
 
 
+def notify_new_event(event: "Event", creator: User):
+    """Broadcast a notification to active users when a new event is
+    created, so it surfaces in their notification bell. Best-effort and
+    isolated in its own try/except + commit — same reasoning as
+    notify_reply/broadcast_new_activity: a notification hiccup must
+    never turn an already-successful event creation into an error
+    response.
+
+    Uses a bulk INSERT (session.bulk_insert_mappings) rather than one
+    ORM object + commit per recipient, since this can fan out to
+    thousands of users and per-row commits would make event creation
+    unacceptably slow.
+    """
+    try:
+        from uuid import uuid4
+
+        nt = get_or_create_notification_type("new_event")
+
+        recipients = (
+            User.query
+            .filter(User.status == "active", User.id != creator.id)
+            .with_entities(User.id)
+            .limit(MAX_EVENT_NOTIFICATION_RECIPIENTS)
+            .all()
+        )
+        if not recipients:
+            return
+
+        now = datetime.now(timezone.utc)
+        title = "New event: " + event.title
+        message = f"{creator.get_full_name()} created a new event: {event.title}."
+
+        rows = [
+            {
+                "uuid": str(uuid4()),
+                "user_id": user_id,
+                "notification_type_id": nt.id,
+                "title": title,
+                "message": message,
+                "action_url": f"/events/{event.id}",
+                "action_label": "View event",
+                "source_id": event.id,
+                "is_read": False,
+                "is_delivered": False,
+                "priority": 1,
+                "notification_meta": {},
+                "created_at": now,
+                "updated_at": now,
+                "is_active": True,
+            }
+            for (user_id,) in recipients
+        ]
+        db.session.bulk_insert_mappings(Notification, rows)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to create event notifications for event {event.id}: {e}")
+
+
 # --- EXISTING EVENT ROUTES (Keep as-is) ---
+
+# ✅ GET /api/v1/events/types — populates the admin create-event dropdown
+@events_bp.route("/types", methods=["GET"])
+def list_event_types():
+    types = EventType.query.order_by(EventType.name.asc()).all()
+    return success_response([{"id": t.id, "name": t.name} for t in types])
+
 
 # ✅ GET /api/v1/events
 @events_bp.route("", methods=["GET"])
@@ -68,9 +141,10 @@ def get_event(event_id: int):
     return success_response(event.to_dict())
 
 
-# ✅ POST /api/v1/events
+# ✅ POST /api/v1/events — admin/moderator only, same gate the frontend's
+# Add Event FAB uses (EventsScreen.isAdmin), now enforced server-side too.
 @events_bp.route("", methods=["POST"])
-@jwt_required()
+@roles_required("admin", "moderator")
 def create_event():
     user_id = get_jwt_identity()
     data = request.get_json()
@@ -91,11 +165,12 @@ def create_event():
         db.session.add(event)
         db.session.commit()
 
+        current_user = User.query.get(user_id)
+
         # Activity feed logging — same pattern as posts.py/testimonies.py/forums.py.
         # Runs in its own try/except and commit so a logging failure can't
         # turn an already-successful event creation into an error response.
         try:
-            current_user = User.query.get(user_id)
             activity = Activity(
                 title=f"{current_user.get_full_name()} created a new event",
                 subtitle=(event.description or event.title)[:140],
@@ -112,6 +187,10 @@ def create_event():
             logger.exception("Failed to log activity for event %s", event.id)
             db.session.rollback()
 
+        # Notify users — same isolated best-effort pattern as the
+        # activity log above.
+        notify_new_event(event, current_user)
+
         return success_response(event.to_dict(), "Event created", 201)
     except KeyError as e:
         db.session.rollback()
@@ -120,9 +199,9 @@ def create_event():
         db.session.rollback()
         return error_response(f"Failed to create event: {str(e)}", 400)
 
-# ✅ PATCH /api/v1/events/<event_id>
+# ✅ PATCH /api/v1/events/<event_id> — admin/moderator only
 @events_bp.route("/<int:event_id>", methods=["PATCH"])
-@jwt_required()
+@roles_required("admin", "moderator")
 def update_event(event_id: int):
     event = Event.query.get_or_404(event_id)
     data = request.get_json()
@@ -151,9 +230,9 @@ def update_event(event_id: int):
         return error_response(f"Failed to update event: {str(e)}", 400)
 
 
-# ✅ DELETE /api/v1/events/<event_id>
+# ✅ DELETE /api/v1/events/<event_id> — admin/moderator only
 @events_bp.route("/<int:event_id>", methods=["DELETE"])
-@jwt_required()
+@roles_required("admin", "moderator")
 def delete_event(event_id: int):
     event = Event.query.get_or_404(event_id)
     try:

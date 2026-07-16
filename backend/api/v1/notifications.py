@@ -31,6 +31,15 @@ def list_notifications():
     return success_response([n.to_dict() for n in pagination.items])
 
 
+@notifications_bp.route("/unread-count", methods=["GET"])
+@jwt_required()
+def unread_count():
+    Notification = get_notification_model()
+    user_id = get_jwt_identity()
+    count = Notification.query.filter_by(user_id=user_id, is_read=False).count()
+    return success_response({"count": count})
+
+
 @notifications_bp.route("/<int:notification_id>/read", methods=["POST"])
 @jwt_required()
 def mark_as_read(notification_id: int):

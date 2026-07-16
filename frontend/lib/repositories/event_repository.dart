@@ -84,6 +84,22 @@ class EventRepository {
     }
   }
 
+  /// Fetch the list of available event types (id + name) for populating
+  /// the admin create/edit event dropdown.
+  Future<List<Map<String, dynamic>>> fetchEventTypes() async {
+    try {
+      final response = await ApiService.get('events/types', headers: {});
+      if (response.statusCode == 200) {
+        return _extractListData(response.body);
+      }
+      debugPrint("❌ Failed to fetch event types: ${response.statusCode}");
+      return [];
+    } catch (e) {
+      debugPrint("❌ Error fetching event types: $e");
+      return [];
+    }
+  }
+
   // ------------------------------------------------------------------
   // 🎯 FIXED METHODS
   // ------------------------------------------------------------------

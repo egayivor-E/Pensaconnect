@@ -1,8 +1,10 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import 'package:pensaconnect/models/bible_models.dart';
 import 'package:pensaconnect/repositories/bible_repository.dart';
+import 'package:pensaconnect/providers/auth_provider.dart';
 import 'package:pensaconnect/screens/bible_study_screen.dart'
     hide StudyPlanDifficulty;
 
@@ -84,8 +86,8 @@ class _CreateStudyPlanScreenState extends State<CreateStudyPlanScreen> {
       setState(() {
         _titleController.text = (draft['title'] ?? '').toString();
         _descriptionController.text = (draft['description'] ?? '').toString();
-        _dayCountController.text =
-            (draft['total_days'] ?? draftDays.length).toString();
+        _dayCountController.text = (draft['total_days'] ?? draftDays.length)
+            .toString();
         _versesList
           ..clear()
           ..addAll(draftVerses);
@@ -109,9 +111,9 @@ class _CreateStudyPlanScreenState extends State<CreateStudyPlanScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _isImportingDocument = false);
@@ -232,6 +234,14 @@ Read the assigned verses and reflect on how they apply to your daily life.
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    // The AI document-import feature hits POST /bible/ai/extract-study-plan
+    // on the backend, which is already gated to admin/moderator there —
+    // this mirrors that gate on the UI so non-admins don't see a button
+    // that would just 403 when pressed.
+    final isAdmin = context.watch<AuthProvider>().hasAnyRole(const [
+      'admin',
+      'moderator',
+    ]);
 
     return Scaffold(
       appBar: AppBar(
@@ -256,68 +266,76 @@ Read the assigned verses and reflect on how they apply to your daily life.
             key: _formKey,
             child: ListView(
               children: [
-                // AI Document Import
-                Card(
-                  elevation: 2,
-                  color: colorScheme.primaryContainer.withOpacity(0.35),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.auto_awesome, color: colorScheme.primary),
-                            const SizedBox(width: 8),
+                // AI Document Import — admin/moderator only
+                if (isAdmin) ...[
+                  Card(
+                    elevation: 2,
+                    color: colorScheme.primaryContainer.withOpacity(0.35),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.auto_awesome,
+                                color: colorScheme.primary,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Import from Document (AI)',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Upload a devotional guide (.docx, .pdf, .txt, .md) and '
+                            'the AI will draft the title, verses, and full day-by-day '
+                            'content below for you to review and edit.',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _isImportingDocument
+                                ? null
+                                : _pickAndImportDocument,
+                            icon: _isImportingDocument
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.upload_file),
+                            label: Text(
+                              _isImportingDocument
+                                  ? 'Drafting from document…'
+                                  : 'Upload document',
+                            ),
+                          ),
+                          if (_importedFileName != null &&
+                              !_isImportingDocument) ...[
+                            const SizedBox(height: 8),
                             Text(
-                              'Import from Document (AI)',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
+                              '✓ Drafted from "$_importedFileName" — ${_aiGeneratedDays?.length ?? 0} day(s). '
+                              'Edit any field below before saving.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.primary,
                               ),
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Upload a devotional guide (.docx, .pdf, .txt, .md) and '
-                          'the AI will draft the title, verses, and full day-by-day '
-                          'content below for you to review and edit.',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: _isImportingDocument
-                              ? null
-                              : _pickAndImportDocument,
-                          icon: _isImportingDocument
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Icon(Icons.upload_file),
-                          label: Text(
-                            _isImportingDocument
-                                ? 'Drafting from document…'
-                                : 'Upload document',
-                          ),
-                        ),
-                        if (_importedFileName != null && !_isImportingDocument) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            '✓ Drafted from "$_importedFileName" — ${_aiGeneratedDays?.length ?? 0} day(s). '
-                            'Edit any field below before saving.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colorScheme.primary,
-                            ),
-                          ),
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
 
-                const SizedBox(height: 16),
+                  const SizedBox(height: 16),
+                ],
 
                 // Title Field
                 Card(

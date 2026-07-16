@@ -6,6 +6,8 @@ class AppNotification {
   final String? type;
   final DateTime createdAt;
   final bool isRead;
+  final String? actionUrl;
+  final String? actionLabel;
 
   AppNotification({
     required this.id,
@@ -14,6 +16,8 @@ class AppNotification {
     this.type,
     required this.createdAt,
     this.isRead = false,
+    this.actionUrl,
+    this.actionLabel,
   });
 
   /// Convert JSON → AppNotification
@@ -28,6 +32,8 @@ class AppNotification {
           DateTime.now(),
       isRead:
           json['is_read'] == true || json['is_read'] == 1, // ✅ handle bool/int
+      actionUrl: json['action_url']?.toString(),
+      actionLabel: json['action_label']?.toString(),
     );
   }
 
@@ -40,6 +46,21 @@ class AppNotification {
       "type": type,
       "created_at": createdAt.toIso8601String(),
       "is_read": isRead,
+      "action_url": actionUrl,
+      "action_label": actionLabel,
     };
+  }
+
+  AppNotification copyWith({bool? isRead}) {
+    return AppNotification(
+      id: id,
+      title: title,
+      body: body,
+      type: type,
+      createdAt: createdAt,
+      isRead: isRead ?? this.isRead,
+      actionUrl: actionUrl,
+      actionLabel: actionLabel,
+    );
   }
 }

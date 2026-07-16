@@ -756,11 +756,35 @@ class Notification(BaseModel):
 
     # Relationships
     user = relationship('User', back_populates='notifications')
+    notification_type = relationship('NotificationType')
 
     __table_args__ = (
         Index('ix_notifications_user_read', 'user_id', 'is_read', 'created_at'),
         Index('ix_notifications_delivered_scheduled', 'is_delivered', 'scheduled_for'),
     )
+
+    def mark_as_read(self):
+        self.is_read = True
+        self.read_at = datetime.now(timezone.utc)
+
+    def to_dict(self, exclude: Optional[List[str]] = None) -> Dict[str, Any]:
+        # Custom (not the generic BaseModel column dump) because the
+        # frontend's AppNotification.fromJson() expects `body` (the
+        # model column is `message`) plus a human-readable `type` name
+        # instead of the raw notification_type_id FK.
+        return {
+            "id": self.id,
+            "title": self.title,
+            "body": self.message,
+            "type": self.notification_type.name if self.notification_type else None,
+            "is_read": self.is_read,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "read_at": self.read_at.isoformat() if self.read_at else None,
+            "action_url": self.action_url,
+            "action_label": self.action_label,
+            "source_id": self.source_id,
+            "priority": self.priority,
+        }
 
 
 # --- DonationNotification Model ---
