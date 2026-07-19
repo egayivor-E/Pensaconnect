@@ -39,8 +39,10 @@ class PrayerRepository extends ChangeNotifier {
       if (res.statusCode == 200) {
         final body = ApiService.parseBody(res);
         final List<dynamic> data = body['data'] ?? [];
-        final List<PrayerRequest> newRequests = PrayerRequest.listFromJson(data);
-        
+        final List<PrayerRequest> newRequests = PrayerRequest.listFromJson(
+          data,
+        );
+
         if (refresh) {
           _requests.clear();
         }
@@ -116,7 +118,9 @@ class PrayerRepository extends ChangeNotifier {
     // been opened this session), there's nothing local to update — the
     // server call above is still the source of truth, and the Prayer
     // Wall will pick up the real count next time it fetches.
-    debugPrint("✅ Prayer toggled for request $prayerId (status ${res.statusCode})");
+    debugPrint(
+      "✅ Prayer toggled for request $prayerId (status ${res.statusCode})",
+    );
   }
 
   Future<void> deleteRequest(int prayerId) async {
@@ -166,12 +170,15 @@ class PrayerRepository extends ChangeNotifier {
   /// 🔹 Count prayers for a specific user
   Future<int> countUserPrayers(int userId) async {
     try {
-      // If already fetched, use cache
-      if (_requests.isNotEmpty) {
-        return _requests.where((r) => r.userId == userId).length;
-      }
-
-      // Otherwise, fetch user-specific prayers
+      // ✅ FIX: this used to short-circuit to the local `_requests` cache
+      // whenever it was non-empty, filtering *that* by userId. But
+      // `_requests` is whatever feed (wall, my_prayers, answered...) was
+      // last fetched on this screen session — it isn't scoped to
+      // `userId` at all, so it silently returned wrong/partial counts
+      // for whichever profile happened to load after some other screen
+      // had already populated the cache. Now that GET /prayers actually
+      // honors user_id server-side, always hit that endpoint directly
+      // so the count is correct regardless of what's cached locally.
       final res = await ApiService.get(
         "prayers",
         queryParams: {"user_id": userId.toString()},

@@ -77,12 +77,22 @@ def get_testimonies():
     # as the community grows) and to_dict() lazy-loaded self.user once
     # per row on top of that. Cap it and eager-load the author in the
     # same query — same pattern used for the forum threads/posts lists.
-    testimonies = (
-        Testimony.query.options(db.joinedload(Testimony.user))
-        .order_by(Testimony.created_at.desc())
-        .limit(100)
-        .all()
-    )
+    query = Testimony.query.options(db.joinedload(Testimony.user))
+
+    # ✅ FIX: user_id was already being sent by the frontend (see
+    # testimony_repository.dart's countUserTestimonies), but this endpoint
+    # silently ignored it and always returned the latest 100 testimonies
+    # globally — so every profile screen showed the same global count
+    # instead of that specific user's testimony count. When filtering to
+    # one user's testimonies we also don't cap at 100, since this is used
+    # to get a user's *full* count, not a paginated feed.
+    user_id_filter = request.args.get("user_id", type=int)
+    if user_id_filter:
+        query = query.filter_by(user_id=user_id_filter)
+        testimonies = query.order_by(Testimony.created_at.desc()).all()
+    else:
+        testimonies = query.order_by(Testimony.created_at.desc()).limit(100).all()
+
     return jsonify([t.to_dict() for t in testimonies])
 
 

@@ -55,17 +55,24 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       throw Exception('User not found');
     }
 
-    // Fetched independently — if one endpoint fails (e.g. groups aren't
-    // shared with this viewer) the rest of the profile should still render.
-    final posts = await _postsRepo
-        .fetchUserPosts(widget.userId)
-        .catchError((_) => <TimelinePost>[]);
-    final prayersCount = await _prayerRepo
-        .countUserPrayers(widget.userId)
-        .catchError((_) => 0);
-    final testimoniesCount = await _testimonyRepo
-        .countUserTestimonies(widget.userId)
-        .catchError((_) => 0);
+    // ✅ FIX: these three calls are independent of each other (none needs
+    // another's result), but were previously `await`-ed one after another,
+    // so the screen waited for the *sum* of all three round-trips instead
+    // of just the slowest one. Future.wait runs them concurrently — each
+    // .catchError still applies per-call, so one endpoint failing (e.g.
+    // groups not shared with this viewer) still can't block the others
+    // from rendering.
+    final results = await Future.wait([
+      _postsRepo
+          .fetchUserPosts(widget.userId)
+          .catchError((_) => <TimelinePost>[]),
+      _prayerRepo.countUserPrayers(widget.userId).catchError((_) => 0),
+      _testimonyRepo.countUserTestimonies(widget.userId).catchError((_) => 0),
+    ]);
+
+    final posts = results[0] as List<TimelinePost>;
+    final prayersCount = results[1] as int;
+    final testimoniesCount = results[2] as int;
 
     // ✅ FIX: this used to call _groupRepo.getGroups(), but that hits
     // GET /group-chats/, which the backend scopes to the *logged-in*

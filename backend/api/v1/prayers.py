@@ -21,7 +21,14 @@ def handle_options(prayer_id=None):
 def list_prayers():
     try:
         page = int(request.args.get("page", 1))
-        per_page = int(request.args.get("per_page", 20))
+        # ✅ user_id is used for profile screens to fetch/count *all* of a
+        # specific user's prayers (not the paginated wall feed), so unless
+        # the caller explicitly asked for a page size, don't cap it at the
+        # wall-feed default of 20 — that silently truncated every count to
+        # 20 regardless of how many prayers the user actually had.
+        user_id_filter = request.args.get("user_id", type=int)
+        default_per_page = 1000 if user_id_filter else 20
+        per_page = int(request.args.get("per_page", default_per_page))
         filter_type = request.args.get("filter", "wall")
         current_user_id = get_jwt_identity()
 
@@ -33,6 +40,15 @@ def list_prayers():
             db.joinedload(PrayerRequest.status),
             db.joinedload(PrayerRequest.user),
         )
+
+        # ✅ FIX: user_id was previously accepted as a query param by the
+        # frontend (prayer_repository.dart's countUserPrayers) but silently
+        # ignored here — every profile ended up counting whatever was on
+        # the default wall feed instead of that user's actual prayers.
+        # Checked before filter_type so it works standalone (profile screens)
+        # and combined with filter=answered (e.g. a user's answered prayers).
+        if user_id_filter:
+            query = query.filter_by(user_id=user_id_filter)
 
         if filter_type == "answered":
             status_instance = PrayerStatus.query.filter_by(name="answered").first()
@@ -46,6 +62,8 @@ def list_prayers():
             query = query.filter_by(user_id=current_user_id).order_by(
                 PrayerRequest.created_at.desc()
             )
+        elif user_id_filter:
+            query = query.order_by(PrayerRequest.created_at.desc())
         else:  # wall
             query = query.order_by(PrayerRequest.created_at.desc())
 
