@@ -8,6 +8,16 @@ class User {
   final List<String> roles;
   final DateTime? createdAt;
 
+  // Number of active group chats *this* user belongs to — comes straight
+  // from User.to_dict() on the backend (backend/models.py), which computes
+  // it from the fetched user's own group_memberships, not the caller's.
+  // Use this instead of GroupChatRepository.getGroups() when showing
+  // someone else's profile: getGroups() always hits GET /group-chats/,
+  // which is scoped to the *logged-in* user via the JWT, so calling it on
+  // another person's profile silently displayed the viewer's own group
+  // count instead of theirs.
+  final int groupChatsCount;
+
   User({
     required this.id,
     required this.username,
@@ -15,6 +25,7 @@ class User {
     this.profilePicture,
     required this.roles,
     this.createdAt,
+    this.groupChatsCount = 0,
   });
 
   // ✅ Better approach - accept baseUrl as parameter
@@ -44,6 +55,7 @@ class User {
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'].toString())
           : null,
+      groupChatsCount: (json['group_chats_count'] as num?)?.toInt() ?? 0,
     );
   }
 

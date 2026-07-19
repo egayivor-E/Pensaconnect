@@ -49,42 +49,33 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<_UserProfileData> _load() async {
-    // All five calls only need widget.userId, not each other's results, so
-    // they run concurrently rather than the user profile blocking the
-    // start of the other four (which was still true even after the fix
-    // below, when only those four ran in parallel). If one of the
-    // non-critical four fails (e.g. groups aren't shared with this
-    // viewer), the rest of the profile should still render — but a failed
-    // user fetch is fatal to the whole screen, so it isn't given a
-    // catchError and is checked for null explicitly below instead.
-    final results = await Future.wait([
-      _userRepo.fetchUserProfile(widget.userId),
-      _postsRepo
-          .fetchUserPosts(widget.userId)
-          .then<Object?>((p) => p)
-          .catchError((_) => <TimelinePost>[]),
-      _prayerRepo
-          .countUserPrayers(widget.userId)
-          .then<Object?>((c) => c)
-          .catchError((_) => 0),
-      _testimonyRepo
-          .countUserTestimonies(widget.userId)
-          .then<Object?>((c) => c)
-          .catchError((_) => 0),
-      _groupRepo
-          .getGroups()
-          .then<Object?>((g) => g.length)
-          .catchError((_) => 0),
-    ]);
-
-    final user = results[0] as User?;
+    final user = await _userRepo.fetchUserProfile(widget.userId);
     if (user == null) {
       throw Exception('User not found');
     }
-    final posts = results[1] as List<TimelinePost>;
-    final prayersCount = results[2] as int;
-    final testimoniesCount = results[3] as int;
-    final groupsCount = results[4] as int;
+
+    // Fetched independently — if one endpoint fails (e.g. groups aren't
+    // shared with this viewer) the rest of the profile should still render.
+    final posts = await _postsRepo
+        .fetchUserPosts(widget.userId)
+        .catchError((_) => <TimelinePost>[]);
+    final prayersCount = await _prayerRepo
+        .countUserPrayers(widget.userId)
+        .catchError((_) => 0);
+    final testimoniesCount = await _testimonyRepo
+        .countUserTestimonies(widget.userId)
+        .catchError((_) => 0);
+
+    // ✅ FIX: this used to call _groupRepo.getGroups(), but that hits
+    // GET /group-chats/, which the backend scopes to the *logged-in*
+    // viewer's own memberships (see backend/api/v1/group_chats.py —
+    // it reads get_jwt_identity(), not widget.userId). So every profile
+    // you viewed showed *your own* group count instead of theirs.
+    // user.groupChatsCount comes from the same GET /users/:id call that
+    // fetched `user` above, and the backend computes it from that
+    // specific user's own group_memberships (see User.to_dict() in
+    // backend/models.py), so it's actually scoped correctly.
+    final groupsCount = user.groupChatsCount;
 
     return _UserProfileData(
       user: user,
@@ -264,18 +255,6 @@ class _UserProfileData {
   });
 }
 
-class _AvatarFallback extends StatelessWidget {
-  const _AvatarFallback();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: AppColors.emberGold.withOpacity(0.25),
-      child: const Icon(Icons.person, size: 44, color: Colors.white),
-    );
-  }
-}
-
 class _ProfileHeader extends StatelessWidget {
   final User user;
   const _ProfileHeader({required this.user});
@@ -283,8 +262,6 @@ class _ProfileHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatarUrl = UserRepository.getProfilePictureUrl(user.profilePicture);
-    final hasPicture =
-        user.profilePicture != null && user.profilePicture!.isNotEmpty;
 
     return Stack(
       fit: StackFit.expand,
@@ -331,19 +308,22 @@ class _ProfileHeader extends StatelessWidget {
                   ],
                 ),
                 child: ClipOval(
-                  child: hasPicture
-                      ? CachedNetworkImage(
-                          imageUrl: avatarUrl,
-                          fit: BoxFit.cover,
-                          memCacheWidth:
-                              (104 * MediaQuery.devicePixelRatioOf(context))
-                                  .round(),
-                          memCacheHeight:
-                              (104 * MediaQuery.devicePixelRatioOf(context))
-                                  .round(),
-                          errorWidget: (_, __, ___) => const _AvatarFallback(),
-                        )
-                      : const _AvatarFallback(),
+                  child: CachedNetworkImage(
+                    imageUrl: avatarUrl,
+                    fit: BoxFit.cover,
+                    memCacheWidth:
+                        (104 * MediaQuery.devicePixelRatioOf(context)).round(),
+                    memCacheHeight:
+                        (104 * MediaQuery.devicePixelRatioOf(context)).round(),
+                    errorWidget: (_, __, ___) => Container(
+                      color: AppColors.emberGold.withOpacity(0.25),
+                      child: const Icon(
+                        Icons.person,
+                        size: 44,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
