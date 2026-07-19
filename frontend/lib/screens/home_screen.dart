@@ -1,11 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -132,6 +137,98 @@ class _HomeScreenState extends State<HomeScreen> {
   static int? _cachedNextActivitiesCursor;
   static int _cachedUnreadNotifications = 0;
 
+  // ✅ Disk-backed twin of the static cache above. The static fields only
+  // survive tab-to-tab navigation *within* the same app process — a fresh
+  // process (cold start after force-quit, or the very first launch this
+  // session) has none of that, so it used to always show the skeleton for
+  // a full network round trip. Persisting the last successful load to
+  // SharedPreferences as JSON lets a brand-new process paint the previous
+  // session's feed almost immediately (a local disk read, not a network
+  // call) while a real refresh quietly runs behind it — same idea as
+  // Instagram showing your last-seen feed instantly on relaunch. Only one
+  // hydration attempt is ever made per process (guarded by the Future
+  // below), and _loadData() awaits it before deciding whether to show the
+  // skeleton, so the very first real load and the disk hydration can't
+  // race each other into showing/hiding the skeleton incorrectly.
+  static const String _diskCacheKey = 'cached_home_feed_v1';
+  static Future<void>? _diskHydrationFuture;
+
+  Future<void> _hydrateFromDiskCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_diskCacheKey);
+      if (raw == null) return;
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final activities = (data['activities'] as List<dynamic>? ?? const [])
+          .map((e) => Activity.fromJson(e as Map<String, dynamic>))
+          .toList();
+      final userJson = data['user'] as Map<String, dynamic>?;
+      final user = userJson == null ? null : User.fromJson(userJson);
+      final likedKeys = (data['likedTargetKeys'] as List<dynamic>? ?? const [])
+          .cast<String>()
+          .toSet();
+
+      // Mirror into the static (in-memory) cache too, so any other
+      // HomeScreen State created later this process (e.g. a second tab
+      // switch before the network refresh below has even finished) can
+      // hydrate from the fast in-memory path instead of hitting disk again.
+      _cacheHasLoadedOnce = true;
+      _cachedUserId = data['userId'] as int?;
+      _cachedUser = user;
+      _cachedActivities = activities;
+      _cachedLikedTargetKeys = likedKeys;
+      _cachedHasMoreActivities = data['hasMoreActivities'] as bool? ?? false;
+      _cachedNextActivitiesCursor = data['nextActivitiesCursor'] as int?;
+      _cachedUnreadNotifications = data['unreadNotifications'] as int? ?? 0;
+
+      if (!mounted || _hasLoadedOnce) return;
+      setState(() {
+        _currentUser = user;
+        _activities = activities;
+        _likedTargetKeys
+          ..clear()
+          ..addAll(likedKeys);
+        _hasMoreActivities = _cachedHasMoreActivities;
+        _nextActivitiesCursor = _cachedNextActivitiesCursor;
+        _unreadNotifications = _cachedUnreadNotifications;
+        _hasLoadedOnce = true;
+        _loadedForUserId = _cachedUserId;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('⚠️ HomeScreen: failed to read disk feed cache: $e');
+    }
+  }
+
+  Future<void> _persistToDiskCache({
+    required int? userId,
+    required User? user,
+    required List<Activity> activities,
+    required Set<String> likedTargetKeys,
+    required bool hasMoreActivities,
+    required int? nextActivitiesCursor,
+    required int unreadNotifications,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final payload = jsonEncode({
+        'userId': userId,
+        'user': user?.toJson(),
+        // Cap what's persisted to the first page — this cache only exists
+        // to paint the initial screen instantly, not to back full-feed
+        // pagination offline.
+        'activities': activities.take(20).map((a) => a.toJson()).toList(),
+        'likedTargetKeys': likedTargetKeys.toList(),
+        'hasMoreActivities': hasMoreActivities,
+        'nextActivitiesCursor': nextActivitiesCursor,
+        'unreadNotifications': unreadNotifications,
+      });
+      await prefs.setString(_diskCacheKey, payload);
+    } catch (e) {
+      debugPrint('⚠️ HomeScreen: failed to write disk feed cache: $e');
+    }
+  }
+
   // Restores whatever the previous instance of this screen last loaded
   // (see the static fields above), so switching tabs away and back
   // paints real content immediately instead of the skeleton. The
@@ -251,6 +348,13 @@ class _HomeScreenState extends State<HomeScreen> {
     AuthService().addListener(_authListener);
     _scrollController.addListener(_onScroll);
     _hydrateFromStaticCache();
+    // Nothing in the in-memory static cache (a genuinely cold process) —
+    // kick off the disk hydration read. Only ever started once per
+    // process; every later HomeScreen State (or a concurrent _loadData
+    // call) just awaits this same Future instead of re-reading disk.
+    if (!_hasLoadedOnce) {
+      _diskHydrationFuture ??= _hydrateFromDiskCache();
+    }
     // Only fire the real load immediately if we already know the actual
     // auth state (e.g. returning to this tab after auto-login already
     // resolved earlier in the session). Calling _loadData() here while
@@ -289,8 +393,27 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadData() async {
+  // ✅ shuffle: true randomizes the order of the freshly-fetched page —
+  // used for pull-to-refresh (see RefreshIndicator below) so a manual
+  // refresh surfaces the feed in a fresh order each time, the same way
+  // most social apps mix things up on refresh instead of always showing
+  // identical top-to-bottom ordering. Only the newly-fetched first page
+  // is shuffled; older activities appended afterwards by
+  // _loadMoreActivities() keep loading in real chronological order via
+  // their cursor, so pagination integrity beyond the top page is
+  // unaffected. Auth-driven and socket-driven calls to _loadData() don't
+  // pass this, so they keep the normal chronological order.
+  Future<void> _loadData({bool shuffle = false}) async {
     if (!mounted) return;
+    // Give a still-in-flight disk hydration a chance to land first — it's
+    // a local read (a frame or two), so waiting here doesn't meaningfully
+    // delay this load, and it means the skeleton-vs-cached-content check
+    // right below always sees the up-to-date _hasLoadedOnce rather than
+    // racing the disk read and showing the skeleton needlessly.
+    if (!_hasLoadedOnce && _diskHydrationFuture != null) {
+      await _diskHydrationFuture;
+      if (!mounted) return;
+    }
     final loggedInUserId = AuthService().userId;
     // A genuine user switch (login/logout/different account) means the
     // data on screen belongs to someone else and must not linger — that
@@ -369,6 +492,7 @@ class _HomeScreenState extends State<HomeScreen> {
           unique[a.id] = a;
         }
         activities = unique.values.toList();
+        if (shuffle) activities.shuffle(Random());
         hasMoreActivities = fetchedPage.hasMore;
         nextActivitiesCursor = fetchedPage.nextCursor;
         // ✅ Hydrate liked state from the server's per-activity `hasLiked`
@@ -428,6 +552,23 @@ class _HomeScreenState extends State<HomeScreen> {
       _cachedNextActivitiesCursor = _nextActivitiesCursor;
       _cachedUnreadNotifications = _unreadNotifications;
     });
+
+    if (!activitiesFailed) {
+      // Fire-and-forget: the next cold start reads this back in
+      // _hydrateFromDiskCache(). Deliberately not awaited — persisting
+      // shouldn't hold up anything else _loadData's caller does.
+      unawaited(
+        _persistToDiskCache(
+          userId: loggedInUserId,
+          user: _currentUser,
+          activities: _activities,
+          likedTargetKeys: _likedTargetKeys,
+          hasMoreActivities: _hasMoreActivities,
+          nextActivitiesCursor: _nextActivitiesCursor,
+          unreadNotifications: _unreadNotifications,
+        ),
+      );
+    }
   }
 
   // Appends the next-older page of activity to the bottom of the feed.
@@ -1515,7 +1656,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Stack(
                 children: [
                   RefreshIndicator(
-                    onRefresh: _loadData,
+                    onRefresh: () => _loadData(shuffle: true),
                     child: CustomScrollView(
                       controller: _scrollController,
                       slivers: [
@@ -2111,6 +2252,37 @@ class _ActionBarButton extends StatelessWidget {
   }
 }
 
+// Builds a VideoPlayerController for a reel, preferring an already-cached
+// local file over the network. This is what makes opening the fullscreen
+// reel viewer feel instant for a video that was just visible in the feed
+// (or is being revisited): the feed card kicks off caching the first time
+// a reel is even partially on-screen, so by the time the fullscreen page
+// mounts, the file is usually already on disk and plays with zero network
+// wait instead of re-streaming and re-buffering the same video again.
+Future<VideoPlayerController> _reelController(String url) async {
+  try {
+    final cached = await DefaultCacheManager().getFileFromCache(url);
+    if (cached != null) {
+      return VideoPlayerController.file(
+        cached.file,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+    }
+  } catch (_) {
+    // Cache lookup failed for any reason — fall through to streaming.
+  }
+  // Not cached yet: stream directly so playback starts without waiting on
+  // a full download, and quietly cache it in the background so the next
+  // time this reel is opened it loads instantly from disk.
+  unawaited(
+    DefaultCacheManager().getSingleFile(url).catchError((_) => File(url)),
+  );
+  return VideoPlayerController.networkUrl(
+    Uri.parse(url),
+    videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+  );
+}
+
 /// A feed-card video "reel" — muted-autoplay-on-scroll, like TikTok/IG
 /// Reels: it plays automatically when enough of the card is on screen,
 /// pauses the instant it scrolls away (so many reels in a long feed
@@ -2155,10 +2327,11 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
   Future<void> _setUp() async {
     if (_setupStarted) return;
     _setupStarted = true;
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(widget.url),
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    );
+    final controller = await _reelController(widget.url);
+    if (!mounted) {
+      controller.dispose();
+      return;
+    }
     _controller = controller;
     try {
       await controller.initialize();
@@ -2200,18 +2373,6 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
     setState(() {
       _muted = !_muted;
       controller.setVolume(_muted ? 0 : 1);
-    });
-  }
-
-  void _togglePlayPause() {
-    final controller = _controller;
-    if (controller == null || !_initialized) return;
-    setState(() {
-      if (controller.value.isPlaying) {
-        controller.pause();
-      } else {
-        controller.play();
-      }
     });
   }
 
@@ -2267,7 +2428,12 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
       key: Key('reel-${widget.activityId}'),
       onVisibilityChanged: _onVisibilityChanged,
       child: GestureDetector(
-        onTap: _togglePlayPause,
+        // Tapping the reel itself opens the fullscreen swipeable viewer,
+        // matching Instagram Reels — the card no longer requires a
+        // separate expand button for this. Play/pause is driven purely
+        // by scroll visibility now (see _onVisibilityChanged), so a
+        // tap-to-toggle in the card is no longer needed.
+        onTap: widget.onExpand,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: Container(
@@ -2389,22 +2555,6 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
                         _muted ? Icons.volume_off : Icons.volume_up,
                         color: Colors.white,
                         size: 18,
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  right: 10,
-                  top: 10,
-                  child: GestureDetector(
-                    onTap: widget.onExpand,
-                    child: const CircleAvatar(
-                      backgroundColor: Colors.black45,
-                      radius: 16,
-                      child: Icon(
-                        Icons.fullscreen_rounded,
-                        color: Colors.white,
-                        size: 20,
                       ),
                     ),
                   ),
@@ -2739,10 +2889,11 @@ class _ReelPageState extends State<_ReelPage> {
   }
 
   Future<void> _setUp() async {
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(widget.url),
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    );
+    final controller = await _reelController(widget.url);
+    if (!mounted) {
+      controller.dispose();
+      return;
+    }
     _controller = controller;
     try {
       await controller.initialize();
