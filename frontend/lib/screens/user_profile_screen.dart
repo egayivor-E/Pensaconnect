@@ -11,6 +11,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/badge.dart';
 import '../models/timeline_post_model.dart';
 import '../models/user.dart';
 import '../repositories/group_chat_repository.dart';
@@ -77,12 +78,23 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     // backend/models.py), so it's actually scoped correctly.
     final groupsCount = user.groupChatsCount;
 
+    // Same rules as the own-profile screen (models/profile_view_model.dart),
+    // applied to *this* user's own counts/join-date — not the viewer's —
+    // so badges shown here actually belong to the person being viewed.
+    final badges = computeBadges(
+      prayersCount: prayersCount,
+      testimoniesCount: testimoniesCount,
+      groupsCount: groupsCount,
+      createdAt: user.createdAt,
+    );
+
     return _UserProfileData(
       user: user,
       posts: posts,
       prayersCount: prayersCount,
       testimoniesCount: testimoniesCount,
       groupsCount: groupsCount,
+      badges: badges,
     );
   }
 
@@ -192,6 +204,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           groupsCount: data.groupsCount,
                         ),
                         const SizedBox(height: 24),
+                        _BadgesSection(badges: data.badges),
+                        const SizedBox(height: 24),
                         Row(
                           children: [
                             Icon(
@@ -245,6 +259,7 @@ class _UserProfileData {
   final int prayersCount;
   final int testimoniesCount;
   final int groupsCount;
+  final List<Badge> badges;
 
   _UserProfileData({
     required this.user,
@@ -252,6 +267,7 @@ class _UserProfileData {
     required this.prayersCount,
     required this.testimoniesCount,
     required this.groupsCount,
+    required this.badges,
   });
 }
 
@@ -398,6 +414,73 @@ class _StatsCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _BadgesSection extends StatelessWidget {
+  final List<Badge> badges;
+
+  const _BadgesSection({required this.badges});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (badges.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
+          borderRadius: AppShapes.archBorder(top: 20, bottom: 20).borderRadius,
+          border: Border.all(
+            color: theme.colorScheme.outline.withOpacity(0.12),
+          ),
+        ),
+        child: Center(
+          child: Text(
+            'No badges yet',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.6),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: badges
+          .map(
+            (b) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: b.color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: b.color.withOpacity(0.25)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: b.color.withOpacity(0.18),
+                    child: Icon(b.icon, color: b.color, size: 14),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    b.title,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
     );
   }
 }

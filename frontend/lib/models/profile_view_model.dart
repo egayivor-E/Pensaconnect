@@ -60,7 +60,12 @@ class ProfileViewModel extends ChangeNotifier {
       testimoniesCount = results[1];
       groupsCount = results[2];
 
-      badges = _determineBadges();
+      badges = computeBadges(
+        prayersCount: prayersCount,
+        testimoniesCount: testimoniesCount,
+        groupsCount: groupsCount,
+        createdAt: user?.createdAt,
+      );
     } catch (e) {
       error = e.toString();
       isLoading = false;
@@ -68,57 +73,3 @@ class ProfileViewModel extends ChangeNotifier {
       notifyListeners();
     }
   }
-
-  /// 🔹 Compute dynamic badges
-  List<Badge> _determineBadges() {
-    final badgeList = <Badge>[];
-
-    if (prayersCount > 0) {
-      badgeList.add(
-        const Badge(
-          title: "Prayer Warrior",
-          icon: Icons.favorite,
-          color: Colors.red,
-        ),
-      );
-    }
-
-    if (testimoniesCount > 0) {
-      badgeList.add(
-        const Badge(
-          title: "Testifier",
-          icon: Icons.record_voice_over,
-          color: Colors.blue,
-        ),
-      );
-    }
-
-    if (groupsCount >= 3) {
-      badgeList.add(
-        const Badge(
-          title: "Community Builder",
-          icon: Icons.group,
-          color: Colors.purple,
-        ),
-      );
-    }
-
-    if (prayersCount >= 50) {
-      badgeList.add(
-        const Badge(
-          title: "Faithful Servant",
-          icon: Icons.emoji_events,
-          color: Colors.amber,
-        ),
-      );
-    }
-
-    if (user != null && user!.createdAt != null) {
-      badgeList.add(
-        const Badge(title: "Pioneer", icon: Icons.star, color: Colors.green),
-      );
-    }
-
-    return badgeList;
-  }
-}
