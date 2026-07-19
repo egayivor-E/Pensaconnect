@@ -7,7 +7,7 @@ import 'dart:ui' as ui;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart' hide Config;
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1150,7 +1150,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                activity.hasAuthorAvatar
+                activity.authorId != null
                     ? UserAvatar(
                         profilePicture: activity.authorAvatarUrl,
                         size: 44,
@@ -3038,12 +3038,39 @@ class _ReelPageState extends State<_ReelPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  activity.authorName ?? activity.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
+                GestureDetector(
+                  onTap: activity.authorId == null
+                      ? null
+                      : () => openUserProfile(context, activity.authorId),
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (activity.authorId != null) ...[
+                        UserAvatar(
+                          profilePicture: activity.authorAvatarUrl,
+                          size: 28,
+                          // The row above already handles the tap (and
+                          // covers the name label too) — the avatar's
+                          // own default tap-to-profile would just be a
+                          // redundant, smaller-hitbox duplicate of it.
+                          onTap: () {},
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Flexible(
+                        child: Text(
+                          activity.authorName ?? activity.title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 if (activity.subtitle.isNotEmpty) ...[
