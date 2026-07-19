@@ -759,6 +759,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Opens every video post currently in the feed as a fullscreen,
+  // vertically swipeable stack starting at the tapped reel — matching
+  // Instagram/TikTok Reels, where opening any one reel lets you keep
+  // swiping up for the next one and down for the previous, instead of
+  // dead-ending on a single video with no way to continue watching.
+  void _openReelsViewer(Activity tapped) {
+    final reels = _activities.where((a) => a.hasVideo).toList();
+    if (reels.isEmpty) return;
+    final startIndex = reels.indexWhere((a) => a.id == tapped.id);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _ReelsViewerScreen(
+          reels: reels,
+          initialIndex: startIndex < 0 ? 0 : startIndex,
+          resolveUrl: _resolveAvatarUrl,
+          isLiked: (a) => _likedTargetKeys.contains(_targetKey(a)),
+          onLike: _handleLike,
+          onShare: _shareActivity,
+          onOpenComments: _openActivityTarget,
+        ),
+      ),
+    );
+  }
+
   // Opens the real content an activity refers to, when we have somewhere
   // to send the user — testimony and forum_thread both have live detail
   // screens; prayer_request doesn't (yet), so tapping does nothing for
@@ -1120,11 +1145,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     activityId: activity.id,
                     url: _resolveAvatarUrl(activity.videoUrl)!,
                     accentColor: activity.color,
-                    onExpand: () => _openMediaViewer(
-                      url: _resolveAvatarUrl(activity.videoUrl)!,
-                      isVideo: true,
-                      accentColor: activity.color,
-                    ),
+                    // ✅ FIX: was _openMediaViewer(...), which opened
+                    // only the one tapped video with nowhere to go next
+                    // — not real "reels" behavior. Now opens the
+                    // swipeable fullscreen reels stack (see
+                    // _ReelsViewerScreen below), so opening any reel lets
+                    // you keep scrolling through every video post in the
+                    // feed, TikTok/Instagram-Reels style.
+                    onExpand: () => _openReelsViewer(activity),
                   ),
                   IgnorePointer(
                     child: AnimatedScale(
@@ -1253,7 +1281,22 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         color: isLiked ? info.activeColor : null,
                         highlighted: isLiked,
-                        loading: isInFlight,
+                        // ✅ FIX: was `loading: isInFlight`, which swapped
+                        // the heart icon out for a spinner for the whole
+                        // network round-trip — even though the like
+                        // count/heart state above had already flipped
+                        // optimistically the instant you tapped. That's
+                        // what made liking feel like it "loads before
+                        // liking": the number was already right, but the
+                        // icon underneath it kept disappearing behind a
+                        // spinner. Instagram/Facebook never show a
+                        // spinner for a like — it just flips instantly
+                        // and syncs silently in the background, rolling
+                        // back with a toast only if it actually fails
+                        // (still handled in _handleLike below). Tapping
+                        // again mid-request is still blocked via
+                        // isInFlight on onTap, just without hiding the
+                        // icon.
                         onTap: isInFlight ? null : () => _handleLike(activity),
                       ),
                     ),
@@ -2527,6 +2570,405 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// FULLSCREEN REELS VIEWER (swipeable, TikTok/IG-Reels style)
+// ==========================================
+
+/// Opened when a feed reel's expand button is tapped. Shows every video
+/// post currently loaded in the feed as a vertical, fullscreen,
+/// swipeable stack — swipe up for the next reel, down for the previous
+/// one. Only the current page's video plays; every other page pauses
+/// (and the ones more than one page away are never even built, since
+/// PageView.builder only keeps the current + adjacent pages alive) so a
+/// long reel session doesn't leave a dozen video decoders running at
+/// once.
+class _ReelsViewerScreen extends StatefulWidget {
+  final List<Activity> reels;
+  final int initialIndex;
+  final String? Function(String?) resolveUrl;
+  final bool Function(Activity) isLiked;
+  final Future<void> Function(Activity) onLike;
+  final void Function(Activity) onShare;
+  final void Function(Activity) onOpenComments;
+
+  const _ReelsViewerScreen({
+    required this.reels,
+    required this.initialIndex,
+    required this.resolveUrl,
+    required this.isLiked,
+    required this.onLike,
+    required this.onShare,
+    required this.onOpenComments,
+  });
+
+  @override
+  State<_ReelsViewerScreen> createState() => _ReelsViewerScreenState();
+}
+
+class _ReelsViewerScreenState extends State<_ReelsViewerScreen> {
+  late final PageController _pageController = PageController(
+    initialPage: widget.initialIndex,
+  );
+  late int _currentIndex = widget.initialIndex;
+
+  // Local, instantly-updated like state for this viewer — mirrors the
+  // usual optimistic-update pattern used everywhere else in the app
+  // (see _HomeScreenState._handleLike / TimelinePostViewer._toggleLike)
+  // so tapping the heart here flips it immediately, then syncs to the
+  // real backend (and the feed underneath) via widget.onLike in the
+  // background.
+  late final Map<int, bool> _liked = {
+    for (final a in widget.reels) a.id: widget.isLiked(a),
+  };
+  late final Map<int, int> _likeCounts = {
+    for (final a in widget.reels) a.id: a.likeCount ?? 0,
+  };
+  final Set<int> _inFlight = {};
+
+  void _toggleLike(Activity activity) {
+    if (_inFlight.contains(activity.id)) return;
+    final wasLiked = _liked[activity.id] ?? false;
+    setState(() {
+      _inFlight.add(activity.id);
+      _liked[activity.id] = !wasLiked;
+      _likeCounts[activity.id] =
+          ((_likeCounts[activity.id] ?? 0) + (wasLiked ? -1 : 1)).clamp(
+            0,
+            1 << 30,
+          );
+    });
+    widget.onLike(activity).whenComplete(() {
+      if (mounted) setState(() => _inFlight.remove(activity.id));
+    });
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          PageView.builder(
+            controller: _pageController,
+            scrollDirection: Axis.vertical,
+            itemCount: widget.reels.length,
+            onPageChanged: (i) => setState(() => _currentIndex = i),
+            itemBuilder: (context, index) {
+              final activity = widget.reels[index];
+              final url = widget.resolveUrl(activity.videoUrl);
+              if (url == null) return const SizedBox.shrink();
+              return _ReelPage(
+                activity: activity,
+                url: url,
+                isActive: index == _currentIndex,
+                liked: _liked[activity.id] ?? false,
+                likeCount: _likeCounts[activity.id] ?? 0,
+                onLike: () => _toggleLike(activity),
+                onShare: () => widget.onShare(activity),
+                onOpenComments: () => widget.onOpenComments(activity),
+              );
+            },
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A single fullscreen reel page — cover-fit video, tap to play/pause,
+/// double-tap to like with a heart burst, and a right-side action rail
+/// (like/comment/share/mute) matching Instagram/TikTok Reels' layout.
+class _ReelPage extends StatefulWidget {
+  final Activity activity;
+  final String url;
+  final bool isActive;
+  final bool liked;
+  final int likeCount;
+  final VoidCallback onLike;
+  final VoidCallback onShare;
+  final VoidCallback onOpenComments;
+
+  const _ReelPage({
+    required this.activity,
+    required this.url,
+    required this.isActive,
+    required this.liked,
+    required this.likeCount,
+    required this.onLike,
+    required this.onShare,
+    required this.onOpenComments,
+  });
+
+  @override
+  State<_ReelPage> createState() => _ReelPageState();
+}
+
+class _ReelPageState extends State<_ReelPage> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _failed = false;
+  bool _muted = false; // fullscreen reels default to sound on, like IG
+  bool _showHeartBurst = false;
+  Timer? _heartBurstTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _setUp();
+  }
+
+  Future<void> _setUp() async {
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.url),
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    );
+    _controller = controller;
+    try {
+      await controller.initialize();
+      if (!mounted) return;
+      await controller.setLooping(true);
+      await controller.setVolume(_muted ? 0 : 1);
+      setState(() => _initialized = true);
+      if (widget.isActive) controller.play();
+    } catch (e) {
+      debugPrint('Reel page video failed to load: $e');
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReelPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Swiping to/away from this page — start it over and play, or pause,
+    // so only the reel actually on screen is ever decoding frames.
+    if (widget.isActive != oldWidget.isActive) {
+      final controller = _controller;
+      if (controller != null && _initialized) {
+        if (widget.isActive) {
+          controller.seekTo(Duration.zero);
+          controller.play();
+        } else {
+          controller.pause();
+        }
+      }
+    }
+  }
+
+  void _toggleMute() {
+    final controller = _controller;
+    if (controller == null) return;
+    setState(() {
+      _muted = !_muted;
+      controller.setVolume(_muted ? 0 : 1);
+    });
+  }
+
+  void _togglePlayPause() {
+    final controller = _controller;
+    if (controller == null || !_initialized) return;
+    setState(() {
+      controller.value.isPlaying ? controller.pause() : controller.play();
+    });
+  }
+
+  void _handleDoubleTap() {
+    if (!widget.liked) widget.onLike();
+    _heartBurstTimer?.cancel();
+    setState(() => _showHeartBurst = true);
+    _heartBurstTimer = Timer(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => _showHeartBurst = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _heartBurstTimer?.cancel();
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activity = widget.activity;
+    return GestureDetector(
+      onTap: _togglePlayPause,
+      onDoubleTap: _handleDoubleTap,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_failed)
+            const Center(
+              child: Icon(
+                Icons.videocam_off_outlined,
+                color: Colors.white54,
+                size: 56,
+              ),
+            )
+          else if (_initialized && _controller != null)
+            FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: _controller!.value.size.width,
+                height: _controller!.value.size.height,
+                child: VideoPlayer(_controller!),
+              ),
+            )
+          else
+            const Center(
+              child: CircularProgressIndicator(color: Colors.white70),
+            ),
+          if (_initialized &&
+              _controller != null &&
+              !_controller!.value.isPlaying)
+            const Center(
+              child: Icon(
+                Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 72,
+              ),
+            ),
+          IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: _showHeartBurst ? 1 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: const Center(
+                child: Icon(
+                  Icons.favorite,
+                  color: Colors.white,
+                  size: 96,
+                  shadows: [Shadow(color: Colors.black45, blurRadius: 16)],
+                ),
+              ),
+            ),
+          ),
+          // Bottom scrim so the caption/actions stay readable over any
+          // video content, same trick Instagram/TikTok Reels use.
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 160,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black54],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 16,
+            right: 88,
+            bottom: 28,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  activity.authorName ?? activity.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                if (activity.subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    activity.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Positioned(
+            right: 12,
+            bottom: 28,
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: widget.onLike,
+                  child: AnimatedScale(
+                    scale: widget.liked ? 1.1 : 1.0,
+                    duration: const Duration(milliseconds: 150),
+                    curve: Curves.easeOutBack,
+                    child: Icon(
+                      widget.liked ? Icons.favorite : Icons.favorite_border,
+                      color: widget.liked ? Colors.redAccent : Colors.white,
+                      size: 32,
+                      shadows: const [
+                        Shadow(color: Colors.black45, blurRadius: 8),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${widget.likeCount}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+                const SizedBox(height: 22),
+                GestureDetector(
+                  onTap: widget.onOpenComments,
+                  child: const Icon(
+                    Icons.mode_comment_outlined,
+                    color: Colors.white,
+                    size: 30,
+                    shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
+                  ),
+                ),
+                const SizedBox(height: 22),
+                GestureDetector(
+                  onTap: widget.onShare,
+                  child: const Icon(
+                    Icons.share_outlined,
+                    color: Colors.white,
+                    size: 28,
+                    shadows: [Shadow(color: Colors.black45, blurRadius: 8)],
+                  ),
+                ),
+                const SizedBox(height: 22),
+                GestureDetector(
+                  onTap: _toggleMute,
+                  child: Icon(
+                    _muted ? Icons.volume_off : Icons.volume_up,
+                    color: Colors.white,
+                    size: 28,
+                    shadows: const [
+                      Shadow(color: Colors.black45, blurRadius: 8),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
