@@ -73,3 +73,4 @@ class ProfileViewModel extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
