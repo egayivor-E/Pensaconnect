@@ -1169,6 +1169,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CachedNetworkImage(
                       imageUrl: _resolveAvatarUrl(activity.imageUrl)!,
                       fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
+                      // ✅ FIX: default fadeInDuration is 500ms — on a
+                      // cache hit (the common case once memCache/disk
+                      // cache is warm) that's 500ms of a visibly
+                      // fading-in photo for an image that was already
+                      // available instantly. Instagram/Facebook-grade
+                      // feeds only fade in on a genuine first fetch;
+                      // trimmed to a snappy 120ms so a cached image
+                      // simply appears, matching how fast it actually
+                      // loaded.
+                      fadeInDuration: const Duration(milliseconds: 120),
+                      fadeOutDuration: const Duration(milliseconds: 80),
                       memCacheWidth:
                           (MediaQuery.sizeOf(context).width *
                                   MediaQuery.devicePixelRatioOf(context))
@@ -1733,10 +1745,19 @@ class _HomeScreenState extends State<HomeScreen> {
         return Padding(
           padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
           child: _FadeSlideIn(
-            delay: Duration(milliseconds: 40 * index.clamp(0, 6)),
-            child: KeyedSubtree(
-              key: ValueKey(activity.id),
-              child: _buildActivityCard(context, activity),
+            // ✅ FIX: was 40ms/card up to 240ms delay + a 320ms fade —
+            // worst case ~560ms before the last on-screen card had fully
+            // settled, which reads as "the feed is still loading" even
+            // though the data was already there. Trimmed so every card
+            // visible on first paint (typically 2-4 on a phone) is fully
+            // settled within ~300ms, matching Instagram/Facebook's own
+            // near-instant feed entrance feel.
+            delay: Duration(milliseconds: 25 * index.clamp(0, 3)),
+            child: RepaintBoundary(
+              child: KeyedSubtree(
+                key: ValueKey(activity.id),
+                child: _buildActivityCard(context, activity),
+              ),
             ),
           ),
         );
@@ -1766,7 +1787,7 @@ class _FadeSlideInState extends State<_FadeSlideIn>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 320),
+    duration: const Duration(milliseconds: 200),
   );
   late final Animation<double> _fade = CurvedAnimation(
     parent: _controller,
@@ -2076,15 +2097,25 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
   bool _failed = false;
   bool _muted = true;
   bool _isVisible = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _setUp();
-  }
+  // ✅ FIX: this used to call _setUp() unconditionally from initState(),
+  // which meant every reel the SliverList builds within its cacheExtent
+  // — typically 2-3 cards below the fold on a phone — started a full
+  // video download the instant the feed painted, competing on bandwidth
+  // with the photos and avatars actually on screen. That's the real
+  // reason "pics and reels" felt slow to appear together: the first
+  // screen's images were fighting off-screen reels for the same
+  // connection. A reel's video now only starts downloading the first
+  // time VisibilityDetector reports it has *any* on-screen presence —
+  // same lazy-load trigger Instagram/Facebook's own feeds use.
+  bool _setupStarted = false;
 
   Future<void> _setUp() async {
-    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    if (_setupStarted) return;
+    _setupStarted = true;
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.url),
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    );
     _controller = controller;
     try {
       await controller.initialize();
@@ -2100,9 +2131,14 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
   }
 
   void _onVisibilityChanged(VisibilityInfo info) {
-    // >60% of the card on screen = "in view" for autoplay purposes —
-    // matches the usual reel/story feel without being so twitchy that a
-    // half-scrolled card starts and stops repeatedly.
+    // Any on-screen presence at all starts the download (so it's ready
+    // by the time the user scrolls it fully into view), but actual
+    // autoplay still waits for >60% visible — matches the usual
+    // reel/story feel without being so twitchy that a half-scrolled card
+    // starts and stops repeatedly.
+    if (info.visibleFraction > 0 && !_setupStarted) {
+      _setUp();
+    }
     final visible = info.visibleFraction > 0.6;
     if (visible == _isVisible) return;
     _isVisible = visible;
@@ -2380,7 +2416,10 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
   }
 
   Future<void> _setUpVideo() async {
-    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.url),
+      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+    );
     _controller = controller;
     try {
       await controller.initialize();
@@ -2438,6 +2477,10 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
       child: CachedNetworkImage(
         imageUrl: widget.url,
         fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+        // Same URL as the feed thumbnail, so this is almost always a
+        // cache hit — no fade needed, it should just appear.
+        fadeInDuration: const Duration(milliseconds: 100),
         errorWidget: (context, url, error) => Icon(
           Icons.broken_image_outlined,
           color: widget.accentColor,

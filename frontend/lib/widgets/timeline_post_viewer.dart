@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../config/config.dart';
@@ -244,11 +245,27 @@ class _TimelinePostViewerState extends State<TimelinePostViewer> {
                         )
                       : post.isVideo
                       ? _buildVideo()
+                      // ✅ FIX: was a plain Image.network — no caching,
+                      // no placeholder, and it re-downloaded the photo
+                      // from scratch every time this viewer opened, even
+                      // for a post whose thumbnail was already showing
+                      // (and cached) right in the feed a moment earlier.
+                      // CachedNetworkImage shares the same cache/key as
+                      // every other image in the app, so opening a post
+                      // from the feed or profile grid is an instant,
+                      // already-decoded hit instead of a fresh fetch.
                       : InteractiveViewer(
-                          child: Image.network(
-                            resolvedUrl,
+                          child: CachedNetworkImage(
+                            imageUrl: resolvedUrl,
                             fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            filterQuality: FilterQuality.high,
+                            fadeInDuration: const Duration(milliseconds: 100),
+                            placeholder: (context, url) => const Center(
+                              child: CircularProgressIndicator(
+                                color: Colors.white70,
+                              ),
+                            ),
+                            errorWidget: (context, url, error) => const Icon(
                               Icons.broken_image_outlined,
                               color: Colors.white54,
                               size: 56,

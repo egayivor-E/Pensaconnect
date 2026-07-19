@@ -184,6 +184,20 @@ void main() {
       try {
         WidgetsFlutterBinding.ensureInitialized();
 
+        // ✅ FIX: Instagram/Facebook-grade feed scrolling needs decoded
+        // photos and video thumbnails to stay resident as the user
+        // scrolls up and down — the Flutter default image cache (100
+        // images / 100MB) is tuned for a simple app, not a media-heavy
+        // feed, and was silently evicting recently-viewed feed photos
+        // after a short scroll session. That forced a full re-download +
+        // re-decode every time a post scrolled back into view, which is
+        // exactly the kind of stutter/re-loading users notice as "the
+        // pictures take forever." Raising both limits keeps a full
+        // session's worth of feed media cached in memory.
+        PaintingBinding.instance.imageCache.maximumSize = 300;
+        PaintingBinding.instance.imageCache.maximumSizeBytes =
+            250 << 20; // 250MB
+
         // Load .env file
         developer.log("🔄 Loading .env file...", name: 'main');
         await dotenv.load(fileName: "assets/.env");
