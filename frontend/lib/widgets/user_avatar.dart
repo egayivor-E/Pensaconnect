@@ -38,8 +38,8 @@ class UserAvatar extends StatelessWidget {
     // hint Flutter decodes it at full resolution every time even though
     // it's rendered as a 40px circle. Multiply by devicePixelRatio so it
     // still looks sharp on high-DPI screens.
-    final cacheDimension =
-        (size * MediaQuery.devicePixelRatioOf(context)).round();
+    final cacheDimension = (size * MediaQuery.devicePixelRatioOf(context))
+        .round();
 
     return GestureDetector(
       onTap:
@@ -56,16 +56,34 @@ class UserAvatar extends StatelessWidget {
                   memCacheWidth: cacheDimension,
                   memCacheHeight: cacheDimension,
                   placeholder: (context, url) => Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                   ),
                   errorWidget: (context, url, error) => Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: Icon(Icons.person, size: size * 0.6, color: Colors.white),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
+                    // ✅ FIX: was hardcoded Colors.white, which is invisible
+                    // against this app's light-theme surfaceContainerHighest
+                    // (previously unset and defaulting to the same white as
+                    // `surface`). Use onSurfaceVariant so the icon always
+                    // contrasts with whatever the container color actually
+                    // is, in either theme.
+                    child: Icon(
+                      Icons.person,
+                      size: size * 0.6,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 )
               : Container(
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  child: Icon(Icons.person, size: size * 0.6, color: Colors.white),
+                  child: Icon(
+                    Icons.person,
+                    size: size * 0.6,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
         ),
       ),

@@ -74,6 +74,18 @@ class ThemeProvider extends ChangeNotifier {
   ThemeData getThemeData(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
 
+    // ⚠️ IMPORTANT: M3 surface-container roles are NOT auto-derived from
+    // `surface` the way you might expect from a tonal palette — when left
+    // unset, ColorScheme's getter falls straight back to `surface` itself:
+    //   Color get surfaceContainerHighest => _surfaceContainerHighest ?? surface;
+    // Since light-mode `surface` here is plain `Colors.white`, leaving
+    // `surfaceContainerHighest` unset made it resolve to white too. Every
+    // "no avatar" / "avatar failed to load" placeholder in the app (see
+    // widgets/user_avatar.dart) paints a white person-icon on top of that
+    // color, so in light mode it rendered as a blank white-on-white circle
+    // — avatars looked broken/missing even though the widget itself was
+    // working fine. Setting these explicitly, distinct from `surface`,
+    // fixes every screen that reads them in one place.
     final colorScheme = isDark
         ? const ColorScheme.dark(
             primary: AppColors.emberGold,
@@ -84,6 +96,8 @@ class ThemeProvider extends ChangeNotifier {
             onTertiary: AppColors.deepDusk,
             surface: Color(0xFF2A2340),
             onSurface: AppColors.warmLinen,
+            surfaceContainerHighest: Color(0xFF332A4D),
+            onSurfaceVariant: AppColors.warmLinen,
             error: Color(0xFFE5726A),
             onError: Colors.white,
           )
@@ -96,12 +110,15 @@ class ThemeProvider extends ChangeNotifier {
             onTertiary: AppColors.inkDusk,
             surface: Colors.white,
             onSurface: AppColors.inkDusk,
+            surfaceContainerHighest: AppColors.warmLinen,
+            onSurfaceVariant: AppColors.inkDusk,
             error: Color(0xFFC94C40),
             onError: Colors.white,
           );
 
-    final baseTextTheme =
-        isDark ? Typography.whiteMountainView : Typography.blackMountainView;
+    final baseTextTheme = isDark
+        ? Typography.whiteMountainView
+        : Typography.blackMountainView;
 
     // Fraunces (warm display serif) for headings, Manrope (clean
     // geometric sans) for body/UI text.
@@ -148,15 +165,19 @@ class ThemeProvider extends ChangeNotifier {
         color: colorScheme.onSurface,
         height: 1.4,
       ),
-      labelLarge: GoogleFonts.manrope(fontSize: 15, fontWeight: FontWeight.w700),
+      labelLarge: GoogleFonts.manrope(
+        fontSize: 15,
+        fontWeight: FontWeight.w700,
+      ),
     );
 
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: colorScheme,
-      scaffoldBackgroundColor:
-          isDark ? AppColors.deepDusk : AppColors.warmLinen,
+      scaffoldBackgroundColor: isDark
+          ? AppColors.deepDusk
+          : AppColors.warmLinen,
       textTheme: textTheme,
       cardTheme: CardThemeData(
         elevation: 0,
@@ -187,7 +208,10 @@ class ThemeProvider extends ChangeNotifier {
           backgroundColor: colorScheme.primary,
           foregroundColor: colorScheme.onPrimary,
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-          textStyle: GoogleFonts.manrope(fontSize: 16, fontWeight: FontWeight.w700),
+          textStyle: GoogleFonts.manrope(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
           shape: AppShapes.pill,
         ),
       ),
@@ -204,8 +228,13 @@ class ThemeProvider extends ChangeNotifier {
         ),
         filled: true,
         fillColor: isDark ? const Color(0xFF332A4D) : AppColors.warmLinen,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-        labelStyle: GoogleFonts.manrope(color: colorScheme.onSurface.withOpacity(0.65)),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: 16,
+        ),
+        labelStyle: GoogleFonts.manrope(
+          color: colorScheme.onSurface.withOpacity(0.65),
+        ),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: isDark ? const Color(0xFF332A4D) : AppColors.warmLinen,
