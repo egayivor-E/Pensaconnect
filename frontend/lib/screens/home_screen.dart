@@ -5,7 +5,7 @@ import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart' hide Config;
 import 'package:go_router/go_router.dart';
@@ -2260,23 +2260,31 @@ class _ActionBarButton extends StatelessWidget {
 // mounts, the file is usually already on disk and plays with zero network
 // wait instead of re-streaming and re-buffering the same video again.
 Future<VideoPlayerController> _reelController(String url) async {
-  try {
-    final cached = await DefaultCacheManager().getFileFromCache(url);
-    if (cached != null) {
-      return VideoPlayerController.file(
-        cached.file,
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-      );
+  // video_player's web implementation can only play network URLs —
+  // VideoPlayerController.file() throws UnimplementedError in the browser,
+  // which was breaking every single reel there. The browser's own HTTP
+  // cache already handles repeat-request speed-ups for video tags, so
+  // there's no upside to the local-file cache path on web anyway — just
+  // stream directly there and skip the cache-manager lookup entirely.
+  if (!kIsWeb) {
+    try {
+      final cached = await DefaultCacheManager().getFileFromCache(url);
+      if (cached != null) {
+        return VideoPlayerController.file(
+          cached.file,
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+      }
+    } catch (_) {
+      // Cache lookup failed for any reason — fall through to streaming.
     }
-  } catch (_) {
-    // Cache lookup failed for any reason — fall through to streaming.
+    // Not cached yet: stream directly so playback starts without waiting
+    // on a full download, and quietly cache it in the background so the
+    // next time this reel is opened it loads instantly from disk.
+    unawaited(
+      DefaultCacheManager().getSingleFile(url).catchError((_) => File(url)),
+    );
   }
-  // Not cached yet: stream directly so playback starts without waiting on
-  // a full download, and quietly cache it in the background so the next
-  // time this reel is opened it loads instantly from disk.
-  unawaited(
-    DefaultCacheManager().getSingleFile(url).catchError((_) => File(url)),
-  );
   return VideoPlayerController.networkUrl(
     Uri.parse(url),
     videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
