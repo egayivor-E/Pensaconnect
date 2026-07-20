@@ -1098,6 +1098,32 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // ✅ FIX: a card's media used to hand both onTap (open) and onDoubleTap
+  // (like) to the *same* GestureDetector. Flutter has to wait out
+  // kDoubleTapTimeout (~300ms) before it can be sure a tap isn't the
+  // first half of a double tap whenever a DoubleTapGestureRecognizer is
+  // in the arena — so every single tap on a reel/picture was silently
+  // delayed by a third of a second before it opened. Tracking the last
+  // tap time by hand keeps each card's GestureDetector down to a single,
+  // ungated TapGestureRecognizer (onTap only, no onDoubleTap declared
+  // anywhere), so the first tap opens the viewer immediately. A genuine
+  // second tap landing within the window is then read as a double-tap
+  // like instead of a redundant second "open".
+  final Map<int, DateTime> _lastMediaTapAt = {};
+
+  void _handleMediaTap(Activity activity, VoidCallback openAction) {
+    final now = DateTime.now();
+    final lastTap = _lastMediaTapAt[activity.id];
+    if (lastTap != null &&
+        now.difference(lastTap) < const Duration(milliseconds: 300)) {
+      _lastMediaTapAt.remove(activity.id);
+      _handleDoubleTapLike(activity);
+    } else {
+      _lastMediaTapAt[activity.id] = now;
+      openAction();
+    }
+  }
+
   // Appends a count to an action bar label when one was provided by the
   // backend (e.g. "Like" -> "Like · 12"). Omits it entirely when null
   // rather than showing a potentially-wrong "0" for target types the
@@ -1213,8 +1239,8 @@ class _HomeScreenState extends State<HomeScreen> {
           // --- Post content: title + subtitle text (moved above the
           // media, Facebook-style, so the caption always reads first) ---
           GestureDetector(
-            onTap: () => _openActivityTarget(activity),
-            onDoubleTap: () => _handleDoubleTapLike(activity),
+            onTap: () =>
+                _handleMediaTap(activity, () => _openActivityTarget(activity)),
             behavior: HitTestBehavior.opaque,
             child: Stack(
               alignment: Alignment.center,
@@ -1279,54 +1305,57 @@ class _HomeScreenState extends State<HomeScreen> {
           // is one. Both are tappable to open the full media in a
           // dedicated viewer where it can also be downloaded. ---
           if (activity.hasVideo)
-            GestureDetector(
-              onDoubleTap: () => _handleDoubleTapLike(activity),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  _FeedReelPlayer(
-                    activityId: activity.id,
-                    url: _resolveAvatarUrl(activity.videoUrl)!,
-                    accentColor: activity.color,
-                    // ✅ FIX: was _openMediaViewer(...), which opened
-                    // only the one tapped video with nowhere to go next
-                    // — not real "reels" behavior. Now opens the
-                    // swipeable fullscreen reels stack (see
-                    // _ReelsViewerScreen below), so opening any reel lets
-                    // you keep scrolling through every video post in the
-                    // feed, TikTok/Instagram-Reels style.
-                    onExpand: () => _openReelsViewer(activity),
-                  ),
-                  IgnorePointer(
-                    child: AnimatedScale(
-                      scale: showBurst ? 1.0 : 0.6,
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                _FeedReelPlayer(
+                  activityId: activity.id,
+                  url: _resolveAvatarUrl(activity.videoUrl)!,
+                  accentColor: activity.color,
+                  // ✅ FIX: was _openMediaViewer(...), which opened
+                  // only the one tapped video with nowhere to go next
+                  // — not real "reels" behavior. Now opens the
+                  // swipeable fullscreen reels stack (see
+                  // _ReelsViewerScreen below), so opening any reel lets
+                  // you keep scrolling through every video post in the
+                  // feed, TikTok/Instagram-Reels style. Routed through
+                  // _handleMediaTap (rather than a wrapping onDoubleTap
+                  // GestureDetector) so a single tap opens instantly —
+                  // see _handleMediaTap for why.
+                  onExpand: () =>
+                      _handleMediaTap(activity, () => _openReelsViewer(activity)),
+                ),
+                IgnorePointer(
+                  child: AnimatedScale(
+                    scale: showBurst ? 1.0 : 0.6,
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOutBack,
+                    child: AnimatedOpacity(
+                      opacity: showBurst ? 1.0 : 0.0,
                       duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOutBack,
-                      child: AnimatedOpacity(
-                        opacity: showBurst ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 250),
-                        child: Icon(
-                          info.activeIcon,
-                          color: Colors.white,
-                          size: 72,
-                          shadows: const [
-                            Shadow(color: Colors.black38, blurRadius: 12),
-                          ],
-                        ),
+                      child: Icon(
+                        info.activeIcon,
+                        color: Colors.white,
+                        size: 72,
+                        shadows: const [
+                          Shadow(color: Colors.black38, blurRadius: 12),
+                        ],
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             )
           else if (activity.hasImage)
             GestureDetector(
-              onTap: () => _openMediaViewer(
-                url: _resolveAvatarUrl(activity.imageUrl)!,
-                isVideo: false,
-                accentColor: activity.color,
+              onTap: () => _handleMediaTap(
+                activity,
+                () => _openMediaViewer(
+                  url: _resolveAvatarUrl(activity.imageUrl)!,
+                  isVideo: false,
+                  accentColor: activity.color,
+                ),
               ),
-              onDoubleTap: () => _handleDoubleTapLike(activity),
               child: Stack(
                 alignment: Alignment.center,
                 children: [
