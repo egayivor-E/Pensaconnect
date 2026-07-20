@@ -23,15 +23,27 @@ class _CategoryStyle {
 _CategoryStyle _categoryStyle(DevotionCategory category) {
   switch (category) {
     case DevotionCategory.prayer:
-      return const _CategoryStyle('🙏 Prayer', Icons.handshake, AppColors.roseQuartz);
+      return const _CategoryStyle(
+        '🙏 Prayer',
+        Icons.handshake,
+        AppColors.roseQuartz,
+      );
     case DevotionCategory.wisdom:
       return const _CategoryStyle('💡 Wisdom', Icons.lightbulb, Colors.amber);
     case DevotionCategory.encouragement:
-      return const _CategoryStyle('❤️ Encouragement', Icons.favorite, Colors.pink);
+      return const _CategoryStyle(
+        '❤️ Encouragement',
+        Icons.favorite,
+        Colors.pink,
+      );
     case DevotionCategory.guidance:
       return const _CategoryStyle('🧭 Guidance', Icons.explore, Colors.teal);
     case DevotionCategory.daily:
-      return const _CategoryStyle('📅 Daily', Icons.calendar_today, Colors.blue);
+      return const _CategoryStyle(
+        '📅 Daily',
+        Icons.calendar_today,
+        Colors.blue,
+      );
   }
 }
 
@@ -40,7 +52,11 @@ _CategoryStyle _difficultyStyle(StudyPlanDifficulty difficulty) {
     case StudyPlanDifficulty.beginner:
       return const _CategoryStyle('🌱 Beginner', Icons.eco, Colors.green);
     case StudyPlanDifficulty.intermediate:
-      return const _CategoryStyle('🔥 Intermediate', Icons.local_fire_department, Colors.orange);
+      return const _CategoryStyle(
+        '🔥 Intermediate',
+        Icons.local_fire_department,
+        Colors.orange,
+      );
     case StudyPlanDifficulty.advanced:
       return const _CategoryStyle('⚡ Advanced', Icons.bolt, Colors.red);
   }
@@ -66,7 +82,9 @@ class _StyledChip extends StatelessWidget {
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.bold,
-          color: color.computeLuminance() > 0.9 ? color : color.withRed((color.red * 0.7).round()),
+          color: color.computeLuminance() > 0.9
+              ? color
+              : color.withRed((color.red * 0.7).round()),
         ),
       ),
     );
@@ -147,8 +165,13 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Filter Content', style: TextStyle(fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'Filter Content',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView(
@@ -170,7 +193,9 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
             ),
             FilledButton(
               style: FilledButton.styleFrom(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
               ),
               onPressed: () {
                 Navigator.pop(context);
@@ -327,8 +352,10 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
                   backgroundColor: Colors.transparent,
                   elevation: 0,
                   foregroundColor: Colors.white,
-                  title: const Text('📖 Bible Study',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  title: const Text(
+                    '📖 Bible Study',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   leading: IconButton(
                     icon: const Icon(Icons.arrow_back),
                     onPressed: () {
@@ -434,8 +461,13 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
                 elevation: 0,
                 onPressed: _createNewStudyPlan,
                 icon: const Icon(Icons.add, color: Colors.white),
-                label: const Text('New Plan',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                label: const Text(
+                  'New Plan',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             )
           : null,
@@ -453,10 +485,14 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('🎉 Study plan created successfully!',
-              style: TextStyle(fontWeight: FontWeight.w600)),
+          content: const Text(
+            '🎉 Study plan created successfully!',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
         ),
       );
     }
@@ -571,7 +607,9 @@ class _SimpleBibleSearchDelegate extends SearchDelegate<String> {
             const SizedBox(height: 16),
             Text(
               '🔎 Search Devotions & Study Plans',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -832,7 +870,9 @@ class _DevotionListItemState extends State<_DevotionListItem> {
         SnackBar(
           content: Text('📦 "${widget.devotion.verse}" added to archive'),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           action: SnackBarAction(
             label: 'View',
             onPressed: () {
@@ -883,18 +923,14 @@ class _DevotionListItemState extends State<_DevotionListItem> {
           ),
           child: Stack(
             children: [
-              Center(
-                child: Icon(
-                  style.icon,
-                  color: style.color,
-                  size: 20,
-                ),
-              ),
+              Center(child: Icon(style.icon, color: style.color, size: 20)),
               if (progressPercentage > 0)
                 CircularProgressIndicator(
                   value: progressPercentage,
                   backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(style.color.withOpacity(0.5)),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    style.color.withOpacity(0.5),
+                  ),
                   strokeWidth: 3,
                 ),
             ],
@@ -925,7 +961,9 @@ class _DevotionListItemState extends State<_DevotionListItem> {
               widget.devotion.content,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+              ),
             ),
             const SizedBox(height: 6),
             Row(
@@ -956,7 +994,10 @@ class _DevotionListItemState extends State<_DevotionListItem> {
               onPressed: _isArchiving ? null : _archiveDevotion,
               tooltip: 'Add to Archive',
             ),
-            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.outline),
+            Icon(
+              Icons.chevron_right,
+              color: Theme.of(context).colorScheme.outline,
+            ),
           ],
         ),
         onTap: () async {
@@ -1079,21 +1120,33 @@ class _PlansListState extends State<_PlansList> {
   }
 
   Future<List<StudyPlan>> _fetchPlansWithProgress() async {
-    try {
-      final plans = await BibleRepository.fetchPlans();
+    // Only the plans call itself should be able to fail the whole screen.
+    // Progress is supplementary — if it errors for one plan (network hiccup,
+    // a 500, a timeout, etc.) that must not take down the entire list.
+    final plans = await BibleRepository.fetchPlans();
 
-      for (final plan in plans) {
-        final progress = await BibleRepository.getProgress(
-          plan.id,
-          'study_plan',
-        );
-        _progressCache[plan.id] = progress;
-      }
+    // Fetch progress for all plans in parallel instead of one-by-one; a
+    // sequential await-in-a-loop meant N round trips before the list could
+    // ever render, and a slow/failing request anywhere in the chain stalled
+    // or broke everything after it.
+    await Future.wait(
+      plans.map((plan) async {
+        try {
+          final progress = await BibleRepository.getProgress(
+            plan.id,
+            'study_plan',
+          );
+          _progressCache[plan.id] = progress;
+        } catch (e) {
+          // Missing/failed progress for a single plan shouldn't block the
+          // rest of the list from loading — just leave it uncached.
+          debugPrint('Failed to load progress for plan ${plan.id}: $e');
+          _progressCache[plan.id] = null;
+        }
+      }),
+    );
 
-      return _filterPlans(plans);
-    } catch (e) {
-      rethrow;
-    }
+    return _filterPlans(plans);
   }
 
   List<StudyPlan> _filterPlans(List<StudyPlan> plans) {
@@ -1245,7 +1298,9 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
         SnackBar(
           content: Text('📦 "${widget.plan.title}" added to archive'),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           action: SnackBarAction(
             label: 'View',
             onPressed: () {
@@ -1290,7 +1345,9 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
             onPressed: () => Navigator.of(context).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
             ),
             child: const Text('Delete'),
           ),
@@ -1312,7 +1369,9 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
           SnackBar(
             content: Text('"${widget.plan.title}" deleted successfully'),
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
           ),
         );
 
@@ -1358,17 +1417,17 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
             color: style.color,
             shape: BoxShape.circle,
             boxShadow: [
-              BoxShadow(color: style.color.withOpacity(0.35), blurRadius: 8, offset: const Offset(0, 3)),
+              BoxShadow(
+                color: style.color.withOpacity(0.35),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
             ],
           ),
           child: Stack(
             children: [
               const Center(
-                child: Icon(
-                  Icons.assignment,
-                  color: Colors.white,
-                  size: 20,
-                ),
+                child: Icon(Icons.assignment, color: Colors.white, size: 20),
               ),
               if (progressPercentage > 0)
                 CircularProgressIndicator(
@@ -1405,7 +1464,9 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
               widget.plan.description,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+              ),
             ),
             const SizedBox(height: 6),
             Wrap(
@@ -1414,7 +1475,10 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
               children: [
                 _StyledChip(label: style.label, color: style.color),
                 if (widget.plan.dayCount != null)
-                  _StyledChip(label: '${widget.plan.dayCount} days', color: Colors.blueGrey),
+                  _StyledChip(
+                    label: '${widget.plan.dayCount} days',
+                    color: Colors.blueGrey,
+                  ),
                 if (progress != null)
                   _StyledChip(
                     label: '${(progressPercentage * 100).toInt()}%',
@@ -1429,8 +1493,11 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
           children: [
             if (!_isDeleting)
               IconButton(
-                icon: Icon(Icons.delete_outline,
-                    size: 20, color: Theme.of(context).colorScheme.error),
+                icon: Icon(
+                  Icons.delete_outline,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.error,
+                ),
                 onPressed: _deleteStudyPlan,
                 tooltip: 'Delete',
               )
@@ -1456,7 +1523,10 @@ class _StudyPlanListItemState extends State<_StudyPlanListItem> {
               tooltip: 'Add to Archive',
             ),
 
-            Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.outline),
+            Icon(
+              Icons.chevron_right,
+              color: Theme.of(context).colorScheme.outline,
+            ),
           ],
         ),
         onTap: () async {
@@ -1724,7 +1794,9 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
         SnackBar(
           content: Text('"${widget.item.title}" removed from archive'),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
         ),
       );
 
@@ -1751,7 +1823,9 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: Theme.of(context).colorScheme.secondary.withOpacity(0.15)),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.secondary.withOpacity(0.15),
+        ),
       ),
       child: ListTile(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -1807,7 +1881,9 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
               widget.item.description,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+              ),
             ),
             const SizedBox(height: 6),
             Wrap(
@@ -1818,7 +1894,10 @@ class _ArchiveListItemState extends State<_ArchiveListItem> {
                     label: '${(progressPercentage * 100).toInt()}%',
                     color: _getProgressColor(progressPercentage),
                   ),
-                _StyledChip(label: _formatDate(widget.item.date), color: Colors.blueGrey),
+                _StyledChip(
+                  label: _formatDate(widget.item.date),
+                  color: Colors.blueGrey,
+                ),
               ],
             ),
           ],
@@ -1953,7 +2032,9 @@ class _ErrorState extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               'Oops, something went wrong',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -1966,8 +2047,13 @@ class _ErrorState extends StatelessWidget {
             const SizedBox(height: 24),
             FilledButton.icon(
               style: FilledButton.styleFrom(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
               ),
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),

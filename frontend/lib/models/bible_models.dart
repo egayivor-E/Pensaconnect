@@ -46,19 +46,49 @@ class ReadingProgress {
     );
   }
 
-  factory ReadingProgress.fromJson(Map<String, dynamic> json) =>
-      ReadingProgress(
-        itemId: (json['itemId'] ?? 0) as int,
-        itemType: (json['itemType'] ?? '') as String,
-        progress: (json['progress'] as num?)?.toDouble() ?? 0.0,
-        currentPage: (json['currentPage'] ?? 0) as int,
-        totalPages: (json['totalPages'] ?? 1) as int,
-        lastRead: _parseDate(json['lastRead']) ?? DateTime.now(),
-        isCompleted: (json['isCompleted'] ?? false) as bool,
-        readingTime: json['readingTime'] != null
-            ? Duration(seconds: (json['readingTime'] as num).toInt())
-            : null,
-      );
+  /// ✅ FIX: the backend's progress endpoints (`/progress/study_plan/<id>`,
+  /// `/progress/devotion/<id>`) reply with snake_case keys
+  /// (`plan_id`/`devotion_id`, `current_day`, `completed`,
+  /// `progress_percentage`, `last_updated`/`started_at`), not the camelCase
+  /// shape this class's own `toJson()` produces. Every field below used to
+  /// only look for the camelCase key, so none of them ever matched and the
+  /// `?? default` fallback silently kicked in every time — progress bars
+  /// and "completed" badges always showed 0%/incomplete regardless of the
+  /// user's actual progress. This now checks both shapes.
+  factory ReadingProgress.fromJson(Map<String, dynamic> json) {
+    final completed =
+        (json['isCompleted'] ?? json['completed'] ?? false) as bool;
+
+    // progress_percentage from the backend is 0-100; this class's own
+    // 'progress' field (and toJson()) uses a 0.0-1.0 fraction.
+    double progress;
+    if (json['progress'] is num) {
+      progress = (json['progress'] as num).toDouble();
+    } else if (json['progress_percentage'] is num) {
+      progress = (json['progress_percentage'] as num).toDouble() / 100;
+    } else {
+      progress = completed ? 1.0 : 0.0;
+    }
+
+    return ReadingProgress(
+      itemId:
+          (json['itemId'] ?? json['plan_id'] ?? json['devotion_id'] ?? 0)
+              as int,
+      itemType: (json['itemType'] ?? '') as String,
+      progress: progress,
+      currentPage: (json['currentPage'] ?? json['current_day'] ?? 0) as int,
+      totalPages: (json['totalPages'] ?? 1) as int,
+      lastRead:
+          _parseDate(
+            json['lastRead'] ?? json['last_updated'] ?? json['started_at'],
+          ) ??
+          DateTime.now(),
+      isCompleted: completed,
+      readingTime: json['readingTime'] != null
+          ? Duration(seconds: (json['readingTime'] as num).toInt())
+          : null,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'itemId': itemId,

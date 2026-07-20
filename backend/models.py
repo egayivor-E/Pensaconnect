@@ -1082,10 +1082,27 @@ class StudyPlanProgress(BaseModel):
 
     def to_dict(self, include_user=False):
         data = super().to_dict()
+
+        # ✅ FIX: compute progress_percentage here too — previously only the
+        # "no progress record yet" branch in get_study_plan_progress() set
+        # this key, so once a user actually started a plan the frontend
+        # stopped receiving any percentage at all and progress bars/badges
+        # silently showed 0%/not-completed forever.
+        total_days = self.plan.total_days if self.plan and self.plan.total_days else 0
+        if self.completed:
+            progress_percentage = 100
+        elif total_days > 0:
+            progress_percentage = min(100, round((self.current_day or 0) / total_days * 100))
+        else:
+            progress_percentage = 0
+
         data.update({
             "current_day": self.current_day,
             "completed": self.completed,
             "plan_id": self.plan_id,
+            "started_at": data.get("created_at"),
+            "last_updated": data.get("updated_at"),
+            "progress_percentage": progress_percentage,
         })
         if include_user and self.user:
             data["user"] = {
