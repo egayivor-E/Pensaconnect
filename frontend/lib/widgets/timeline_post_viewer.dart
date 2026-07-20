@@ -18,22 +18,26 @@ String? resolveTimelineMediaUrl(String? path) {
   return '$base$normalizedPath';
 }
 
-/// Full-screen viewer for a single timeline post — image/video, a
-/// like heart with live count, and a comments sheet. Self-contained:
-/// it owns its own like/comment-count state and talks to
-/// TimelinePostRepository directly, so any screen can open it just by
-/// handing it a TimelinePost. [onPostUpdated] lets the caller (Profile's
-/// grid, Home's feed) sync its own list back in step whenever the
-/// like/comment count changes here.
+/// Full-screen, swipeable viewer for a run of timeline posts — image/video,
+/// a like heart with live count, and a comments sheet, one post per page.
+/// Opened from a post's grid tile with that post's index, so it opens
+/// straight to the tapped post but lets the user swipe left/right to move
+/// through the rest of the same list (the profile grid or feed) without
+/// closing back out to it. Self-contained: each page owns its own
+/// like/comment-count state and talks to TimelinePostRepository directly.
+/// [onPostUpdated] lets the caller (Profile's grid, Home's feed) sync its
+/// own list back in step whenever a like/comment count changes here.
 class TimelinePostViewer extends StatefulWidget {
-  final TimelinePost post;
-  final bool isOwnPost;
+  final List<TimelinePost> posts;
+  final int initialIndex;
+  final bool Function(TimelinePost post) isOwnPost;
   final ValueChanged<TimelinePost>? onPostUpdated;
-  final VoidCallback? onDelete;
+  final void Function(TimelinePost post)? onDelete;
 
   const TimelinePostViewer({
     super.key,
-    required this.post,
+    required this.posts,
+    required this.initialIndex,
     required this.isOwnPost,
     this.onPostUpdated,
     this.onDelete,
@@ -44,6 +48,91 @@ class TimelinePostViewer extends StatefulWidget {
 }
 
 class _TimelinePostViewerState extends State<TimelinePostViewer> {
+  late final PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex.clamp(0, widget.posts.length - 1);
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentPost = widget.posts[_currentIndex];
+    final isOwn = widget.isOwnPost(currentPost);
+
+    return GestureDetector(
+      onTap: () => Navigator.pop(context),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          iconTheme: const IconThemeData(color: Colors.white),
+          actions: [
+            if (isOwn && widget.onDelete != null)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                onSelected: (value) {
+                  if (value == 'delete') widget.onDelete!(currentPost);
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Delete post'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+        extendBodyBehindAppBar: true,
+        body: PageView.builder(
+          controller: _pageController,
+          itemCount: widget.posts.length,
+          onPageChanged: (index) => setState(() => _currentIndex = index),
+          itemBuilder: (context, index) {
+            final post = widget.posts[index];
+            return _TimelinePostPage(
+              key: ValueKey(post.id),
+              post: post,
+              onPostUpdated: widget.onPostUpdated,
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// A single post's content within the pager above — image/video plus the
+/// like/comment bar underneath. Split out from the pager itself so each
+/// page keeps its own independent like/video state as the user swipes,
+/// the same way the old single-post viewer did.
+class _TimelinePostPage extends StatefulWidget {
+  final TimelinePost post;
+  final ValueChanged<TimelinePost>? onPostUpdated;
+
+  const _TimelinePostPage({super.key, required this.post, this.onPostUpdated});
+
+  @override
+  State<_TimelinePostPage> createState() => _TimelinePostPageState();
+}
+
+class _TimelinePostPageState extends State<_TimelinePostPage> {
   final _repo = TimelinePostRepository();
   late TimelinePost _post;
   bool _liking = false;
@@ -194,124 +283,91 @@ class _TimelinePostViewerState extends State<TimelinePostViewer> {
     final post = _post;
     final resolvedUrl = resolveTimelineMediaUrl(post.imageUrl);
 
-    return GestureDetector(
-      onTap: () => Navigator.pop(context),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          iconTheme: const IconThemeData(color: Colors.white),
-          actions: [
-            if (widget.isOwnPost && widget.onDelete != null)
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, color: Colors.white),
-                onSelected: (value) {
-                  if (value == 'delete') widget.onDelete!();
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete_outline, color: Colors.red),
-                        SizedBox(width: 8),
-                        Text('Delete post'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-          ],
-        ),
-        extendBodyBehindAppBar: true,
-        body: Column(
-          children: [
-            Expanded(
-              child: GestureDetector(
-                onTap: () {},
-                child: Center(
-                  child: resolvedUrl == null
-                      ? Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(
-                            post.content,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        )
-                      : post.isVideo
-                      ? _buildVideo()
-                      // ✅ FIX: was a plain Image.network — no caching,
-                      // no placeholder, and it re-downloaded the photo
-                      // from scratch every time this viewer opened, even
-                      // for a post whose thumbnail was already showing
-                      // (and cached) right in the feed a moment earlier.
-                      // CachedNetworkImage shares the same cache/key as
-                      // every other image in the app, so opening a post
-                      // from the feed or profile grid is an instant,
-                      // already-decoded hit instead of a fresh fetch.
-                      : InteractiveViewer(
-                          child: CachedNetworkImage(
-                            imageUrl: resolvedUrl,
-                            fit: BoxFit.contain,
-                            filterQuality: FilterQuality.high,
-                            fadeInDuration: const Duration(milliseconds: 100),
-                            placeholder: (context, url) => const Center(
-                              child: CircularProgressIndicator(
-                                color: Colors.white70,
-                              ),
-                            ),
-                            errorWidget: (context, url, error) => const Icon(
-                              Icons.broken_image_outlined,
-                              color: Colors.white54,
-                              size: 56,
-                            ),
+    return Column(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () {},
+            child: Center(
+              child: resolvedUrl == null
+                  ? Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        post.content,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : post.isVideo
+                  ? _buildVideo()
+                  // ✅ FIX: was a plain Image.network — no caching,
+                  // no placeholder, and it re-downloaded the photo
+                  // from scratch every time this viewer opened, even
+                  // for a post whose thumbnail was already showing
+                  // (and cached) right in the feed a moment earlier.
+                  // CachedNetworkImage shares the same cache/key as
+                  // every other image in the app, so opening a post
+                  // from the feed or profile grid is an instant,
+                  // already-decoded hit instead of a fresh fetch.
+                  : InteractiveViewer(
+                      child: CachedNetworkImage(
+                        imageUrl: resolvedUrl,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                        fadeInDuration: const Duration(milliseconds: 100),
+                        placeholder: (context, url) => const Center(
+                          child: CircularProgressIndicator(
+                            color: Colors.white70,
                           ),
                         ),
-                ),
-              ),
-            ),
-            Container(
-              color: Colors.black87,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              child: SafeArea(
-                top: false,
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: _toggleLike,
-                      icon: Icon(
-                        post.hasLiked ? Icons.favorite : Icons.favorite_border,
-                        color: post.hasLiked ? Colors.redAccent : Colors.white,
+                        errorWidget: (context, url, error) => const Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.white54,
+                          size: 56,
+                        ),
                       ),
                     ),
-                    Text(
-                      '${post.likeCount}',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                    const SizedBox(width: 16),
-                    IconButton(
-                      onPressed: _openComments,
-                      icon: const Icon(
-                        Icons.mode_comment_outlined,
-                        color: Colors.white,
-                      ),
-                    ),
-                    Text(
-                      '${post.commentCount}',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
             ),
-          ],
+          ),
         ),
-      ),
+        Container(
+          color: Colors.black87,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: SafeArea(
+            top: false,
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: _toggleLike,
+                  icon: Icon(
+                    post.hasLiked ? Icons.favorite : Icons.favorite_border,
+                    color: post.hasLiked ? Colors.redAccent : Colors.white,
+                  ),
+                ),
+                Text(
+                  '${post.likeCount}',
+                  style: const TextStyle(color: Colors.white),
+                ),
+                const SizedBox(width: 16),
+                IconButton(
+                  onPressed: _openComments,
+                  icon: const Icon(
+                    Icons.mode_comment_outlined,
+                    color: Colors.white,
+                  ),
+                ),
+                Text(
+                  '${post.commentCount}',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
