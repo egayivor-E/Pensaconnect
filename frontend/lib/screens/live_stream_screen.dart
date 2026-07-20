@@ -49,6 +49,16 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   bool _isLoading = true;
   bool _isConnected = false;
   String _errorMessage = '';
+  // ✅ FIX: a video load failure used to write into _errorMessage, which
+  // build() treats as "the whole screen failed" and replaces video + chat
+  // + members with a single full-page error and one "Retry Connection"
+  // button — even though chat/members had nothing wrong with them and
+  // were often still fully usable. This flag scopes a video failure to
+  // just the video player area instead (see _buildVideoPlayer below), so
+  // a broken/blocked video doesn't take the rest of the live screen down
+  // with it. _errorMessage is now reserved for genuine whole-screen init
+  // failures (socket setup, initial data load) thrown from _initializeApp.
+  bool _videoFailed = false;
 
   @override
   void initState() {
@@ -94,6 +104,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   }
 
   Future<void> _loadVideo() async {
+    if (mounted) setState(() => _videoFailed = false);
     try {
       await _controller.loadVideoById(videoId: Config.youTubeVideoId);
       if (mounted) {
@@ -106,7 +117,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       if (mounted) {
         setState(() {
           _isPlayerInitialized = false;
-          _errorMessage = 'Failed to load video. Please check your connection.';
+          _videoFailed = true;
         });
       }
     }
@@ -503,10 +514,15 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       appBar: AppBar(
         title: const Text('Live Service'),
         actions: [
-          Icon(
-            _isConnected ? Icons.wifi : Icons.wifi_off,
-            color: _isConnected ? Colors.green : Colors.grey,
-            size: 20,
+          Tooltip(
+            message: _isConnected
+                ? 'Chat connected'
+                : 'Chat reconnecting — video is unaffected',
+            child: Icon(
+              _isConnected ? Icons.wifi : Icons.wifi_off,
+              color: _isConnected ? Colors.green : Colors.orange,
+              size: 20,
+            ),
           ),
           const SizedBox(width: 8),
           IconButton(
@@ -530,18 +546,29 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Row(
         children: [
+          // ✅ FIX: this used to read "LIVE NOW" / "CONNECTING..." driven
+          // by _isConnected — but _isConnected only tracks the *chat
+          // socket*, not the YouTube stream itself (see
+          // _handleConnectionStatus). A user whose video was playing
+          // perfectly fine but whose chat socket briefly dropped would
+          // see this flip to grey "CONNECTING...", reading as if the
+          // broadcast had gone down. This now labels what it actually
+          // reflects — chat connectivity — while the polling fallback
+          // (_startPollingFallback) keeps chat itself working either way.
           Icon(
             _isConnected ? Icons.circle : Icons.circle_outlined,
-            color: _isConnected ? Colors.green : Colors.grey,
+            color: _isConnected ? Colors.green : Colors.orange,
             size: 16,
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              _isConnected ? 'LIVE NOW' : 'CONNECTING...',
+              _isConnected ? 'Chat connected' : 'Reconnecting chat…',
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.bold,
-                color: _isConnected ? Colors.red : Colors.grey,
+                color: _isConnected
+                    ? theme.colorScheme.onSurface
+                    : Colors.orange,
               ),
               overflow: TextOverflow.ellipsis,
             ),
@@ -560,7 +587,41 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   Widget _buildVideoPlayer() {
     return AspectRatio(
       aspectRatio: 16 / 9,
-      child: _isPlayerInitialized
+      child: _videoFailed
+          ? Container(
+              color: Colors.black,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.videocam_off_outlined,
+                        color: Colors.white70,
+                        size: 40,
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        "Couldn't load the video",
+                        style: TextStyle(color: Colors.white70),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white70),
+                        ),
+                        onPressed: _loadVideo,
+                        child: const Text('Retry video'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : _isPlayerInitialized
           ? YoutubePlayer(controller: _controller)
           : Container(
               color: Colors.black,
