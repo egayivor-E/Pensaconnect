@@ -821,8 +821,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         opaque: false,
         barrierColor: Colors.black87,
         pageBuilder: (_, __, ___) => TimelinePostViewer(
-          post: post,
-          isOwnPost: isOwnPost,
+          posts: _posts,
+          initialIndex: _posts
+              .indexWhere((p) => p.id == post.id)
+              .clamp(0, _posts.isEmpty ? 0 : _posts.length - 1),
+          // Every post in _posts belongs to the signed-in user — this
+          // is the own-profile screen — so ownership is unconditional.
+          isOwnPost: (_) => true,
           onPostUpdated: (updated) {
             if (!mounted) return;
             final index = _posts.indexWhere((p) => p.id == updated.id);
@@ -835,9 +840,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             });
           },
           onDelete: isOwnPost
-              ? () {
+              ? (p) {
                   Navigator.pop(context);
-                  _confirmDeletePost(post, post.userId);
+                  _confirmDeletePost(p, p.userId);
                 }
               : null,
         ),

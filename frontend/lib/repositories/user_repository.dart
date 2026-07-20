@@ -4,6 +4,22 @@ import '../models/user.dart';
 import '../services/api_service.dart';
 
 class UserRepository {
+  // In-memory, per-session cache of profiles already fetched by id.
+  // Lets a profile that's been viewed once re-open instantly (no
+  // network round-trip) instead of re-paying the full request latency
+  // every time — e.g. tapping the same avatar twice, or backing out of
+  // a profile and returning to it. `fetchUserProfile` still refreshes
+  // this from the network every call so the cache never goes stale for
+  // more than one visit; `cachedUserProfile` is the synchronous,
+  // no-await lookup a screen can use to paint instantly on first frame
+  // while the real fetch runs in the background.
+  static final Map<int, User> _profileCache = {};
+
+  /// Synchronous cache lookup — returns null if this user hasn't been
+  /// fetched yet this session. Use to render immediately, then call
+  /// [fetchUserProfile] to get (and cache) the current version.
+  static User? cachedUserProfile(int userId) => _profileCache[userId];
+
   /// Fetch the currently authenticated user using the stored token.
   ///
   /// Note: [token] is accepted for call-site compatibility, but is no
@@ -48,7 +64,9 @@ class UserRepository {
             (data is Map<String, dynamic> && data.containsKey('data'))
             ? data['data']
             : data;
-        return User.fromJson(userJson);
+        final user = User.fromJson(userJson);
+        _profileCache[userId] = user;
+        return user;
       } else {
         debugPrint(
           "❌ Failed to load user profile: ${response.statusCode} - ${response.body}",
@@ -77,7 +95,9 @@ class UserRepository {
             (data is Map<String, dynamic> && data.containsKey('data'))
             ? data['data']
             : data;
-        return User.fromJson(userJson);
+        final user = User.fromJson(userJson);
+        _profileCache[userId] = user;
+        return user;
       } else {
         debugPrint("❌ Failed to update user: ${response.body}");
         return null;

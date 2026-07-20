@@ -75,12 +75,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _prayerRepo = context.read<PrayerRepository>();
     _testimonyRepo = context.read<TestimonyRepository>();
     _groupRepo = context.read<GroupChatRepository>();
+
+    // If this profile was already fetched earlier in the session, paint
+    // it on the very first frame — no spinner, no waiting on a round
+    // trip — while _load() below still runs to fetch the current
+    // version underneath. Stats/badges still show their normal loading
+    // state, since only the header (name/avatar) is cached here.
+    final cached = UserRepository.cachedUserProfile(widget.userId);
+    if (cached != null) {
+      _user = cached;
+      _loading = false;
+    }
+
     _load();
   }
 
   Future<void> _load() async {
     setState(() {
-      _loading = true;
+      // Don't flip back to the header skeleton if a cached profile is
+      // already showing (see initState) — only show it when there's
+      // genuinely nothing on screen yet.
+      _loading = _user == null;
       _detailsLoading = true;
       _postsLoading = true;
       _error = null;
@@ -259,8 +274,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         opaque: false,
         barrierColor: Colors.black87,
         pageBuilder: (_, __, ___) => TimelinePostViewer(
-          post: post,
-          isOwnPost: false,
+          posts: _posts,
+          initialIndex: _posts
+              .indexWhere((p) => p.id == post.id)
+              .clamp(0, _posts.isEmpty ? 0 : _posts.length - 1),
+          // This screen only ever shows someone else's profile (see file
+          // header note), so every post here is never the signed-in
+          // user's own — no delete option is offered.
+          isOwnPost: (_) => false,
           onPostUpdated: (updated) {
             if (!mounted) return;
             final index = _posts.indexWhere((p) => p.id == updated.id);

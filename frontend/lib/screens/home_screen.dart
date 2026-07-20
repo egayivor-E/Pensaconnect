@@ -980,10 +980,12 @@ class _HomeScreenState extends State<HomeScreen> {
           opaque: false,
           barrierColor: Colors.black87,
           pageBuilder: (_, __, ___) => TimelinePostViewer(
-            post: post,
-            isOwnPost: isOwnPost,
+            posts: [post],
+            initialIndex: 0,
+            isOwnPost: (p) =>
+                _currentUser != null && p.userId == _currentUser!.id,
             onDelete: isOwnPost
-                ? () {
+                ? (p) {
                     Navigator.pop(context);
                     // Home only shows the Activity log entry, not the
                     // post itself, so nothing in _activities needs to
