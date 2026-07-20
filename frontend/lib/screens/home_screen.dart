@@ -5,7 +5,8 @@ import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart' hide Config;
 import 'package:go_router/go_router.dart';
@@ -34,6 +35,16 @@ import '../models/activity.dart';
 import '../models/user.dart';
 import '../utils/activity_target.dart';
 import '../utils/profile_navigation.dart';
+
+// Thin wrapper around [debugPrint] gated to debug builds. `debugPrint`
+// itself still writes to the console in profile/release builds unless
+// told otherwise, which used to mean every socket/cache/load diagnostic
+// in this screen shipped straight to end users' consoles. Routing all of
+// them through here keeps the same call sites and messages (so nothing
+// about the logic changes) while making them a no-op outside kDebugMode.
+void _log(String message) {
+  if (kDebugMode) debugPrint(message);
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -196,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _loading = false;
       });
     } catch (e) {
-      debugPrint('⚠️ HomeScreen: failed to read disk feed cache: $e');
+      _log('⚠️ HomeScreen: failed to read disk feed cache: $e');
     }
   }
 
@@ -225,7 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       await prefs.setString(_diskCacheKey, payload);
     } catch (e) {
-      debugPrint('⚠️ HomeScreen: failed to write disk feed cache: $e');
+      _log('⚠️ HomeScreen: failed to write disk feed cache: $e');
     }
   }
 
@@ -382,7 +393,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // or the logged-in user actually changed (covers both "logged out"
     // -> null and "different user logged in" -> new id).
     if (!_hasLoadedOnce || newUserId != _loadedForUserId) {
-      debugPrint(
+      _log(
         '🔄 HomeScreen: auth changed ($_loadedForUserId → $newUserId), reloading',
       );
       _loadData();
@@ -460,21 +471,21 @@ class _HomeScreenState extends State<HomeScreen> {
             .getCurrentUser(token)
             .then<Object?>((u) => u)
             .catchError((e) {
-              debugPrint('⚠️ HomeScreen: failed to load profile: $e');
+              _log('⚠️ HomeScreen: failed to load profile: $e');
               return null;
             }),
         ActivityRepository()
             .fetchRecentActivities(limit: 20)
             .then<Object?>((page) => page)
             .catchError((e) {
-              debugPrint('❌ HomeScreen: failed to load activities: $e');
+              _log('❌ HomeScreen: failed to load activities: $e');
               return null;
             }),
         _notificationRepository
             .fetchUnreadCount()
             .then<Object?>((c) => c)
             .catchError((e) {
-              debugPrint(
+              _log(
                 '⚠️ HomeScreen: failed to load unread notification count: $e',
               );
               return null;
@@ -510,7 +521,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       unreadNotifications = results[2] as int? ?? 0;
     } else {
-      debugPrint('⚠️ HomeScreen: no valid session, skipping activity fetch');
+      _log('⚠️ HomeScreen: no valid session, skipping activity fetch');
     }
 
     if (!mounted) return;
@@ -603,7 +614,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _nextActivitiesCursor = page.nextCursor;
       });
     } catch (e) {
-      debugPrint('❌ HomeScreen: failed to load more activities: $e');
+      _log('❌ HomeScreen: failed to load more activities: $e');
       // Deliberately don't flip _hasMoreActivities to false here — a
       // network blip loading more shouldn't permanently cut the user
       // off from older content. The next scroll-triggered attempt (or
@@ -673,20 +684,20 @@ class _HomeScreenState extends State<HomeScreen> {
             : Map<String, dynamic>.from(data as Map);
         _handleIncomingActivity(Activity.fromJson(json));
       } catch (e) {
-        debugPrint('❌ HomeScreen: failed to parse pushed activity: $e');
+        _log('❌ HomeScreen: failed to parse pushed activity: $e');
       }
     });
 
     socket.onConnect((_) {
-      debugPrint('✅ HomeScreen: activity socket connected');
+      _log('✅ HomeScreen: activity socket connected');
       _activitySocketRetries = 0;
     });
     socket.onConnectError((e) {
-      debugPrint('❌ HomeScreen: activity socket connect error: $e');
+      _log('❌ HomeScreen: activity socket connect error: $e');
       _scheduleActivitySocketReconnect();
     });
     socket.onDisconnect((_) {
-      debugPrint('🔌 HomeScreen: activity socket disconnected');
+      _log('🔌 HomeScreen: activity socket disconnected');
       _scheduleActivitySocketReconnect();
     });
 
@@ -701,7 +712,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _activitySocketRetries++;
     if (_activitySocketRetries > Config.maxConnectionRetries) {
-      debugPrint(
+      _log(
         '❌ HomeScreen: activity socket max reconnect attempts reached',
       );
       return;
@@ -712,7 +723,7 @@ class _HomeScreenState extends State<HomeScreen> {
       Duration(seconds: Config.connectionRetryDelay),
       () {
         if (!mounted) return;
-        debugPrint(
+        _log(
           '🔄 HomeScreen: reconnecting activity socket (attempt $_activitySocketRetries)...',
         );
         _connectActivitySocket();
@@ -1064,7 +1075,7 @@ class _HomeScreenState extends State<HomeScreen> {
           break;
       }
     } catch (e) {
-      debugPrint(
+      _log(
         '❌ Failed to sync like for ${activity.targetType}#${activity.targetId}: $e',
       );
       if (!mounted) return;
@@ -2322,6 +2333,48 @@ Future<VideoPlayerController> _reelController(String url) async {
   );
 }
 
+/// Shared "this video couldn't be loaded" icon. Used by every video
+/// player below ([_FeedReelPlayer], [_MediaViewerScreen], [_ReelPage]) —
+/// each one wraps it in its own layout (a tinted card, a bare centered
+/// icon, etc.), so only the icon itself — not its surrounding container —
+/// is factored out here.
+class _VideoUnavailableIcon extends StatelessWidget {
+  final Color color;
+  final double size;
+
+  const _VideoUnavailableIcon({required this.color, this.size = 48});
+
+  @override
+  Widget build(BuildContext context) {
+    return Icon(Icons.videocam_off_outlined, color: color, size: size);
+  }
+}
+
+/// Shared "video is still loading" spinner, factored out of the three
+/// video players for the same reason as [_VideoUnavailableIcon] above.
+class _VideoLoadingSpinner extends StatelessWidget {
+  final double size;
+  final double strokeWidth;
+  final Color color;
+
+  const _VideoLoadingSpinner({
+    this.size = 36,
+    this.strokeWidth = 4,
+    this.color = Colors.white70,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: CircularProgressIndicator(strokeWidth: strokeWidth, color: color),
+      ),
+    );
+  }
+}
+
 /// A feed-card video "reel" — muted-autoplay-on-scroll, like TikTok/IG
 /// Reels: it plays automatically when enough of the card is on screen,
 /// pauses the instant it scrolls away (so many reels in a long feed
@@ -2380,7 +2433,7 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
       setState(() => _initialized = true);
       if (_isVisible) controller.play();
     } catch (e) {
-      debugPrint('Reel video failed to load: $e');
+      _log('Reel video failed to load: $e');
       if (mounted) setState(() => _failed = true);
     }
   }
@@ -2455,11 +2508,7 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
           borderRadius: BorderRadius.circular(14),
         ),
         alignment: Alignment.center,
-        child: Icon(
-          Icons.videocam_off_outlined,
-          color: widget.accentColor,
-          size: 32,
-        ),
+        child: _VideoUnavailableIcon(color: widget.accentColor, size: 32),
       );
     }
 
@@ -2572,16 +2621,7 @@ class _FeedReelPlayerState extends State<_FeedReelPlayer> {
                     ),
                   ),
                 ] else
-                  const Center(
-                    child: SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ),
+                  const _VideoLoadingSpinner(size: 26, strokeWidth: 2),
                 Positioned(
                   right: 10,
                   bottom: 10,
@@ -2660,7 +2700,7 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
       setState(() => _initialized = true);
       controller.play();
     } catch (e) {
-      debugPrint('Media viewer video failed to load: $e');
+      _log('Media viewer video failed to load: $e');
       if (mounted) setState(() => _failed = true);
     }
   }
@@ -2726,14 +2766,10 @@ class _MediaViewerScreenState extends State<_MediaViewerScreen> {
 
   Widget _buildVideo() {
     if (_failed) {
-      return Icon(
-        Icons.videocam_off_outlined,
-        color: widget.accentColor,
-        size: 48,
-      );
+      return _VideoUnavailableIcon(color: widget.accentColor);
     }
     if (!_initialized || _controller == null) {
-      return const CircularProgressIndicator(color: Colors.white70);
+      return const _VideoLoadingSpinner();
     }
     final controller = _controller!;
     return AspectRatio(
@@ -2942,7 +2978,7 @@ class _ReelPageState extends State<_ReelPage> {
       setState(() => _initialized = true);
       if (widget.isActive) controller.play();
     } catch (e) {
-      debugPrint('Reel page video failed to load: $e');
+      _log('Reel page video failed to load: $e');
       if (mounted) setState(() => _failed = true);
     }
   }
@@ -3009,11 +3045,7 @@ class _ReelPageState extends State<_ReelPage> {
         children: [
           if (_failed)
             const Center(
-              child: Icon(
-                Icons.videocam_off_outlined,
-                color: Colors.white54,
-                size: 56,
-              ),
+              child: _VideoUnavailableIcon(color: Colors.white54, size: 56),
             )
           else if (_initialized && _controller != null)
             FittedBox(
@@ -3025,9 +3057,7 @@ class _ReelPageState extends State<_ReelPage> {
               ),
             )
           else
-            const Center(
-              child: CircularProgressIndicator(color: Colors.white70),
-            ),
+            const _VideoLoadingSpinner(),
           if (_initialized &&
               _controller != null &&
               !_controller!.value.isPlaying)
