@@ -444,15 +444,42 @@ class AuthService extends ChangeNotifier {
   }
 
   /// Get saved access token
+  ///
+  /// ✅ FIX: AuthService used to read the access token exclusively from its
+  /// own `FlutterSecureStorage` instance, which is configured with different
+  /// Android options (`encryptedSharedPreferences: true`) than ApiService's
+  /// storage instance. On Android these can be backed by physically
+  /// different stores, so writes to one are invisible to the other even
+  /// though both use the same key name ('access_token').
+  ///
+  /// In practice this meant: login wrote the token into AuthService's
+  /// storage, but every subsequent background refresh (ApiService.
+  /// refreshToken() → setTokens()) only ever updated ApiService's copy.
+  /// AuthService's copy — the one SocketIoService reads via
+  /// AuthService().getToken() — was frozen at its login-time value forever.
+  /// After the access token's ~1hr lifetime expired, any WebSocket
+  /// (re)connect would keep sending that same dead token and fail with
+  /// "Signature has expired", no matter how many times ApiService had
+  /// silently refreshed it in the background.
+  ///
+  /// ApiService is the only component that actually performs refreshes, so
+  /// it must be the single source of truth. We defer to its live,
+  /// in-memory token first, and only fall back to our own storage for the
+  /// brief cold-start window before ApiService has initialized.
   Future<String?> getToken() async {
     try {
-      // Try secure storage first
+      final apiToken = await ApiService.getToken();
+      if (apiToken != null && apiToken.isNotEmpty) {
+        return apiToken;
+      }
+
+      // Fallback: ApiService hasn't been hydrated yet (e.g. very first
+      // read at cold start, before _loadCurrentUser() has run).
       String? token = await _secureStorage.read(key: _tokenKey);
       if (token != null && token.isNotEmpty) {
         return token;
       }
 
-      // Try SharedPreferences as fallback
       final prefs = await SharedPreferences.getInstance();
       token = prefs.getString(_tokenKey);
       return token;
@@ -463,8 +490,19 @@ class AuthService extends ChangeNotifier {
   }
 
   /// Get refresh token
+  ///
+  /// ✅ FIX: same storage split-brain as getToken() above — defer to
+  /// ApiService's live refresh token instead of our own, possibly-stale,
+  /// separately-stored copy.
   Future<String?> getRefreshToken() async {
     try {
+      await ApiService.ensureInitialized();
+      final apiRefreshToken = ApiService.refreshTokenValue;
+      if (apiRefreshToken != null && apiRefreshToken.isNotEmpty) {
+        return apiRefreshToken;
+      }
+
+      // Fallback for the same cold-start window as getToken() above.
       String? token = await _secureStorage.read(key: _refreshTokenKey);
       if (token != null && token.isNotEmpty) {
         return token;

@@ -27,6 +27,13 @@ class ApiService {
   static Stream<String?> get tokenStream => _tokenStreamController.stream;
   static String? get authToken => _authToken;
 
+  /// ✅ Live, in-memory refresh token. ApiService is the single source of
+  /// truth for tokens (it's the only place that performs background
+  /// refreshes), so other services (e.g. AuthService, SocketIoService)
+  /// should read the *current* token from here rather than keeping their
+  /// own separate copies that can silently go stale.
+  static String? get refreshTokenValue => _refreshToken;
+
   /// Get the current access token (async version for compatibility)
   static Future<String?> getToken() async {
     await ensureInitialized(); // Ensure we're initialized
