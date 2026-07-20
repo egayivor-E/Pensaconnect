@@ -5,6 +5,8 @@
 // utils/profile_navigation.dart openUserProfile()). The current user's own
 // avatar still opens the full, editable ProfileScreen — this screen is only
 // ever pushed for someone else's id.
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide Badge;
 import 'package:go_router/go_router.dart';
@@ -20,6 +22,7 @@ import '../repositories/testimony_repository.dart';
 import '../repositories/timeline_post_repository.dart';
 import '../repositories/user_repository.dart';
 import '../theme/app_style.dart';
+import '../widgets/timeline_post_viewer.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final int userId;
@@ -37,8 +40,33 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   late final TestimonyRepository _testimonyRepo;
   late final GroupChatRepository _groupRepo;
 
-  late Future<_UserProfileData> _future;
   bool _startingChat = false;
+
+  // ✅ FIX ("timeline doesn't show like on your own profile" / "delays
+  // loading" / "like is missing"): posts used to be fetched *inside* the
+  // same Future.wait as the prayer/testimony counts, all gated behind one
+  // `_detailsLoading` flag that also hid the timeline. So viewing someone
+  // else's profile made the timeline (and every like button on it) wait
+  // on two count endpoints it has nothing to do with — if either count
+  // call was slow, the timeline just sat there not rendering, looking
+  // "missing." The own-profile screen never had this problem because
+  // `_loadPosts` there runs fully independently of ProfileViewModel's
+  // stats loading. `_postsLoading` now gates only the timeline section,
+  // separately from `_detailsLoading` (stats/badges), and both start
+  // concurrently instead of stats blocking on posts or vice versa.
+  List<TimelinePost> _posts = [];
+  bool _postsLoading = true;
+  final Set<int> _likedPostIds = {};
+  final Set<int> _postActionInFlight = {};
+
+  User? _user;
+  bool _loading = true;
+  bool _detailsLoading = true;
+  String? _error;
+  int _prayersCount = 0;
+  int _testimoniesCount = 0;
+  int _groupsCount = 0;
+  List<Badge> _badges = [];
 
   @override
   void initState() {
@@ -46,63 +74,110 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _prayerRepo = context.read<PrayerRepository>();
     _testimonyRepo = context.read<TestimonyRepository>();
     _groupRepo = context.read<GroupChatRepository>();
-    _future = _load();
+    _load();
   }
 
-  Future<_UserProfileData> _load() async {
-    final user = await _userRepo.fetchUserProfile(widget.userId);
-    if (user == null) {
-      throw Exception('User not found');
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _detailsLoading = true;
+      _postsLoading = true;
+      _error = null;
+    });
+
+    // Posts don't depend on `_user` or on the stats calls at all — they
+    // only need widget.userId, which is already known — so kick them off
+    // immediately and let them render the moment they land, completely
+    // independently of everything below.
+    unawaited(_loadPosts());
+
+    try {
+      final user = await _userRepo.fetchUserProfile(widget.userId);
+      if (user == null) {
+        throw Exception('User not found');
+      }
+      if (!mounted) return;
+      // Header can render now — nothing below depends on it finishing.
+      setState(() {
+        _user = user;
+        _loading = false;
+      });
+
+      // ✅ FIX ("why is it slow"), part 1: these two calls are
+      // independent of each other (neither needs the other's result), but
+      // were previously `await`-ed one after another, so the screen
+      // waited for the *sum* of both round-trips instead of just the
+      // slower one. Future.wait runs them concurrently — each
+      // .catchError still applies per-call, so one endpoint failing
+      // still can't block the other from rendering.
+      final results = await Future.wait([
+        _prayerRepo.countUserPrayers(widget.userId).catchError((_) => 0),
+        _testimonyRepo.countUserTestimonies(widget.userId).catchError((_) => 0),
+      ]);
+
+      final prayersCount = results[0];
+      final testimoniesCount = results[1];
+
+      // ✅ FIX: this used to call _groupRepo.getGroups(), but that hits
+      // GET /group-chats/, which the backend scopes to the *logged-in*
+      // viewer's own memberships (see backend/api/v1/group_chats.py —
+      // it reads get_jwt_identity(), not widget.userId). So every profile
+      // you viewed showed *your own* group count instead of theirs.
+      // user.groupChatsCount comes from the same GET /users/:id call that
+      // fetched `user` above, and the backend computes it from that
+      // specific user's own group_memberships (see User.to_dict() in
+      // backend/models.py), so it's actually scoped correctly.
+      final groupsCount = user.groupChatsCount;
+
+      // Same rules as the own-profile screen (models/profile_view_model.dart),
+      // applied to *this* user's own counts/join-date — not the viewer's —
+      // so badges shown here actually belong to the person being viewed.
+      final badges = computeBadges(
+        prayersCount: prayersCount,
+        testimoniesCount: testimoniesCount,
+        groupsCount: groupsCount,
+        createdAt: user.createdAt,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _prayersCount = prayersCount;
+        _testimoniesCount = testimoniesCount;
+        _groupsCount = groupsCount;
+        _badges = badges;
+        _detailsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+        _detailsLoading = false;
+      });
     }
+  }
 
-    // ✅ FIX: these three calls are independent of each other (none needs
-    // another's result), but were previously `await`-ed one after another,
-    // so the screen waited for the *sum* of all three round-trips instead
-    // of just the slowest one. Future.wait runs them concurrently — each
-    // .catchError still applies per-call, so one endpoint failing (e.g.
-    // groups not shared with this viewer) still can't block the others
-    // from rendering.
-    final results = await Future.wait([
-      _postsRepo
-          .fetchUserPosts(widget.userId)
-          .catchError((_) => <TimelinePost>[]),
-      _prayerRepo.countUserPrayers(widget.userId).catchError((_) => 0),
-      _testimonyRepo.countUserTestimonies(widget.userId).catchError((_) => 0),
-    ]);
-
-    final posts = results[0] as List<TimelinePost>;
-    final prayersCount = results[1] as int;
-    final testimoniesCount = results[2] as int;
-
-    // ✅ FIX: this used to call _groupRepo.getGroups(), but that hits
-    // GET /group-chats/, which the backend scopes to the *logged-in*
-    // viewer's own memberships (see backend/api/v1/group_chats.py —
-    // it reads get_jwt_identity(), not widget.userId). So every profile
-    // you viewed showed *your own* group count instead of theirs.
-    // user.groupChatsCount comes from the same GET /users/:id call that
-    // fetched `user` above, and the backend computes it from that
-    // specific user's own group_memberships (see User.to_dict() in
-    // backend/models.py), so it's actually scoped correctly.
-    final groupsCount = user.groupChatsCount;
-
-    // Same rules as the own-profile screen (models/profile_view_model.dart),
-    // applied to *this* user's own counts/join-date — not the viewer's —
-    // so badges shown here actually belong to the person being viewed.
-    final badges = computeBadges(
-      prayersCount: prayersCount,
-      testimoniesCount: testimoniesCount,
-      groupsCount: groupsCount,
-      createdAt: user.createdAt,
-    );
-
-    return _UserProfileData(
-      user: user,
-      posts: posts,
-      prayersCount: prayersCount,
-      testimoniesCount: testimoniesCount,
-      groupsCount: groupsCount,
-      badges: badges,
-    );
+  Future<void> _loadPosts() async {
+    try {
+      final posts = await _postsRepo.fetchUserPosts(widget.userId);
+      if (!mounted) return;
+      setState(() {
+        // Rebuilt fresh from this load's hasLiked flags, same as the
+        // own-profile screen — otherwise a like made just before a
+        // pull-to-refresh could get stomped by the server's fresher state.
+        _posts = posts;
+        _likedPostIds
+          ..clear()
+          ..addAll(posts.where((p) => p.hasLiked).map((p) => p.id));
+        _postsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _posts = [];
+        _postsLoading = false;
+      });
+    }
   }
 
   Future<void> _message(User user) async {
@@ -129,153 +204,232 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
-      body: FutureBuilder<_UserProfileData>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const _ProfileSkeleton();
-          }
-          if (snapshot.hasError || !snapshot.hasData) {
-            return _ErrorState(
-              message: "${snapshot.error ?? "Couldn't load this profile."}",
-              onRetry: () => setState(() => _future = _load()),
-            );
-          }
+  // Optimistic like/unlike, mirroring _toggleLike on the own-profile
+  // screen — flips the UI immediately and rolls back only if the request
+  // actually fails, instead of waiting a full round-trip to react.
+  Future<void> _toggleLike(TimelinePost post) async {
+    if (_postActionInFlight.contains(post.id)) return;
+    final index = _posts.indexWhere((p) => p.id == post.id);
+    if (index == -1) return;
 
-          final data = snapshot.data!;
-          return RefreshIndicator(
-            onRefresh: () async {
-              setState(() => _future = _load());
-              await _future;
-            },
-            child: CustomScrollView(
-              slivers: [
-                SliverAppBar(
-                  pinned: true,
-                  stretch: true,
-                  expandedHeight: 300,
-                  backgroundColor: AppColors.inkDusk,
-                  iconTheme: const IconThemeData(color: Colors.white),
-                  flexibleSpace: FlexibleSpaceBar(
-                    stretchModes: const [StretchMode.zoomBackground],
-                    background: _ProfileHeader(user: data.user),
-                  ),
-                ),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          height: 44,
-                          child: FilledButton.icon(
-                            onPressed: _startingChat
-                                ? null
-                                : () => _message(data.user),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: AppColors.emberGold,
-                              foregroundColor: AppColors.inkDusk,
-                              shape: AppShapes.pill,
-                            ),
-                            icon: _startingChat
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: AppColors.inkDusk,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.chat_bubble_outline_rounded,
-                                    size: 18,
-                                  ),
-                            label: Text(
-                              _startingChat ? 'Opening chat…' : 'Message',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        _StatsCard(
-                          prayersCount: data.prayersCount,
-                          testimoniesCount: data.testimoniesCount,
-                          groupsCount: data.groupsCount,
-                        ),
-                        const SizedBox(height: 24),
-                        _BadgesSection(badges: data.badges),
-                        const SizedBox(height: 24),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.dynamic_feed_rounded,
-                              size: 18,
-                              color: theme.colorScheme.onSurface.withOpacity(
-                                0.6,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Timeline',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                    ),
-                  ),
-                ),
-                if (data.posts.isEmpty)
-                  const SliverToBoxAdapter(child: _EmptyPosts())
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) => Padding(
-                          padding: const EdgeInsets.only(bottom: 14),
-                          child: _PostCard(post: data.posts[index]),
-                        ),
-                        childCount: data.posts.length,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          );
-        },
+    final wasLiked = _likedPostIds.contains(post.id);
+    setState(() {
+      _postActionInFlight.add(post.id);
+      final current = _posts[index];
+      final newCount = (current.likeCount + (wasLiked ? -1 : 1)).clamp(
+        0,
+        1 << 31,
+      );
+      _posts[index] = current.copyWith(
+        likeCount: newCount,
+        hasLiked: !wasLiked,
+      );
+      wasLiked ? _likedPostIds.remove(post.id) : _likedPostIds.add(post.id);
+    });
+
+    try {
+      await _postsRepo.toggleLike(post.id);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        final current = _posts[index];
+        final revertedCount = (current.likeCount + (wasLiked ? 1 : -1)).clamp(
+          0,
+          1 << 31,
+        );
+        _posts[index] = current.copyWith(
+          likeCount: revertedCount,
+          hasLiked: wasLiked,
+        );
+        wasLiked ? _likedPostIds.add(post.id) : _likedPostIds.remove(post.id);
+      });
+    } finally {
+      if (mounted) setState(() => _postActionInFlight.remove(post.id));
+    }
+  }
+
+  // Shared full-screen viewer (image/video + like + comments) — same
+  // widget the own-profile screen uses. isOwnPost is always false here:
+  // this screen is only ever pushed for *someone else's* profile (see the
+  // file header note), so there's never a delete option to offer.
+  void _openPostViewer(TimelinePost post) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black87,
+        pageBuilder: (_, __, ___) => TimelinePostViewer(
+          post: post,
+          isOwnPost: false,
+          onPostUpdated: (updated) {
+            if (!mounted) return;
+            final index = _posts.indexWhere((p) => p.id == updated.id);
+            if (index == -1) return;
+            setState(() {
+              _posts[index] = updated;
+              updated.hasLiked
+                  ? _likedPostIds.add(updated.id)
+                  : _likedPostIds.remove(updated.id);
+            });
+          },
+        ),
       ),
     );
   }
-}
 
-class _UserProfileData {
-  final User user;
-  final List<TimelinePost> posts;
-  final int prayersCount;
-  final int testimoniesCount;
-  final int groupsCount;
-  final List<Badge> badges;
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
 
-  _UserProfileData({
-    required this.user,
-    required this.posts,
-    required this.prayersCount,
-    required this.testimoniesCount,
-    required this.groupsCount,
-    required this.badges,
-  });
+    if (_loading) {
+      return const Scaffold(body: _ProfileSkeleton());
+    }
+    if (_error != null || _user == null) {
+      return Scaffold(
+        backgroundColor: theme.colorScheme.surface,
+        body: _ErrorState(
+          message: _error ?? "Couldn't load this profile.",
+          onRetry: _load,
+        ),
+      );
+    }
+
+    final user = _user!;
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: CustomScrollView(
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              stretch: true,
+              expandedHeight: 300,
+              backgroundColor: AppColors.inkDusk,
+              iconTheme: const IconThemeData(color: Colors.white),
+              flexibleSpace: FlexibleSpaceBar(
+                stretchModes: const [StretchMode.zoomBackground],
+                background: _ProfileHeader(user: user),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      height: 44,
+                      child: FilledButton.icon(
+                        onPressed: _startingChat ? null : () => _message(user),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.emberGold,
+                          foregroundColor: AppColors.inkDusk,
+                          shape: AppShapes.pill,
+                        ),
+                        icon: _startingChat
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.inkDusk,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.chat_bubble_outline_rounded,
+                                size: 18,
+                              ),
+                        label: Text(
+                          _startingChat ? 'Opening chat…' : 'Message',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    // Stats/badges/timeline stream in a beat after the
+                    // header — show a lightweight inline spinner in their
+                    // place instead of blocking the header behind them.
+                    if (_detailsLoading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Center(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      )
+                    else ...[
+                      _StatsCard(
+                        prayersCount: _prayersCount,
+                        testimoniesCount: _testimoniesCount,
+                        groupsCount: _groupsCount,
+                      ),
+                      const SizedBox(height: 24),
+                      _BadgesSection(badges: _badges),
+                    ],
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.dynamic_feed_rounded,
+                          size: 18,
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Timeline',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ),
+              ),
+            ),
+            if (_postsLoading)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+              )
+            else if (_posts.isEmpty)
+              const SliverToBoxAdapter(child: _EmptyPosts())
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final post = _posts[index];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: _PostCard(
+                        post: post,
+                        isLiked: _likedPostIds.contains(post.id),
+                        isLiking: _postActionInFlight.contains(post.id),
+                        onTap: () => _openPostViewer(post),
+                        onLike: () => _toggleLike(post),
+                      ),
+                    );
+                  }, childCount: _posts.length),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ProfileHeader extends StatelessWidget {
@@ -545,54 +699,145 @@ class _Stat extends StatelessWidget {
 
 class _PostCard extends StatelessWidget {
   final TimelinePost post;
+  final bool isLiked;
+  final bool isLiking;
+  final VoidCallback onTap;
+  final VoidCallback onLike;
 
-  const _PostCard({required this.post});
+  const _PostCard({
+    required this.post,
+    required this.isLiked,
+    required this.isLiking,
+    required this.onTap,
+    required this.onLike,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(post.content, style: theme.textTheme.bodyMedium),
-            if (post.imageUrl != null && !post.isVideo) ...[
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: CachedNetworkImage(
-                  imageUrl: post.imageUrl!,
-                  fit: BoxFit.cover,
-                  memCacheWidth:
-                      (MediaQuery.sizeOf(context).width *
-                              MediaQuery.devicePixelRatioOf(context))
-                          .round(),
-                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                ),
+    // ✅ FIX: was rendering post.imageUrl directly. Every other screen
+    // (home feed, own profile) resolves it against Config.baseUrl first
+    // via resolveTimelineMediaUrl — without that, any post with a
+    // server-relative image path (the common case) failed to load here
+    // even though the exact same post showed its image fine elsewhere.
+    final resolvedUrl = resolveTimelineMediaUrl(post.imageUrl);
+
+    return Material(
+      color: theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: theme.colorScheme.outline.withOpacity(0.12),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.03),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
               ),
             ],
-            const SizedBox(height: 10),
-            Text(
-              DateFormat.yMMMd().add_jm().format(post.createdAt),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.5),
-              ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(post.content, style: theme.textTheme.bodyMedium),
+                if (resolvedUrl != null && !post.isVideo) ...[
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: CachedNetworkImage(
+                      imageUrl: resolvedUrl,
+                      fit: BoxFit.cover,
+                      memCacheWidth:
+                          (MediaQuery.sizeOf(context).width *
+                                  MediaQuery.devicePixelRatioOf(context))
+                              .round(),
+                      errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  ),
+                ] else if (post.isVideo) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    height: 160,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.play_circle_fill_rounded,
+                      color: Colors.white70,
+                      size: 40,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Text(
+                      DateFormat.yMMMd().add_jm().format(post.createdAt),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    ),
+                    const Spacer(),
+                    // ✅ This whole row — the reason "like is missing" —
+                    // never existed before. Same heart-toggle + counts
+                    // pattern as the own-profile grid tile, just laid out
+                    // inline instead of as an overlay badge.
+                    InkResponse(
+                      onTap: isLiking ? null : onLike,
+                      radius: 20,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isLiked
+                                ? Icons.favorite
+                                : Icons.favorite_border_rounded,
+                            size: 18,
+                            color: isLiked
+                                ? Colors.redAccent
+                                : theme.colorScheme.onSurface.withOpacity(0.6),
+                          ),
+                          if (post.likeCount > 0) ...[
+                            const SizedBox(width: 4),
+                            Text(
+                              '${post.likeCount}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Icon(
+                      Icons.mode_comment_outlined,
+                      size: 17,
+                      color: theme.colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                    if (post.commentCount > 0) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        '${post.commentCount}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
