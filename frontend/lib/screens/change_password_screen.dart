@@ -112,8 +112,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                             labelText: 'New Password',
                             prefixIcon: Icon(Icons.lock_reset_outlined),
                           ),
-                          validator: (v) => v!.length < 6
-                              ? 'Password must be at least 6 characters'
+                          validator: (v) => v!.length < 8
+                              ? 'Password must be at least 8 characters'
                               : null,
                         ),
                         const SizedBox(height: 16),

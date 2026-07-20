@@ -229,30 +229,30 @@ def validate_username(username: str) -> ValidationResult:
     return ValidationResult(True)
 
 def validate_password(password: str) -> ValidationResult:
-    """Validate password strength"""
+    """Validate password strength.
+
+    Length-based rather than composition-based (no forced uppercase/
+    lowercase/number/special-character rules). Forced character-class
+    rules push people toward predictable patterns like "Password1!"
+    without meaningfully improving strength, and are exactly the kind
+    of rule NIST SP 800-63B recommends dropping in favor of length —
+    a longer passphrase-style password is both easier to remember and
+    harder to crack than a short one stuffed with required symbols.
+    """
     if not password:
         return ValidationResult(False, "Password is required")
-    
+
     errors = {}
-    
+
     if len(password) < 8:
         errors["length"] = "Password must be at least 8 characters long"
-    
-    if not re.search(r'[A-Z]', password):
-        errors["uppercase"] = "Password must contain at least one uppercase letter"
-    
-    if not re.search(r'[a-z]', password):
-        errors["lowercase"] = "Password must contain at least one lowercase letter"
-    
-    if not re.search(r'[0-9]', password):
-        errors["number"] = "Password must contain at least one number"
-    
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
-        errors["special"] = "Password must contain at least one special character"
-    
+
+    if len(password) > 128:
+        errors["length"] = "Password must be less than 128 characters long"
+
     if errors:
         return ValidationResult(False, "Password does not meet requirements", errors)
-    
+
     return ValidationResult(True)
 
 def validate_name(name: str, field_name: str = "Name") -> ValidationResult:

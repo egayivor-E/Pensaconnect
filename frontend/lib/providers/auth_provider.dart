@@ -150,6 +150,55 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  /// 🔹 Register method — mirrors login(): the backend's POST
+  /// /auth/register already returns access/refresh tokens and the new
+  /// user on success (see backend/api/v1/auth.py), so there's no reason
+  /// to make someone who just filled out a whole registration form type
+  /// their username and password again on the login screen right after.
+  /// This stores those tokens and hydrates the session exactly like
+  /// login() does, so the caller can go straight to '/home'.
+  Future<bool> register(Map<String, String> fields) async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final response = await ApiService.post('auth/register', fields);
+      final responseData = json.decode(response.body);
+
+      final access = responseData['data']?['access_token'];
+      final refresh = responseData['data']?['refresh_token'];
+      if (access != null && refresh != null) {
+        await ApiService.setTokens(access, refresh);
+        _token = ApiService.authToken;
+      }
+
+      final userJson = responseData['data']?['user'];
+      if (userJson != null) {
+        _currentUser = UserModel.fromJson(userJson);
+        await AuthService().setUserFromExternal(userJson);
+      }
+
+      _error = null;
+      notifyListeners();
+      return true;
+    } on ApiException catch (error) {
+      // The backend's field-level validation message (e.g. "Password
+      // must contain an uppercase letter", "username already exists")
+      // lives in error.message — surface it directly.
+      _error = error.message;
+      return false;
+    } catch (error) {
+      debugPrint("❌ Registration error: $error");
+      _error =
+          "Couldn't reach the server. Check your connection and try again.";
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// 🔹 Fetch user profile from backend using token
   Future<void> fetchProfile() async {
     if (_token == null) return;
