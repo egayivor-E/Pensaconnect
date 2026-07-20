@@ -22,6 +22,7 @@ import '../repositories/testimony_repository.dart';
 import '../repositories/timeline_post_repository.dart';
 import '../repositories/user_repository.dart';
 import '../theme/app_style.dart';
+import '../widgets/timeline_post_tile.dart';
 import '../widgets/timeline_post_viewer.dart';
 
 class UserProfileScreen extends StatefulWidget {
@@ -294,6 +295,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
 
     final user = _user!;
+    final postsWidth = MediaQuery.sizeOf(context).width;
+    final postsCrossAxisCount = postsWidth >= 1000
+        ? 5
+        : (postsWidth >= 700 ? 4 : 3);
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       body: RefreshIndicator(
@@ -407,20 +412,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             else if (_posts.isEmpty)
               const SliverToBoxAdapter(child: _EmptyPosts())
             else
+              // Same square thumbnail grid as the "Posts" tab on the
+              // owner's own profile (profile_screen.dart), so a post
+              // looks identical whether you're viewing your own profile
+              // or someone else's.
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                sliver: SliverList(
+                padding: const EdgeInsets.fromLTRB(2, 0, 2, 24),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: postsCrossAxisCount,
+                    crossAxisSpacing: 2,
+                    mainAxisSpacing: 2,
+                  ),
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final post = _posts[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: _PostCard(
-                        post: post,
-                        isLiked: _likedPostIds.contains(post.id),
-                        isLiking: _postActionInFlight.contains(post.id),
-                        onTap: () => _openPostViewer(post),
-                        onLike: () => _toggleLike(post),
-                      ),
+                    return TimelinePostTile(
+                      post: post,
+                      isLiked: _likedPostIds.contains(post.id),
+                      isInFlight: _postActionInFlight.contains(post.id),
+                      crossAxisCount: postsCrossAxisCount,
+                      onTap: () => _openPostViewer(post),
+                      onLike: () => _toggleLike(post),
                     );
                   }, childCount: _posts.length),
                 ),
@@ -692,153 +704,6 @@ class _Stat extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _PostCard extends StatelessWidget {
-  final TimelinePost post;
-  final bool isLiked;
-  final bool isLiking;
-  final VoidCallback onTap;
-  final VoidCallback onLike;
-
-  const _PostCard({
-    required this.post,
-    required this.isLiked,
-    required this.isLiking,
-    required this.onTap,
-    required this.onLike,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    // ✅ FIX: was rendering post.imageUrl directly. Every other screen
-    // (home feed, own profile) resolves it against Config.baseUrl first
-    // via resolveTimelineMediaUrl — without that, any post with a
-    // server-relative image path (the common case) failed to load here
-    // even though the exact same post showed its image fine elsewhere.
-    final resolvedUrl = resolveTimelineMediaUrl(post.imageUrl);
-
-    return Material(
-      color: theme.colorScheme.surface,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: theme.colorScheme.outline.withOpacity(0.12),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.03),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(post.content, style: theme.textTheme.bodyMedium),
-                if (resolvedUrl != null && !post.isVideo) ...[
-                  const SizedBox(height: 10),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: CachedNetworkImage(
-                      imageUrl: resolvedUrl,
-                      fit: BoxFit.cover,
-                      memCacheWidth:
-                          (MediaQuery.sizeOf(context).width *
-                                  MediaQuery.devicePixelRatioOf(context))
-                              .round(),
-                      errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                    ),
-                  ),
-                ] else if (post.isVideo) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    height: 160,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.play_circle_fill_rounded,
-                      color: Colors.white70,
-                      size: 40,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Text(
-                      DateFormat.yMMMd().add_jm().format(post.createdAt),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.5),
-                      ),
-                    ),
-                    const Spacer(),
-                    // ✅ This whole row — the reason "like is missing" —
-                    // never existed before. Same heart-toggle + counts
-                    // pattern as the own-profile grid tile, just laid out
-                    // inline instead of as an overlay badge.
-                    InkResponse(
-                      onTap: isLiking ? null : onLike,
-                      radius: 20,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isLiked
-                                ? Icons.favorite
-                                : Icons.favorite_border_rounded,
-                            size: 18,
-                            color: isLiked
-                                ? Colors.redAccent
-                                : theme.colorScheme.onSurface.withOpacity(0.6),
-                          ),
-                          if (post.likeCount > 0) ...[
-                            const SizedBox(width: 4),
-                            Text(
-                              '${post.likeCount}',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Icon(
-                      Icons.mode_comment_outlined,
-                      size: 17,
-                      color: theme.colorScheme.onSurface.withOpacity(0.6),
-                    ),
-                    if (post.commentCount > 0) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        '${post.commentCount}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

@@ -8,7 +8,6 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
 
 import '../models/badge.dart';
 import '../models/profile_view_model.dart';
@@ -18,6 +17,7 @@ import '../providers/auth_provider.dart';
 import '../repositories/timeline_post_repository.dart';
 import '../repositories/user_repository.dart';
 import '../theme/app_style.dart';
+import '../widgets/timeline_post_tile.dart';
 import '../widgets/timeline_post_viewer.dart';
 import 'create_timeline_post_screen.dart';
 import 'edit_profile_screen.dart';
@@ -792,141 +792,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       itemBuilder: (context, i) {
         final post = _posts[i];
         final isOwnPost = post.userId == user.id;
-        final isLiked = _likedPostIds.contains(post.id);
-        final isInFlight = _postActionInFlight.contains(post.id);
-        final resolvedUrl = resolveTimelineMediaUrl(post.imageUrl);
 
-        return GestureDetector(
+        // Same tile widget used on other users' profiles, so a post
+        // looks identical everywhere it appears in grid form.
+        return TimelinePostTile(
+          post: post,
+          isLiked: _likedPostIds.contains(post.id),
+          isInFlight: _postActionInFlight.contains(post.id),
+          crossAxisCount: crossAxisCount,
           onTap: () => _openPostViewer(context, post, isOwnPost),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // ✅ Was a flat black Container + static play icon —
-              // never showed anything from the actual video. Now shows
-              // the video's real first frame (paused, muted) with a
-              // play badge on top, same approach already used for
-              // forum video attachments (_AttachmentVideoThumb).
-              if (post.isVideo)
-                resolvedUrl != null
-                    ? _TimelineVideoThumb(url: resolvedUrl)
-                    : Container(
-                        color: Colors.black87,
-                        alignment: Alignment.center,
-                        child: const Icon(
-                          Icons.videocam_off_outlined,
-                          color: Colors.white,
-                          size: 32,
-                        ),
-                      )
-              else if (resolvedUrl != null)
-                CachedNetworkImage(
-                  imageUrl: resolvedUrl,
-                  fit: BoxFit.cover,
-                  memCacheWidth:
-                      ((width / crossAxisCount) *
-                              MediaQuery.devicePixelRatioOf(context))
-                          .round(),
-                  placeholder: (ctx, url) =>
-                      Container(color: theme.colorScheme.surfaceVariant),
-                  errorWidget: (_, __, ___) => Container(
-                    color: theme.colorScheme.surfaceVariant,
-                    child: const Icon(Icons.image_not_supported_outlined),
-                  ),
-                )
-              else
-                Container(
-                  color: theme.colorScheme.surfaceVariant,
-                  padding: const EdgeInsets.all(6),
-                  alignment: Alignment.center,
-                  child: Text(
-                    post.content,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-
-              // Reaction pill — every post can be reacted to (owner or
-              // not); delete lives behind the "⋮" menu in the full post
-              // viewer instead of an easy-to-mis-tap icon on every tile.
-              Positioned(
-                left: 6,
-                bottom: 6,
-                child: GestureDetector(
-                  onTap: isInFlight ? null : () => _toggleLike(post),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black45,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          isLiked ? Icons.favorite : Icons.favorite_border,
-                          color: isLiked ? Colors.redAccent : Colors.white,
-                          size: 14,
-                        ),
-                        if (post.likeCount > 0) ...[
-                          const SizedBox(width: 4),
-                          Text(
-                            '${post.likeCount}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // Comment-count badge, top-right, so it's clear the tile
-              // is tappable for comments too — not just likeable.
-              if (post.commentCount > 0)
-                Positioned(
-                  right: 6,
-                  top: 6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black45,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.mode_comment_outlined,
-                          color: Colors.white,
-                          size: 12,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${post.commentCount}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
+          onLike: () => _toggleLike(post),
         );
       },
     );
@@ -1324,108 +1199,5 @@ class _StickyTabBarDelegate extends SliverPersistentHeaderDelegate {
   bool shouldRebuild(covariant _StickyTabBarDelegate oldDelegate) {
     return oldDelegate.tabBar != tabBar ||
         oldDelegate.backgroundColor != backgroundColor;
-  }
-}
-
-// ==========================================
-// TIMELINE VIDEO THUMBNAIL (profile grid)
-// ==========================================
-
-/// Fills its grid cell with the video's real first frame (paused, no
-/// audio) plus a play badge, instead of a flat placeholder box. Same
-/// approach as _AttachmentVideoThumb in forum_detail_screen.dart, just
-/// sized to stretch across a GridView tile (StackFit.expand) rather
-/// than a fixed square.
-class _TimelineVideoThumb extends StatefulWidget {
-  final String url;
-
-  const _TimelineVideoThumb({required this.url});
-
-  @override
-  State<_TimelineVideoThumb> createState() => _TimelineVideoThumbState();
-}
-
-class _TimelineVideoThumbState extends State<_TimelineVideoThumb> {
-  VideoPlayerController? _controller;
-  bool _ready = false;
-  bool _failed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
-
-  Future<void> _init() async {
-    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
-    _controller = controller;
-    try {
-      await controller.initialize();
-      // Thumbnails just show the first frame — muted and paused, never
-      // autoplaying inside a scrolling grid.
-      await controller.setVolume(0);
-      await controller.seekTo(Duration.zero);
-      if (!mounted) return;
-      setState(() => _ready = true);
-    } catch (e) {
-      debugPrint('Timeline video thumbnail failed to load: $e');
-      if (mounted) setState(() => _failed = true);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black87,
-      child: Stack(
-        alignment: Alignment.center,
-        fit: StackFit.expand,
-        children: [
-          if (_ready && _controller != null)
-            FittedBox(
-              fit: BoxFit.cover,
-              clipBehavior: Clip.hardEdge,
-              child: SizedBox(
-                width: _controller!.value.size.width,
-                height: _controller!.value.size.height,
-                child: VideoPlayer(_controller!),
-              ),
-            )
-          else if (_failed)
-            const Icon(
-              Icons.videocam_off_outlined,
-              color: Colors.white54,
-              size: 28,
-            )
-          else
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white70,
-              ),
-            ),
-          Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.black.withOpacity(0.35),
-            ),
-            padding: const EdgeInsets.all(6),
-            child: const Icon(
-              Icons.play_arrow_rounded,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
