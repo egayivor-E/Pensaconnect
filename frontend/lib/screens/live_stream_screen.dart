@@ -2,9 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:pensaconnect/models/group_message_model.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/member.dart';
 import '../models/message_model.dart';
+import '../models/live_broadcast_model.dart';
 import '../repositories/message_repository.dart';
 import '../repositories/member_repository.dart';
 import '../repositories/auth_repository.dart';
@@ -83,6 +87,30 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   String _youtubeStatus = 'unknown';
   Timer? _youtubeStatusTimer;
 
+  // --- Permission-gated "Go Live" state (see backend/api/v1/broadcasts.py
+  // and LiveBroadcastRepository) ---------------------------------------
+  // Whether *this* user is allowed to start their own broadcast right now
+  // (admin, or explicitly granted `can_go_live`). Drives whether the
+  // "Go Live" action even appears — most viewers will never see it.
+  bool _canGoLive = false;
+  // This user's own currently-live broadcast, if any. Non-null flips the
+  // AppBar action from "Go Live" to "End Live".
+  LiveBroadcast? _myBroadcast;
+  // Everyone who's currently live, on any platform (public GET
+  // /live/broadcasts) — shown as a "Live now" strip so viewers can pick
+  // whose stream to watch instead of always seeing the single hardcoded
+  // Config.youTubeVideoId feed.
+  List<LiveBroadcast> _liveBroadcasts = [];
+  // Which broadcast is currently loaded in the main player. Null means
+  // "the default/official stream" (the pre-existing Config.youTubeVideoId
+  // behavior), so nothing about that fallback path changes for viewers who
+  // never touch the new feature.
+  LiveBroadcast? _activeSource;
+  bool _isStartingBroadcast = false;
+  Timer? _liveBroadcastsTimer;
+  ChewieController? _chewieController;
+  VideoPlayerController? _nativeVideoController;
+
   @override
   void initState() {
     super.initState();
@@ -99,6 +127,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       // working. A slow or failed broadcast-status check should never
       // block the loading spinner or trip the whole-screen error state.
       _startBroadcastStatusPolling();
+      // Same reasoning: whether this user can go live, and who else is
+      // currently live, are both enhancements on top of the default
+      // stream — never something that should block the screen loading.
+      _startLiveBroadcastsPolling();
 
       if (mounted) {
         setState(() {
@@ -432,6 +464,398 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     );
     if (!mounted) return;
     setState(() => _broadcastStatus = info.status);
+  }
+
+  // --- Go-live permission + broadcast list -----------------------------
+
+  void _startLiveBroadcastsPolling() {
+    _liveBroadcastsTimer?.cancel();
+    _refreshGoLiveState();
+    _liveBroadcastsTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _refreshGoLiveState(),
+    );
+  }
+
+  Future<void> _refreshGoLiveState() async {
+    try {
+      final results = await Future.wait([
+        _broadcastRepository.canGoLive(),
+        _broadcastRepository.listLiveBroadcasts(),
+        _broadcastRepository.myBroadcasts(),
+      ]);
+      if (!mounted) return;
+
+      final canGoLive = results[0] as bool;
+      final liveBroadcasts = results[1] as List<LiveBroadcast>;
+      final mine = results[2] as List<LiveBroadcast>;
+      LiveBroadcast? myActive;
+      for (final b in mine) {
+        if (b.isLive) {
+          myActive = b;
+          break;
+        }
+      }
+
+      setState(() {
+        _canGoLive = canGoLive;
+        _liveBroadcasts = liveBroadcasts;
+        _myBroadcast = myActive;
+        // If the broadcast we were watching just ended (or was removed),
+        // fall back to the default stream rather than staring at a dead
+        // player with no indication anything changed.
+        if (_activeSource != null &&
+            !liveBroadcasts.any((b) => b.id == _activeSource!.id)) {
+          _activeSource = null;
+        }
+      });
+    } catch (e) {
+      debugPrint('⚠️ Error refreshing go-live state: $e');
+      // Non-fatal: leave whatever state we already have in place.
+    }
+  }
+
+  Future<void> _showGoLiveSheet() async {
+    LiveBroadcastPlatform platform = LiveBroadcastPlatform.youtube;
+    final titleController = TextEditingController();
+    final streamRefController = TextEditingController();
+
+    final started = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Go Live',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 12),
+                    SegmentedButton<LiveBroadcastPlatform>(
+                      segments: const [
+                        ButtonSegment(
+                          value: LiveBroadcastPlatform.youtube,
+                          label: Text('YouTube'),
+                        ),
+                        ButtonSegment(
+                          value: LiveBroadcastPlatform.facebook,
+                          label: Text('Facebook'),
+                        ),
+                        ButtonSegment(
+                          value: LiveBroadcastPlatform.native,
+                          label: Text('In-app'),
+                        ),
+                      ],
+                      selected: {platform},
+                      onSelectionChanged: (selection) {
+                        setSheetState(() => platform = selection.first);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: titleController,
+                      decoration: const InputDecoration(
+                        labelText: 'Title (optional)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if (platform != LiveBroadcastPlatform.native) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: streamRefController,
+                        decoration: InputDecoration(
+                          labelText: platform == LiveBroadcastPlatform.youtube
+                              ? 'YouTube video ID'
+                              : 'Facebook video URL',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        "We'll give you an RTMP URL and stream key to plug "
+                        'into your broadcasting app (e.g. OBS). You\'ll go '
+                        "live as soon as it starts receiving your video.",
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _isStartingBroadcast
+                            ? null
+                            : () async {
+                                if (platform != LiveBroadcastPlatform.native &&
+                                    streamRefController.text.trim().isEmpty) {
+                                  _showErrorMessage(
+                                    platform == LiveBroadcastPlatform.youtube
+                                        ? 'Enter a YouTube video ID'
+                                        : 'Enter a Facebook video URL',
+                                  );
+                                  return;
+                                }
+                                setSheetState(
+                                  () => _isStartingBroadcast = true,
+                                );
+                                final ok = await _startBroadcast(
+                                  platform: platform,
+                                  title: titleController.text,
+                                  streamRef: streamRefController.text,
+                                );
+                                setSheetState(
+                                  () => _isStartingBroadcast = false,
+                                );
+                                if (ok && mounted) {
+                                  Navigator.of(sheetContext).pop(true);
+                                }
+                              },
+                        child: _isStartingBroadcast
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Text('Start broadcast'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    titleController.dispose();
+    streamRefController.dispose();
+
+    if (started == true) {
+      _showErrorMessage('You are now live!');
+    }
+  }
+
+  /// Returns true on success. Errors are surfaced via a snackbar rather
+  /// than thrown, since this is called from sheet UI that just needs a
+  /// yes/no to decide whether to close.
+  Future<bool> _startBroadcast({
+    required LiveBroadcastPlatform platform,
+    required String title,
+    required String streamRef,
+  }) async {
+    try {
+      final broadcast = await _broadcastRepository.startBroadcast(
+        platform: platform,
+        title: title.trim().isEmpty ? null : title.trim(),
+        streamRef: platform == LiveBroadcastPlatform.native
+            ? null
+            : streamRef.trim(),
+      );
+
+      if (!mounted) return true;
+
+      setState(() {
+        _myBroadcast = broadcast;
+        if (broadcast.isLive) {
+          _activeSource = broadcast;
+        }
+      });
+
+      if (broadcast.platform == LiveBroadcastPlatform.native) {
+        await _showNativeStreamDetails(broadcast);
+      }
+
+      await _refreshGoLiveState();
+      return true;
+    } catch (e) {
+      debugPrint('❌ Error starting broadcast: $e');
+      _showErrorMessage(
+        "Couldn't start your broadcast. ${_permissionAwareError(e)}",
+      );
+      return false;
+    }
+  }
+
+  String _permissionAwareError(Object e) {
+    final message = e.toString();
+    if (message.contains('403')) {
+      return "You don't have permission to go live.";
+    }
+    if (message.contains('503')) {
+      return 'In-app streaming is not configured on the server yet.';
+    }
+    return 'Please try again.';
+  }
+
+  Future<void> _showNativeStreamDetails(LiveBroadcast broadcast) async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Your stream details'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Enter these into your broadcasting app (e.g. OBS, Larix '
+              'Broadcaster). You\'ll appear live once it starts receiving '
+              'video.',
+            ),
+            const SizedBox(height: 16),
+            _CopyableField(
+              label: 'Server / RTMP URL',
+              value: broadcast.rtmpUrl ?? '',
+            ),
+            const SizedBox(height: 8),
+            _CopyableField(
+              label: 'Stream key',
+              value: broadcast.rtmpStreamKey ?? '',
+              obscure: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _endMyBroadcast() async {
+    final broadcast = _myBroadcast;
+    if (broadcast == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('End your broadcast?'),
+        content: Text(
+          'This will end "${broadcast.title}" for everyone watching.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('End broadcast'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await _broadcastRepository.endBroadcast(broadcast.id);
+      if (!mounted) return;
+      setState(() {
+        if (_activeSource?.id == broadcast.id) {
+          _activeSource = null;
+        }
+        _myBroadcast = null;
+      });
+      await _refreshGoLiveState();
+    } catch (e) {
+      debugPrint('❌ Error ending broadcast: $e');
+      _showErrorMessage("Couldn't end your broadcast. Please try again.");
+    }
+  }
+
+  /// Switches the main player between the default stream (source == null)
+  /// and someone's live broadcast.
+  Future<void> _selectBroadcastSource(LiveBroadcast? source) async {
+    if (_activeSource?.id == source?.id) return;
+    setState(() => _activeSource = source);
+
+    _disposeNativePlayer();
+
+    if (source == null) {
+      await _loadVideo();
+      return;
+    }
+
+    switch (source.platform) {
+      case LiveBroadcastPlatform.youtube:
+        if (mounted) setState(() => _videoFailed = false);
+        try {
+          await _controller.loadVideoById(videoId: source.streamRef ?? '');
+        } catch (e) {
+          debugPrint('Error loading broadcast video: $e');
+          if (mounted) setState(() => _videoFailed = true);
+        }
+        break;
+      case LiveBroadcastPlatform.facebook:
+        // No in-app embed player is wired up for Facebook (that needs a
+        // WebView package this app doesn't currently depend on) — open the
+        // public video URL in the browser/Facebook app instead.
+        final url = source.streamRef;
+        if (url != null && url.isNotEmpty) {
+          final uri = Uri.tryParse(url);
+          if (uri != null) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        }
+        break;
+      case LiveBroadcastPlatform.native:
+        await _initNativePlayer(source);
+        break;
+    }
+  }
+
+  Future<void> _initNativePlayer(LiveBroadcast source) async {
+    final url = source.hlsPlaybackUrl;
+    if (url == null) return;
+    try {
+      final videoController = VideoPlayerController.networkUrl(Uri.parse(url));
+      await videoController.initialize();
+      final chewie = ChewieController(
+        videoPlayerController: videoController,
+        autoPlay: true,
+        looping: false,
+      );
+      if (!mounted) {
+        chewie.dispose();
+        videoController.dispose();
+        return;
+      }
+      setState(() {
+        _nativeVideoController = videoController;
+        _chewieController = chewie;
+      });
+    } catch (e) {
+      debugPrint('Error initializing native stream player: $e');
+      if (mounted) _showErrorMessage("Couldn't load that stream.");
+    }
+  }
+
+  void _disposeNativePlayer() {
+    _chewieController?.dispose();
+    _chewieController = null;
+    _nativeVideoController?.dispose();
+    _nativeVideoController = null;
   }
 
   Future<void> _fetchNewMessages() async {
