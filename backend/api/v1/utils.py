@@ -1,6 +1,7 @@
 from functools import wraps
 import logging
 from flask import jsonify, request, g # type: ignore
+from flask_jwt_extended import get_jwt_identity # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -64,19 +65,33 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# ✅ Admin-only decorator
-def require_admin(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        user = getattr(g, "user", None)
-        if not user:
-            return error_response("Authentication required", 401)
+# ✅ Admin check, called directly (not a decorator). This used to be
+# defined as `def require_admin(f): ...` — a decorator checking
+# g.user.is_admin, where nothing ever set g.user and User has no
+# is_admin column, so it always fell through to "unauthenticated".
+# Meanwhile bible.py calls it 6 times as `user, error = require_admin()`,
+# a function call expecting a (user, error_response_or_None) tuple, which
+# raised TypeError on every single call. Rewritten to match how it's
+# actually used, on the real identity/role pattern used elsewhere in the
+# app: get_jwt_identity() + User.has_role("admin") (see forums.py's
+# get_current_user/roles_required for the same pattern).
+#
+# jwt_required() is NOT applied here since callers already sit behind
+# their own @jwt_required() on the route; this only resolves + authorizes
+# the user identity already established by that decorator.
+def require_admin():
+    from backend.models import User
 
-        if not getattr(user, "is_admin", False):
-            return error_response("Admin access required", 403)
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id) if user_id is not None else None
 
-        return f(*args, **kwargs)
-    return decorated_function
+    if not user:
+        return None, error_response("Authentication required", 401)
+
+    if not user.has_role("admin"):
+        return None, error_response("Admin access required", 403)
+
+    return user, None
 
 # ✅ Healthcheck endpoint
 from flask import Blueprint # type: ignore

@@ -38,6 +38,19 @@ class Config:
     # bitrates, so the cap needs to scale with it. Still overridable via env.
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 500 * 1024 * 1024))  # 500 MB
 
+    # ✅ Live-stream / go-live feature config. LIVE_STREAM_GROUP_ID was
+    # referenced throughout live.py but never defined anywhere here, so
+    # every existing live-chat endpoint threw AttributeError on the first
+    # line. The rest are read by live.py's youtube-status endpoint and
+    # broadcasts.py's Mux integration; all optional/overridable via env so
+    # a missing value fails gracefully in-route rather than at import time.
+    LIVE_STREAM_GROUP_ID = os.getenv("LIVE_STREAM_GROUP_ID")
+    YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+    YOUTUBE_VIDEO_ID = os.getenv("YOUTUBE_VIDEO_ID")
+    MUX_TOKEN_ID = os.getenv("MUX_TOKEN_ID")
+    MUX_TOKEN_SECRET = os.getenv("MUX_TOKEN_SECRET")
+    MUX_WEBHOOK_SECRET = os.getenv("MUX_WEBHOOK_SECRET")
+
     @classmethod
     def is_allowed_file(cls, filename: str) -> bool:
         """Return True if `filename` has one of the allowed upload extensions."""
