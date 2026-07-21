@@ -8,6 +8,7 @@ import '../models/message_model.dart';
 import '../repositories/message_repository.dart';
 import '../repositories/member_repository.dart';
 import '../repositories/auth_repository.dart';
+import '../repositories/live_broadcast_repository.dart';
 import '../services/socketio_service.dart';
 import '../config/config.dart';
 import '../utils/validators.dart';
@@ -31,10 +32,21 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   final MemberRepository _memberRepository = MemberRepository();
   final AuthRepository _authRepository = AuthRepository();
   final SocketIoService _socketService = SocketIoService();
+  final LiveBroadcastRepository _broadcastRepository =
+      LiveBroadcastRepository();
 
   final String _groupId = Config.liveStreamGroupId;
   Timer? _pollingTimer;
   Timer? _typingTimer;
+  // ✅ Real "is this actually a live broadcast" status, from YouTube's own
+  // Data API (see LiveBroadcastRepository) — separate from _isConnected
+  // (chat socket) and _isPlayerInitialized (iframe loaded). Polled on the
+  // same 30s cadence as the backend's own cache, so this never gets more
+  // stale than the source of truth it's reading from. Starts `unknown`
+  // rather than defaulting to "live", so a video is never claimed to be
+  // broadcasting before the first real check comes back.
+  Timer? _broadcastStatusTimer;
+  YoutubeBroadcastStatus _broadcastStatus = YoutubeBroadcastStatus.unknown;
   StreamSubscription? _messageSubscription;
   StreamSubscription? _typingSubscription;
   StreamSubscription? _connectionSubscription;
@@ -60,6 +72,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   // failures (socket setup, initial data load) thrown from _initializeApp.
   bool _videoFailed = false;
 
+  // ✅ Real broadcast status ('live' / 'upcoming' / 'none' / 'not_found' /
+  // 'unknown'), fetched from the backend's YouTube Data API check — see
+  // MessageRepository.fetchYoutubeLiveStatus and backend/api/v1/live.py.
+  // Nothing in this screen previously asked YouTube whether the video was
+  // actually broadcasting; it just loaded the iframe and assumed. This
+  // drives the real "LIVE" badge in _buildLiveStatusBar, kept deliberately
+  // separate from _isConnected (which only ever reflects chat socket
+  // connectivity — see that fix above).
+  String _youtubeStatus = 'unknown';
+  Timer? _youtubeStatusTimer;
+
   @override
   void initState() {
     super.initState();
@@ -71,6 +94,11 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       _initializePlayer();
       await _initializeSocketConnection();
       await _loadInitialData();
+      // Deliberately not awaited and not inside the try's failure path —
+      // this is a "nice to have" status badge, not core to the screen
+      // working. A slow or failed broadcast-status check should never
+      // block the loading spinner or trip the whole-screen error state.
+      _startBroadcastStatusPolling();
 
       if (mounted) {
         setState(() {
@@ -385,6 +413,27 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     );
   }
 
+  // Kicks off (and re-fires on a timer) the real YouTube broadcast-status
+  // check — see LiveBroadcastRepository. 30s matches the backend's own
+  // cache window (see api/v1/live.py's @cache.cached(timeout=30)), so
+  // this never polls faster than the answer can actually change.
+  void _startBroadcastStatusPolling() {
+    _broadcastStatusTimer?.cancel();
+    _checkBroadcastStatus();
+    _broadcastStatusTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _checkBroadcastStatus(),
+    );
+  }
+
+  Future<void> _checkBroadcastStatus() async {
+    final info = await _broadcastRepository.fetchBroadcastStatus(
+      videoId: Config.youTubeVideoId,
+    );
+    if (!mounted) return;
+    setState(() => _broadcastStatus = info.status);
+  }
+
   Future<void> _fetchNewMessages() async {
     if (!mounted) return;
 
@@ -452,6 +501,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   @override
   void dispose() {
     _pollingTimer?.cancel();
+    _broadcastStatusTimer?.cancel();
     _typingTimer?.cancel();
     _messageSubscription?.cancel();
     _typingSubscription?.cancel();
@@ -587,51 +637,124 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   Widget _buildVideoPlayer() {
     return AspectRatio(
       aspectRatio: 16 / 9,
-      child: _videoFailed
-          ? Container(
-              color: Colors.black,
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.videocam_off_outlined,
-                        color: Colors.white70,
-                        size: 40,
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        "Couldn't load the video",
-                        style: TextStyle(color: Colors.white70),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          side: const BorderSide(color: Colors.white70),
-                        ),
-                        onPressed: _loadVideo,
-                        child: const Text('Retry video'),
-                      ),
-                    ],
-                  ),
-                ),
+      child: Stack(
+        children: [
+          Positioned.fill(child: _buildVideoPlayerContent()),
+          // ✅ This badge is the actual fix for the "app always looks
+          // live regardless of reality" gap — it's driven by
+          // _broadcastStatus (YouTube's own liveBroadcastContent field,
+          // see LiveBroadcastRepository), not by whether the iframe
+          // merely loaded. Hidden entirely while the video itself is
+          // broken, and hidden for `unknown`/`none` too — a badge that
+          // can only ever say "maybe" isn't worth showing.
+          if (!_videoFailed)
+            Positioned(top: 12, left: 12, child: _buildBroadcastBadge()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBroadcastBadge() {
+    return switch (_broadcastStatus) {
+      YoutubeBroadcastStatus.live => _buildStatusPill(
+        label: 'LIVE',
+        color: Colors.red,
+        showDot: true,
+      ),
+      YoutubeBroadcastStatus.upcoming => _buildStatusPill(
+        label: 'Starting soon',
+        color: Colors.amber.shade800,
+      ),
+      YoutubeBroadcastStatus.none ||
+      YoutubeBroadcastStatus.notFound ||
+      YoutubeBroadcastStatus.unknown => const SizedBox.shrink(),
+    };
+  }
+
+  Widget _buildStatusPill({
+    required String label,
+    required Color color,
+    bool showDot = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showDot) ...[
+            Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
               ),
-            )
-          : _isPlayerInitialized
-          ? YoutubePlayer(controller: _controller)
-          : Container(
-              color: Colors.black,
-              child: const Center(
-                child: CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoPlayerContent() {
+    return _videoFailed
+        ? Container(
+            color: Colors.black,
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.videocam_off_outlined,
+                      color: Colors.white70,
+                      size: 40,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      "Couldn't load the video",
+                      style: TextStyle(color: Colors.white70),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white70),
+                      ),
+                      onPressed: _loadVideo,
+                      child: const Text('Retry video'),
+                    ),
+                  ],
                 ),
               ),
             ),
-    );
+          )
+        : _isPlayerInitialized
+        ? YoutubePlayer(controller: _controller)
+        : Container(
+            color: Colors.black,
+            child: const Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
+              ),
+            ),
+          );
   }
 
   Widget _buildTabbedPanel(ThemeData theme) {
