@@ -14,8 +14,9 @@ from backend.models import (
     Testimony, TestimonyComment, TestimonyLike,
     GroupChat, GroupMember, GroupMessage,
     ForumCategory, ForumThread, ForumPost, ForumComment, ForumAttachment, ForumLike, ForumReport,
-    WorshipSong
+    WorshipSong, LiveBroadcast
 )
+from datetime import datetime, timezone
 
 from wtforms.fields.core import UnboundField
 
@@ -190,6 +191,63 @@ class WorshipSongAdmin(SafeModelView):
             model.thumbnail_url = f'https://img.youtube.com/vi/{model.video_id}/hqdefault.jpg'
         return super().on_model_change(form, model, is_created)
 
+
+class LiveBroadcastAdmin(SafeModelView):
+    """Lets an admin add/manage YouTube & Facebook live streams by hand
+    (paste a video ID / public URL) without needing the mobile app.
+
+    Native (Mux) broadcasts are started from the app and driven by Mux's
+    webhook (see backend/api/v1/broadcasts.py) -- their mux_* fields are
+    intentionally excluded from this form so nobody accidentally edits a
+    stream key or breaks the live/idle state Mux is managing.
+    """
+    column_list = ["id", "user", "platform", "title", "stream_ref", "is_live", "started_at", "ended_at"]
+    column_labels = {
+        "user": "Broadcaster",
+        "stream_ref": "Stream URL / Video ID",
+        "is_live": "Live now",
+    }
+    column_searchable_list = ["title", "stream_ref"]
+    column_filters = ["platform", "is_live"]
+    column_sortable_list = ["created_at", "started_at", "is_live"]
+
+    form_excluded_columns = SafeModelView.form_excluded_columns + [
+        "mux_stream_id", "mux_stream_key", "mux_playback_id",
+    ]
+
+    form_choices = {
+        "platform": [
+            ("youtube", "YouTube"),
+            ("facebook", "Facebook"),
+            ("native", "Native (in-app / Mux) -- leave URL blank, managed by the app"),
+        ]
+    }
+
+    form_args = {
+        "platform": {"validators": [validators.DataRequired()]},
+        "stream_ref": {
+            "validators": [validators.Optional(), validators.Length(max=500)],
+            "description": (
+                "YouTube: paste just the video ID (the part after '?v=' in the URL). "
+                "Facebook: paste the full public video URL. "
+                "Leave blank for Native/Mux broadcasts."
+            ),
+        },
+        "title": {"validators": [validators.Optional(), validators.Length(max=200)]},
+    }
+
+    def on_model_change(self, form, model, is_created):
+        if model.platform != LiveBroadcast.PLATFORM_NATIVE and not (model.stream_ref or "").strip():
+            raise ValueError("Stream URL / Video ID is required for YouTube and Facebook broadcasts.")
+
+        # Keep started_at/ended_at consistent with the is_live toggle so
+        # broadcasts added by hand behave the same as ones started from the app.
+        if model.is_live and not model.started_at:
+            model.started_at = datetime.now(timezone.utc)
+        if not model.is_live and model.started_at and not model.ended_at:
+            model.ended_at = datetime.now(timezone.utc)
+
+        return super().on_model_change(form, model, is_created)
 
 
 # ---------------------------------------------------
