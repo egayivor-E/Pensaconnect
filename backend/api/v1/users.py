@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Blueprint, request, current_app, send_from_directory, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.utils import secure_filename
@@ -312,8 +312,11 @@ def cleanup_broken_avatars():
         user_id = get_jwt_identity()
         current_user = User.query.get(user_id)
         
-        # Check if user is admin
-        if not current_user or not getattr(current_user, 'is_admin', False):
+        # Check if user is admin. Previously checked a nonexistent
+        # `is_admin` attribute (always False via getattr's default), which
+        # made this route unreachable for every user, admins included.
+        # User.has_role backs onto the real roles table (see models.py).
+        if not current_user or not current_user.has_role("admin"):
             return error_response("Admin access required", 403)
         
         upload_folder = Config.get_upload_folder()
@@ -387,3 +390,36 @@ def health_check_files():
         
     except Exception as e:
         return error_response(f"Health check failed: {str(e)}", 500)
+
+
+# ✅ Admin: grant or revoke a user's permission to start their own live
+# broadcast (see backend/api/v1/broadcasts.py — LiveBroadcast, POST /live/broadcasts).
+# Admins can always go live themselves regardless of this flag; this only
+# controls whether *other* users get a "Go Live" option.
+@users_bp.route("/<int:user_id>/broadcast-permission", methods=["PATCH"])
+@jwt_required()
+def set_broadcast_permission(user_id):
+    admin_id = get_jwt_identity()
+    admin = User.query.get(admin_id)
+    if not admin or not admin.has_role("admin"):
+        return error_response("Admin access required", 403)
+
+    data = request.get_json(silent=True) or {}
+    if "can_go_live" not in data:
+        return error_response("can_go_live (boolean) is required", 422)
+
+    target = User.query.get_or_404(user_id)
+    grant = bool(data["can_go_live"])
+
+    target.can_go_live = grant
+    target.broadcast_permission_granted_by_id = admin.id if grant else None
+    target.broadcast_permission_granted_at = datetime.now(timezone.utc) if grant else None
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Failed to update broadcast permission: {str(e)}", 500)
+
+    message = "Broadcast permission granted" if grant else "Broadcast permission revoked"
+    return success_response(target.to_dict(exclude=["password_hash"]), message)

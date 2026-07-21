@@ -1,12 +1,13 @@
 # backend/routes/live.py
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from backend.extensions import db
+from backend.extensions import db, cache
 from backend.models import Message, User, GroupChat, GroupMember
 from backend.config import Config
 from datetime import datetime, timezone
 from uuid import uuid4
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -261,3 +262,61 @@ def get_live_status():
     except Exception as e:
         logger.error(f"Error checking live stream status: {str(e)}")
         return error_response(f"Failed to check live stream status: {str(e)}", 500)
+
+# --- YouTube live-status check ---
+# The Flutter app's LiveBroadcastRepository.fetchBroadcastStatus() already
+# calls GET live/messages/youtube-status, but this route never existed on
+# the backend, so every call was a 404 silently swallowed into "unknown".
+# Uses YouTube's Data API v3 `videos.list` (part=snippet,liveStreamingDetails)
+# to read the real liveBroadcastContent field: 'live' | 'upcoming' | 'none'.
+@live_bp.route("/youtube-status", methods=["GET"])
+@jwt_required()
+def youtube_status():
+    """Check whether a YouTube video is actually broadcasting live right now."""
+    video_id = request.args.get("video_id") or Config.YOUTUBE_VIDEO_ID
+    if not video_id:
+        return success_response({"broadcast_status": "not_found"}, "No video configured")
+
+    api_key = Config.YOUTUBE_API_KEY
+    if not api_key:
+        # Not a hard failure: lets the app run before a YouTube key is
+        # provisioned, just without real live-status detection.
+        return success_response({"broadcast_status": "unknown"}, "YouTube API key not configured")
+
+    cache_key = f"youtube_status:{video_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return success_response(cached, "Live status retrieved (cached)")
+
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/youtube/v3/videos",
+            params={
+                "part": "snippet,liveStreamingDetails",
+                "id": video_id,
+                "key": api_key,
+            },
+            timeout=8,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items") or []
+
+        if not items:
+            result = {"broadcast_status": "not_found"}
+        else:
+            snippet = items[0].get("snippet", {})
+            live_details = items[0].get("liveStreamingDetails", {})
+            result = {
+                "broadcast_status": snippet.get("liveBroadcastContent", "none"),
+                "concurrent_viewers": live_details.get("concurrentViewers"),
+                "scheduled_start_time": live_details.get("scheduledStartTime"),
+            }
+
+        # Cached briefly so polling clients (the screen polls this on a
+        # ~30s cadence) don't burn through YouTube's API quota.
+        cache.set(cache_key, result, timeout=30)
+        return success_response(result, "Live status retrieved")
+
+    except requests.RequestException as e:
+        logger.error(f"YouTube status check failed for video {video_id}: {e}")
+        return success_response({"broadcast_status": "unknown"}, "YouTube check failed")

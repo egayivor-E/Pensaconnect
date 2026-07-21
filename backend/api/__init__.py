@@ -20,6 +20,7 @@ from .v1.resources import resources_bp
 from .v1.home import home_bp
 from .v1.activities import activities_bp
 from .v1.live import live_bp
+from .v1.broadcasts import broadcasts_bp
 from .v1.messages import messages_bp
 from .v1.bible import bible_bp
 from .v1.forums import forums_bp
@@ -47,6 +48,7 @@ api_v1.register_blueprint(resources_bp)
 api_v1.register_blueprint(home_bp)
 api_v1.register_blueprint(activities_bp)
 api_v1.register_blueprint(live_bp)
+api_v1.register_blueprint(broadcasts_bp)
 api_v1.register_blueprint(messages_bp)
 api_v1.register_blueprint(bible_bp)
 api_v1.register_blueprint(forums_bp)

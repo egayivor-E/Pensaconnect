@@ -10,16 +10,30 @@ class UserModel {
   final int id;
   final String username;
   final List<String> roles;
+  final bool canGoLive;
 
-  UserModel({required this.id, required this.username, required this.roles});
+  UserModel({
+    required this.id,
+    required this.username,
+    required this.roles,
+    this.canGoLive = false,
+  });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
     return UserModel(
       id: _parseId(json['id']),
       username: json['username'] ?? '',
       roles: List<String>.from(json['roles'] ?? []),
+      canGoLive: json['can_go_live'] == true,
     );
   }
+
+  bool get isAdmin => roles.contains('admin');
+
+  /// Whether this user should see a "Go Live" option: admins always can,
+  /// everyone else needs the can_go_live permission an admin grants (see
+  /// LiveBroadcastRepository.setBroadcastPermission).
+  bool get canStartBroadcast => isAdmin || canGoLive;
 
   /// ✅ Safe parser for id (works with both int and string from backend)
   static int _parseId(dynamic value) {

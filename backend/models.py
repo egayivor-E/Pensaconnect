@@ -158,6 +158,14 @@ class User(BaseModel,  UserMixin):
     # their posts in the UI and to gate who is allowed to post as them.
     is_bot = db.Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # ✅ Go-live permission: admins explicitly grant this to specific users
+    # (see PATCH /api/v1/users/<id>/broadcast-permission) so they can start
+    # their own live broadcast (see LiveBroadcast below). Admins can always
+    # go live regardless of this flag (checked via has_role("admin")).
+    can_go_live = db.Column(Boolean, default=False, nullable=False, server_default="false")
+    broadcast_permission_granted_by_id = db.Column(db.BigInteger, db.ForeignKey('users.id'))
+    broadcast_permission_granted_at = db.Column(DateTime(timezone=True))
+
     # --- Relationships ---
     posts = relationship('Post', back_populates='author', cascade='all, delete-orphan', foreign_keys='Post.user_id')
     approved_posts = relationship('Post', back_populates='approver', foreign_keys='Post.approved_by_id')
@@ -312,6 +320,7 @@ class User(BaseModel,  UserMixin):
         data = super().to_dict(exclude=default_exclude)
         data["full_name"] = self.get_full_name()
         data["roles"] = [r.name for r in self.roles] # return multiple roles
+        data["can_go_live"] = self.can_go_live
         data["group_chats_count"] = len([gm for gm in self.group_memberships if gm.is_active])
         data["groups_created_count"] = len([gc for gc in self.group_chats_created if gc.is_active])
         
@@ -1779,6 +1788,85 @@ class GroupMessage(BaseModel):
         
         
 
+
+
+class LiveBroadcast(BaseModel):
+    """A single live broadcast, started by one user, on one platform.
+
+    Multiple rows can have is_live=True at once (multiple users broadcasting
+    simultaneously is allowed by design -- see backend/api/v1/broadcasts.py).
+    Replaces the old hardcoded Config.YOUTUBE_VIDEO_ID approach: the
+    frontend now fetches the current list of live broadcasts instead of
+    assuming a single fixed video is always the stream.
+    """
+    __tablename__ = "live_broadcasts"
+
+    PLATFORM_YOUTUBE = "youtube"
+    PLATFORM_FACEBOOK = "facebook"
+    PLATFORM_NATIVE = "native"
+    PLATFORMS = (PLATFORM_YOUTUBE, PLATFORM_FACEBOOK, PLATFORM_NATIVE)
+
+    user_id = db.Column(db.BigInteger, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    platform = db.Column(db.String(20), nullable=False)
+    title = db.Column(db.String(200))
+
+    # For youtube: the video ID. For facebook: the public video/post URL.
+    # Unused (null) for native -- see the mux_* fields instead.
+    stream_ref = db.Column(db.String(500))
+
+    is_live = db.Column(db.Boolean, default=False, nullable=False)
+    started_at = db.Column(db.DateTime(timezone=True))
+    ended_at = db.Column(db.DateTime(timezone=True))
+
+    # Mux (mux.com) fields -- only populated when platform == 'native'.
+    # mux_stream_key is the RTMP stream key handed to the *broadcaster's*
+    # encoder; it must never be exposed to viewers, only to the broadcast's
+    # owner or an admin (see LiveBroadcast.to_broadcaster_dict).
+    mux_stream_id = db.Column(db.String(100))
+    mux_stream_key = db.Column(db.String(200))
+    mux_playback_id = db.Column(db.String(100))
+
+    user = db.relationship('User', backref=db.backref('live_broadcasts', cascade='all, delete-orphan'))
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "platform IN ('youtube', 'facebook', 'native')",
+            name='ck_live_broadcast_platform'
+        ),
+        db.Index('ix_live_broadcasts_user_live', 'user_id', 'is_live'),
+        db.Index('ix_live_broadcasts_is_live', 'is_live'),
+    )
+
+    def to_dict(self):
+        """Public-safe shape: what any viewer is allowed to see."""
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "platform": self.platform,
+            "title": self.title,
+            "stream_ref": self.stream_ref if self.platform != self.PLATFORM_NATIVE else None,
+            "playback_id": self.mux_playback_id if self.platform == self.PLATFORM_NATIVE else None,
+            "is_live": self.is_live,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "ended_at": self.ended_at.isoformat() if self.ended_at else None,
+            "broadcaster": {
+                "id": self.user.id,
+                "username": self.user.username,
+                "full_name": self.user.get_full_name(),
+                "profile_picture": self.user.profile_picture,
+            } if self.user else None,
+        }
+
+    def to_broadcaster_dict(self):
+        """Adds the RTMP ingest details -- only ever returned to this
+        broadcast's own owner or an admin, never to the public list."""
+        data = self.to_dict()
+        data["stream_ref"] = self.stream_ref
+        if self.platform == self.PLATFORM_NATIVE:
+            data["mux_stream_id"] = self.mux_stream_id
+            data["rtmp_stream_key"] = self.mux_stream_key
+            data["rtmp_url"] = "rtmps://global-live.mux.com:443/app"
+        return data
 
 
 class WorshipSong(db.Model):
