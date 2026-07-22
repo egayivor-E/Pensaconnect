@@ -140,12 +140,18 @@ def start_broadcast():
         )
 
         if platform == LiveBroadcast.PLATFORM_NATIVE:
-            mux_data = _create_mux_live_stream()
-            if mux_data is None:
+            try:
+                mux_data = _create_mux_live_stream()
+            except MuxConfigMissing:
                 return error_response(
                     "Native streaming isn't configured on this server yet "
                     "(missing MUX_TOKEN_ID/MUX_TOKEN_SECRET)",
                     503,
+                )
+            except MuxRequestFailed as e:
+                return error_response(
+                    f"Mux rejected the live stream request: {e}",
+                    502,
                 )
             broadcast.mux_stream_id = mux_data["stream_id"]
             broadcast.mux_stream_key = mux_data["stream_key"]
@@ -264,10 +270,21 @@ def _mux_auth():
     return (token_id, token_secret)
 
 
+class MuxConfigMissing(Exception):
+    """Raised only when MUX_TOKEN_ID/MUX_TOKEN_SECRET are absent."""
+    pass
+
+
+class MuxRequestFailed(Exception):
+    """Raised when credentials were present but Mux rejected the request."""
+    pass
+
+
 def _create_mux_live_stream():
     auth = _mux_auth()
     if not auth:
-        return None
+        # Credentials genuinely missing/empty on this server.
+        raise MuxConfigMissing("MUX_TOKEN_ID/MUX_TOKEN_SECRET not set")
     try:
         resp = requests.post(
             f"{MUX_API_BASE}/video/v1/live-streams",
@@ -286,9 +303,17 @@ def _create_mux_live_stream():
             "stream_key": data["stream_key"],
             "playback_id": data["playback_ids"][0]["id"],
         }
+    except requests.exceptions.HTTPError as e:
+        # Credentials WERE present and a request WAS sent to Mux — this is
+        # NOT a "missing keys" situation. Log Mux's actual error body so we
+        # can see why it was rejected (bad payload, token not scoped for
+        # live streams, wrong Mux environment, etc).
+        body = e.response.text if e.response is not None else "<no body>"
+        logger.error(f"Mux create live stream failed: {e} — response body: {body}")
+        raise MuxRequestFailed(body) from e
     except Exception as e:
-        logger.error(f"Mux create live stream failed: {e}")
-        return None
+        logger.error(f"Mux create live stream failed (network/other error): {e}")
+        raise MuxRequestFailed(str(e)) from e
 
 
 def _disable_mux_live_stream(stream_id):
