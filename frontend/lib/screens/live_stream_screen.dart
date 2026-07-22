@@ -1193,6 +1193,22 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   }
 
   Widget _buildVideoPlayerContent() {
+    if (_activeSource?.platform == LiveBroadcastPlatform.native) {
+      final chewie = _chewieController;
+      if (chewie == null) {
+        // _initNativePlayer hasn't finished (or failed silently) yet.
+        return Container(
+          color: Colors.black,
+          child: const Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
+            ),
+          ),
+        );
+      }
+      return Chewie(controller: chewie);
+    }
+
     return _videoFailed
         ? Container(
             color: Colors.black,
