@@ -119,33 +119,33 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   }
 
   Future<void> _initializeApp() async {
+    // Render the real screen on the very next frame. Everything below talks
+    // to the network and fills in its own corner of the UI as data arrives
+    // (chat via _handleIncomingMessages, members via _loadOnlineMembers,
+    // connection badge via _handleConnectionStatus, video via
+    // _isPlayerInitialized) — none of that needs to block first paint.
+    // Previously this awaited the socket handshake and the initial data
+    // fetch *before* flipping _isLoading, so a slow or flaky connection
+    // left the whole screen showing nothing but a spinner.
     try {
       _initializePlayer();
-      await _initializeSocketConnection();
-      await _loadInitialData();
-      // Deliberately not awaited and not inside the try's failure path —
-      // this is a "nice to have" status badge, not core to the screen
-      // working. A slow or failed broadcast-status check should never
-      // block the loading spinner or trip the whole-screen error state.
-      _startBroadcastStatusPolling();
-      // Same reasoning: whether this user can go live, and who else is
-      // currently live, are both enhancements on top of the default
-      // stream — never something that should block the screen loading.
-      _startLiveBroadcastsPolling();
-
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = 'Failed to initialize live stream: $e';
-        });
-      }
+      debugPrint('❌ Error initializing player: $e');
     }
+
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+
+    // Fire-and-forget: each of these already handles its own errors
+    // internally (socket connect failure falls back to polling; data load
+    // failure is caught and logged) so there's nothing to await here.
+    unawaited(_initializeSocketConnection());
+    unawaited(_loadInitialData());
+    _startBroadcastStatusPolling();
+    _startLiveBroadcastsPolling();
   }
 
   void _initializePlayer() {
@@ -957,7 +957,6 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   Future<void> _retryConnection() async {
     setState(() {
       _errorMessage = '';
-      _isLoading = true;
     });
     await _initializeApp();
   }

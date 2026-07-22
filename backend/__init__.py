@@ -50,9 +50,17 @@ def _set_csp_headers(app: Flask):
             f"default-src 'self'; "
             f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
             f"style-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
-            f"img-src 'self' data:; "
+            f"img-src 'self' data: https://i.ytimg.com https://yt3.ggpht.com; "
             f"font-src 'self' https://cdn.jsdelivr.net; "
             f"connect-src 'self' https://pensaconnect-pjz9.onrender.com https://pensaconnect-pjz9.onrender.com https://pensaconnect-1.onrender.com; "
+            # ✅ FIX: without frame-src, browsers fall back to default-src
+            # ('self' only) for iframes, which silently blocks the YouTube
+            # embed — no JS error, no Dart exception, the player's ready
+            # event just never fires and the spinner spins forever. Both
+            # youtube.com and youtube-nocookie.com are needed since the
+            # IFrame Player API can serve from either depending on privacy
+            # mode.
+            f"frame-src https://www.youtube.com https://www.youtube-nocookie.com; "
             f"object-src 'none'; "
             f"base-uri 'self'; "
             f"form-action 'self'; "
