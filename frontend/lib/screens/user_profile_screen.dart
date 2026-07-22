@@ -16,7 +16,9 @@ import 'package:provider/provider.dart';
 import '../models/badge.dart';
 import '../models/timeline_post_model.dart';
 import '../models/user.dart';
+import '../providers/auth_provider.dart';
 import '../repositories/group_chat_repository.dart';
+import '../repositories/live_broadcast_repository.dart';
 import '../repositories/prayer_repository.dart';
 import '../repositories/testimony_repository.dart';
 import '../repositories/timeline_post_repository.dart';
@@ -37,11 +39,16 @@ class UserProfileScreen extends StatefulWidget {
 class _UserProfileScreenState extends State<UserProfileScreen> {
   final _userRepo = UserRepository();
   final _postsRepo = TimelinePostRepository();
+  final _liveBroadcastRepo = LiveBroadcastRepository();
   late final PrayerRepository _prayerRepo;
   late final TestimonyRepository _testimonyRepo;
   late final GroupChatRepository _groupRepo;
 
   bool _startingChat = false;
+
+  // Admin-only: whether a "granting/revoking broadcast permission" request
+  // is currently in flight, to disable the toggle and avoid double-submits.
+  bool _updatingBroadcastPermission = false;
 
   // ✅ FIX ("timeline doesn't show like on your own profile" / "delays
   // loading" / "like is missing"): posts used to be fetched *inside* the
@@ -264,6 +271,46 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
+  // Admin-only: grant or revoke this user's permission to start their own
+  // live broadcast. Maps to PATCH /users/<id>/broadcast-permission (admin
+  // JWT required server-side too, so this is defense in depth, not the
+  // only guard). Updates `_user` optimistically-but-confirmed: the toggle
+  // only flips once the request actually succeeds, and reverts with an
+  // error message if it fails.
+  Future<void> _setBroadcastPermission(bool grant) async {
+    if (_updatingBroadcastPermission || _user == null) return;
+    setState(() => _updatingBroadcastPermission = true);
+    try {
+      await _liveBroadcastRepo.setBroadcastPermission(_user!.id, grant);
+      if (!mounted) return;
+      setState(() {
+        _user = _user!.copyWith(canGoLive: grant);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            grant
+                ? '${_user!.getFullName()} can now go live.'
+                : '${_user!.getFullName()} can no longer go live.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ Error updating broadcast permission: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text("Couldn't update broadcast permission."),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _updatingBroadcastPermission = false);
+    }
+  }
+
   // Shared full-screen viewer (image/video + like + comments) — same
   // widget the own-profile screen uses. isOwnPost is always false here:
   // this screen is only ever pushed for *someone else's* profile (see the
@@ -371,6 +418,22 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         ),
                       ),
                     ),
+                    // Admin-only control: grant/revoke this user's
+                    // permission to start their own live broadcast. Hidden
+                    // for admins themselves, since they can already go
+                    // live regardless of this flag (see
+                    // UserModel.canStartBroadcast) — showing a toggle that
+                    // does nothing for them would be confusing.
+                    if (context.watch<AuthProvider>().currentUser?.isAdmin ==
+                            true &&
+                        !user.roles.contains('admin')) ...[
+                      const SizedBox(height: 12),
+                      _BroadcastPermissionCard(
+                        canGoLive: user.canGoLive,
+                        updating: _updatingBroadcastPermission,
+                        onChanged: _setBroadcastPermission,
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     // Stats/badges/timeline stream in a beat after the
                     // header — show a lightweight inline spinner in their
@@ -675,6 +738,74 @@ class _BadgesSection extends StatelessWidget {
             ),
           )
           .toList(),
+    );
+  }
+}
+
+/// Admin-only card on another user's profile: a switch to grant or revoke
+/// that user's permission to start their own live broadcast. Maps to
+/// PATCH /users/<id>/broadcast-permission (see
+/// LiveBroadcastRepository.setBroadcastPermission).
+class _BroadcastPermissionCard extends StatelessWidget {
+  final bool canGoLive;
+  final bool updating;
+  final ValueChanged<bool> onChanged;
+
+  const _BroadcastPermissionCard({
+    required this.canGoLive,
+    required this.updating,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.emberGold.withOpacity(0.08),
+        borderRadius: AppShapes.archBorder(top: 16, bottom: 16).borderRadius,
+        border: Border.all(color: AppColors.emberGold.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.sensors_rounded, size: 20, color: AppColors.emberGold),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Allow to go live',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  canGoLive
+                      ? 'Can start their own live broadcast'
+                      : 'Cannot start a live broadcast yet',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (updating)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Switch(
+              value: canGoLive,
+              activeColor: AppColors.emberGold,
+              onChanged: onChanged,
+            ),
+        ],
+      ),
     );
   }
 }

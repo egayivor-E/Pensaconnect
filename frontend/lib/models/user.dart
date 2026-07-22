@@ -18,6 +18,13 @@ class User {
   // count instead of theirs.
   final int groupChatsCount;
 
+  // Whether an admin has explicitly granted this user permission to start
+  // their own live broadcast (see LiveBroadcastRepository.setBroadcastPermission
+  // / backend PATCH /users/<id>/broadcast-permission). Admins can always go
+  // live regardless of this flag — see AuthProvider's UserModel.canStartBroadcast
+  // for the equivalent check on the *current* user.
+  final bool canGoLive;
+
   User({
     required this.id,
     required this.username,
@@ -26,6 +33,7 @@ class User {
     required this.roles,
     this.createdAt,
     this.groupChatsCount = 0,
+    this.canGoLive = false,
   });
 
   // ✅ Better approach - accept baseUrl as parameter
@@ -56,6 +64,22 @@ class User {
           ? DateTime.tryParse(json['created_at'].toString())
           : null,
       groupChatsCount: (json['group_chats_count'] as num?)?.toInt() ?? 0,
+      canGoLive: json['can_go_live'] == true,
+    );
+  }
+
+  /// Returns a copy with the given fields overridden — used to reflect an
+  /// admin's broadcast-permission toggle immediately without a full refetch.
+  User copyWith({bool? canGoLive}) {
+    return User(
+      id: id,
+      username: username,
+      email: email,
+      profilePicture: profilePicture,
+      roles: roles,
+      createdAt: createdAt,
+      groupChatsCount: groupChatsCount,
+      canGoLive: canGoLive ?? this.canGoLive,
     );
   }
 
@@ -67,6 +91,7 @@ class User {
       'profile_picture': profilePicture,
       'roles': roles,
       'created_at': createdAt?.toIso8601String(),
+      'can_go_live': canGoLive,
     };
   }
 
