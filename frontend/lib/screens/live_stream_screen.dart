@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:pensaconnect/models/group_message_model.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import 'package:video_player/video_player.dart';
@@ -1483,5 +1484,72 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
     if (difference.inHours < 24) return '${difference.inHours}h ago';
     return '${difference.inDays}d ago';
+  }
+}
+
+/// A labeled read-only field with a button to copy its value to the
+/// clipboard. Used to display RTMP server URL / stream key details.
+class _CopyableField extends StatelessWidget {
+  const _CopyableField({
+    required this.label,
+    required this.value,
+    this.obscure = false,
+  });
+
+  final String label;
+  final String value;
+  final bool obscure;
+
+  Future<void> _copyToClipboard(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label copied to clipboard')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final displayValue = obscure && value.isNotEmpty
+        ? '•' * value.length
+        : (value.isEmpty ? '—' : value);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade400),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  displayValue,
+                  style: const TextStyle(fontFamily: 'monospace'),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 18),
+                tooltip: 'Copy',
+                onPressed: value.isEmpty
+                    ? null
+                    : () => _copyToClipboard(context),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
