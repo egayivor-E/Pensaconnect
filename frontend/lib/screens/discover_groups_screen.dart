@@ -103,11 +103,17 @@ class _DiscoverGroupsScreenState extends State<DiscoverGroupsScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.error_outline_rounded, size: 40, color: theme.colorScheme.error),
+              Icon(
+                Icons.error_outline_rounded,
+                size: 40,
+                color: theme.colorScheme.error,
+              ),
               const SizedBox(height: 12),
               Text(
                 "Couldn't load groups",
-                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
@@ -136,7 +142,9 @@ class _DiscoverGroupsScreenState extends State<DiscoverGroupsScreen> {
               Text(
                 "No new groups to join right now",
                 textAlign: TextAlign.center,
-                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -183,7 +191,11 @@ class _DiscoverGroupsScreenState extends State<DiscoverGroupsScreen> {
                 color: colorScheme.primary.withOpacity(0.12),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.groups_rounded, color: colorScheme.primary, size: 22),
+              child: Icon(
+                Icons.groups_rounded,
+                color: colorScheme.primary,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -194,7 +206,9 @@ class _DiscoverGroupsScreenState extends State<DiscoverGroupsScreen> {
                     group.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -228,7 +242,9 @@ class _DiscoverGroupsScreenState extends State<DiscoverGroupsScreen> {
                       onPressed: () => _join(group),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(horizontal: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
                       child: const Text('Join'),
                     ),

@@ -54,12 +54,12 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
   }
 
   Future<void> _pickVideo() async {
-    // Capped to 60 seconds so someone can't accidentally attach a huge
-    // clip that then sits uploading for minutes with no way to tell
-    // it's still working.
+    // Raised from 60s to 5 minutes. Longer clips take proportionally
+    // longer to upload — see the "Uploading..." label below and the
+    // longer upload timeout in ApiService.uploadTimeoutDuration.
     final picked = await _picker.pickVideo(
       source: ImageSource.gallery,
-      maxDuration: const Duration(seconds: 60),
+      maxDuration: const Duration(minutes: 5),
     );
     if (picked == null) return;
     setState(() {
@@ -108,7 +108,7 @@ class _CreateTimelinePostScreenState extends State<CreateTimelinePostScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.videocam_outlined),
-              title: const Text('Attach a video (max 60s)'),
+              title: const Text('Attach a video (max 5 min)'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickVideo();
