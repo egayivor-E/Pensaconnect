@@ -836,9 +836,15 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
         if (mounted) setState(() => _videoFailed = false);
         try {
           await _controller.loadVideoById(videoId: source.streamRef ?? '');
+          if (mounted) setState(() => _isPlayerInitialized = true);
         } catch (e) {
           debugPrint('Error loading broadcast video: $e');
-          if (mounted) setState(() => _videoFailed = true);
+          if (mounted) {
+            setState(() {
+              _isPlayerInitialized = false;
+              _videoFailed = true;
+            });
+          }
         }
         break;
       case LiveBroadcastPlatform.facebook:
