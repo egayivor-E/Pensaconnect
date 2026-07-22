@@ -516,6 +516,39 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     }
   }
 
+  /// Entry point for the AppBar's "go live" button. Doesn't just hide the
+  /// option for users without permission — it explains why, so someone
+  /// who thinks they should have access has something actionable to act
+  /// on (ask an admin) instead of a button that's mysteriously missing.
+  Future<void> _onGoLivePressed() async {
+    if (!_canGoLive) {
+      await _showNoPermissionDialog();
+      return;
+    }
+    await _showGoLiveSheet();
+  }
+
+  Future<void> _showNoPermissionDialog() async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.lock_outline_rounded),
+        title: const Text("You don't have permission yet"),
+        content: const Text(
+          "You don't currently have permission to start a live broadcast. "
+          'Ask an admin to grant you access from your profile.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showGoLiveSheet() async {
     LiveBroadcastPlatform platform = LiveBroadcastPlatform.youtube;
     final titleController = TextEditingController();
@@ -1005,6 +1038,24 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
             tooltip: 'Reload video',
             onPressed: _loadVideo,
           ),
+          // Always visible — tapping it either opens the go-live flow (if
+          // the user is admin or has been explicitly granted permission,
+          // see _refreshGoLiveState/_canGoLive), ends their current
+          // broadcast if they're already live, or explains why they can't
+          // go live yet rather than the option just silently not being
+          // there.
+          _myBroadcast != null
+              ? IconButton(
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  color: Colors.red,
+                  tooltip: 'End your broadcast',
+                  onPressed: _endMyBroadcast,
+                )
+              : IconButton(
+                  icon: const Icon(Icons.videocam_outlined),
+                  tooltip: 'Go live',
+                  onPressed: _onGoLivePressed,
+                ),
         ],
       ),
       body: isLargeScreen
