@@ -204,15 +204,17 @@ class AuthProvider with ChangeNotifier {
       notifyListeners();
       unawaited(PushNotificationService.instance.initialize());
       return true;
+    } catch (error) {
+      debugPrint("❌ Registration error: $error");
       // The backend's field-level validation message (e.g. "Password
       // must contain an uppercase letter", "username already exists")
       // lives in error.message — surface it directly.
-      _error = error.message;
-      return false;
-    } catch (error) {
-      debugPrint("❌ Registration error: $error");
-      _error =
-          "Couldn't reach the server. Check your connection and try again.";
+      if (error is ApiException) {
+        _error = error.message;
+      } else {
+        _error =
+            "Couldn't reach the server. Check your connection and try again.";
+      }
       return false;
     } finally {
       _isLoading = false;
