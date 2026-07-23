@@ -182,17 +182,36 @@ def notify_reply(*, recipient_id: int, actor_name: str, thread_id: int, post_id:
     try:
         nt = get_or_create_notification_type("forum_reply")
         title = "The assistant replied to your post" if is_bot else "New reply to your post"
+        message = f"{actor_name} replied to your post."
+        action_url = f"/threads/{thread_id}?post={post_id}"
         notification = Notification(
             user_id=recipient_id,
             notification_type_id=nt.id,
             title=title,
-            message=f"{actor_name} replied to your post.",
-            action_url=f"/threads/{thread_id}?post={post_id}",
+            message=message,
+            action_url=action_url,
             action_label="View reply",
             source_id=post_id,
         )
         db.session.add(notification)
         db.session.commit()
+
+        # Push notification, on top of the in-app row above — reaches the
+        # recipient even if the app isn't open. Isolated in its own
+        # try/except: the in-app notification above is already committed
+        # by this point regardless of what happens here. See
+        # backend/services/push_service.py.
+        try:
+            from backend.services.push_service import send_push_to_user
+            recipient = User.query.get(recipient_id)
+            send_push_to_user(
+                recipient,
+                title=title,
+                body=message,
+                data={"action_url": action_url, "type": "forum_reply"},
+            )
+        except Exception as push_error:
+            logger.error(f"Failed to send push for reply notification: {push_error}")
     except Exception as e:
         db.session.rollback()
         logger.error(f"Failed to create reply notification: {e}")

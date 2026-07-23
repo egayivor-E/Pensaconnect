@@ -1,7 +1,10 @@
+import logging
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.extensions import db
 from backend.models import GroupChat, GroupMember, GroupMessage, User, GroupMemberRole
+
+logger = logging.getLogger(__name__)
 
 # Blueprint registered under /api/v1/group-chats
 group_chats_bp = Blueprint("group_chats", __name__, url_prefix="/group-chats")
@@ -525,7 +528,66 @@ def send_message(group_id):
 
     db.session.add(message)
     db.session.commit()
+
+    _notify_new_message(group_id, message, sender_id=user_id)
+
     return jsonify(message.to_dict()), 201
+
+
+def _notify_new_message(group_id: int, message, sender_id: int):
+    """Push-notifies every other active member of the group about a new
+    message. Best-effort and fully isolated from send_message() itself —
+    a slow member list or a push failure must never fail the send that
+    already succeeded and committed above. See
+    backend/services/push_service.py.
+
+    Sends to *every* other member regardless of whether they're
+    currently connected over the socket — a push while the app is
+    foregrounded/connected is a harmless no-op duplicate of what
+    real-time already shows; the whole point is reaching members who
+    aren't connected right now (app closed/backgrounded)."""
+    try:
+        from backend.services.push_service import send_push_to_user
+
+        group = GroupChat.query.get(group_id)
+        if not group:
+            return
+
+        sender = User.query.get(sender_id)
+        sender_name = (
+            sender.get_full_name()
+            if sender and hasattr(sender, "get_full_name")
+            else (sender.username if sender else "Someone")
+        )
+
+        body = (message.content or "Sent an attachment").strip()
+        if len(body) > 120:
+            body = body[:117] + "..."
+
+        is_direct = group.chat_type == "direct"
+        title = sender_name if is_direct else group.name
+        push_body = body if is_direct else f"{sender_name}: {body}"
+
+        recipients = GroupMember.query.filter(
+            GroupMember.group_chat_id == group_id,
+            GroupMember.is_active == True,  # noqa: E712
+            GroupMember.user_id != sender_id,
+        ).all()
+
+        for member in recipients:
+            recipient = User.query.get(member.user_id)
+            send_push_to_user(
+                recipient,
+                title=title,
+                body=push_body,
+                data={
+                    "type": "group_message",
+                    "group_id": group_id,
+                    "group_name": group.name,
+                },
+            )
+    except Exception as e:
+        logger.error(f"Failed to send group message push notifications: {e}")
 
 
 # ---------------------------

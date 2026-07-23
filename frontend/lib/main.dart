@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:dio/dio.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:go_router/go_router.dart';
@@ -17,6 +19,7 @@ import 'package:pensaconnect/repositories/testimony_repository.dart';
 import 'package:pensaconnect/screens/CreateStudyPlanScreen.dart';
 import 'package:pensaconnect/screens/admin_upload_screen.dart';
 import 'package:pensaconnect/services/api_service.dart';
+import 'package:pensaconnect/services/push_notification_service.dart';
 import 'package:pensaconnect/services/socketio_service.dart';
 import 'package:provider/provider.dart';
 import 'providers/threads_provider.dart';
@@ -183,6 +186,31 @@ void main() {
     () async {
       try {
         WidgetsFlutterBinding.ensureInitialized();
+
+        // Best-effort Firebase init for push notifications. Fails soft —
+        // if this project hasn't been through `flutterfire configure`
+        // yet (see docs/PUSH_NOTIFICATIONS_SETUP.md), this throws and we
+        // simply skip registering the background handler; everything
+        // else about the app boots normally either way.
+        try {
+          if (Firebase.apps.isEmpty) {
+            await Firebase.initializeApp();
+          }
+          // Must be registered here, at the top level of main(), before
+          // runApp — this is what lets the OS wake a background isolate
+          // to handle a push while the app isn't running. The handler
+          // itself lives in push_notification_service.dart so it stays a
+          // true top-level function (a platform requirement).
+          FirebaseMessaging.onBackgroundMessage(
+            firebaseMessagingBackgroundHandler,
+          );
+        } catch (e) {
+          developer.log(
+            'Firebase not configured yet — push notifications disabled '
+            'for this build. See docs/PUSH_NOTIFICATIONS_SETUP.md.',
+            name: 'main',
+          );
+        }
 
         // ✅ FIX: Instagram/Facebook-grade feed scrolling needs decoded
         // photos and video thumbnails to stay resident as the user

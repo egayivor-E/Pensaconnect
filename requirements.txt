@@ -45,3 +45,5 @@ yt-dlp==2025.11.12
 gevent==25.9.1
 # File Storage (Supabase)
 supabase==2.9.1
+# Push notifications (Firebase Cloud Messaging) — see backend/services/push_service.py
+firebase-admin==6.5.0

@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart' hide Config;
 import 'package:go_router/go_router.dart';
+import 'package:pensaconnect/services/push_notification_service.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
@@ -382,6 +383,23 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadData();
     }
     _connectActivitySocket();
+    PushNotificationService.instance.pendingRoute.addListener(
+      _onPendingPushRoute,
+    );
+    // Handle a route a notification tap already queued up before this
+    // HomeScreen existed (e.g. cold start straight into a tapped push).
+    _onPendingPushRoute();
+  }
+
+  /// Fired when a push notification is tapped (see
+  /// PushNotificationService.pendingRoute) — navigates to whatever
+  /// screen the notification pointed at, then clears the pending route
+  /// so it doesn't fire again on the next rebuild.
+  void _onPendingPushRoute() {
+    final route = PushNotificationService.instance.pendingRoute.value;
+    if (route == null || !mounted) return;
+    PushNotificationService.instance.pendingRoute.value = null;
+    context.push(route.path, extra: route.extra);
   }
 
   void _onAuthChanged() {
@@ -754,6 +772,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     AuthService().removeListener(_authListener);
+    PushNotificationService.instance.pendingRoute.removeListener(
+      _onPendingPushRoute,
+    );
     _searchController.dispose();
     _searchFocusNode.dispose();
     _scrollController.removeListener(_onScroll);

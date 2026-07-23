@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart'; // ✅ FIX: needed to hydrate AuthService
+import '../services/push_notification_service.dart';
 
 /// ✅ Unified UserModel that accepts both int and string IDs
 class UserModel {
@@ -143,6 +144,12 @@ class AuthProvider with ChangeNotifier {
 
         _error = null;
         notifyListeners();
+
+        // Register this device for push notifications now that we have a
+        // valid session — no-ops safely if Firebase isn't configured yet
+        // (see PushNotificationService's doc comment).
+        unawaited(PushNotificationService.instance.initialize());
+
         return true;
       } else {
         _error = responseData['message'] ?? 'Login failed';
@@ -195,8 +202,8 @@ class AuthProvider with ChangeNotifier {
 
       _error = null;
       notifyListeners();
+      unawaited(PushNotificationService.instance.initialize());
       return true;
-    } on ApiException catch (error) {
       // The backend's field-level validation message (e.g. "Password
       // must contain an uppercase letter", "username already exists")
       // lives in error.message — surface it directly.
@@ -228,6 +235,7 @@ class AuthProvider with ChangeNotifier {
     if (cached != null) {
       _currentUser = UserModel.fromJson(cached);
       notifyListeners();
+      unawaited(PushNotificationService.instance.initialize());
       return;
     }
 
@@ -251,6 +259,7 @@ class AuthProvider with ChangeNotifier {
           await AuthService().setUserFromExternal(userJson);
 
           notifyListeners();
+          unawaited(PushNotificationService.instance.initialize());
         }
       }
     } catch (e) {
@@ -260,6 +269,14 @@ class AuthProvider with ChangeNotifier {
 
   /// 🔹 Logout method
   Future<void> logout() async {
+    // Clear the push token registration first, while the request can
+    // still authenticate — once ApiService.clearTokens() runs below,
+    // there's no session left to make this call with. Best-effort: if
+    // it fails, worst case is a stale token that gets overwritten the
+    // next time someone logs into this device (see
+    // PushNotificationService._registerToken).
+    await PushNotificationService.instance.clearToken();
+
     _token = null;
     _currentUser = null;
     await ApiService.clearTokens();

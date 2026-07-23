@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "532573763863",
+    "project_id": "pensaconnect-fa5c3",
+    "storage_bucket": "pensaconnect-fa5c3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:532573763863:android:792e32dbef43cc3ba2df52",
+        "android_client_info": {
+          "package_name": "com.yourchurch.pensaconnect"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCYSxVzF9_bFuGun-f90Qgz5kahhag-mQE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

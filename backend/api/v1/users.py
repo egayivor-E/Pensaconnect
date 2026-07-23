@@ -100,6 +100,24 @@ def get_me():
     return success_response(user.to_dict(exclude=["password_hash"]))
 
 
+# ✅ Register (or clear) this device's push notification token.
+# Called by the frontend right after login/auto-login and again whenever
+# FirebaseMessaging.onTokenRefresh fires (see
+# frontend/lib/services/push_notification_service.dart), and with a null
+# token on logout so a stale token doesn't keep receiving pushes meant
+# for whoever logs in on this device next. See
+# backend/services/push_service.py for how this token actually gets used.
+@users_bp.route("/me/push-token", methods=["POST", "PATCH"])
+@jwt_required()
+def update_push_token():
+    user_id = get_jwt_identity()
+    user = User.query.get_or_404(user_id)
+    data = request.get_json() or {}
+    user.push_token = data.get("push_token") or None
+    db.session.commit()
+    return success_response(message="Push token updated")
+
+
 # ✅ Update current user profile (for Flutter)
 @users_bp.route("/me", methods=["PATCH"])
 @jwt_required()
