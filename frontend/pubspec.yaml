@@ -77,6 +77,8 @@ dependencies:
   flutter_facebook_auth: ^7.1.2
   # Real-time
   socket_io_client: ^3.1.0
+  # Web interop (wasm-compatible replacement for dart:html)
+  web: ^1.1.0
 
 dev_dependencies:
   flutter_test:
