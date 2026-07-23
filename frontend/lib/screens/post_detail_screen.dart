@@ -219,8 +219,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                 .map(
                                   (c) => ListTile(
                                     leading: GestureDetector(
-                                      onTap: () =>
-                                          openUserProfile(context, c.authorId),
+                                      onTap: () => openUserProfile(
+                                        context,
+                                        c.authorId,
+                                        username: c.authorName,
+                                        profilePicture: c.authorAvatar,
+                                      ),
                                       child: const CircleAvatar(
                                         child: Icon(Icons.person),
                                       ),

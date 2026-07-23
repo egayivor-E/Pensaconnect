@@ -191,9 +191,10 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                             width: double.infinity,
                             height: 250,
                             fit: BoxFit.cover,
-                            memCacheWidth: (MediaQuery.sizeOf(context).width *
-                                    MediaQuery.devicePixelRatioOf(context))
-                                .round(),
+                            memCacheWidth:
+                                (MediaQuery.sizeOf(context).width *
+                                        MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
                             memCacheHeight:
                                 (250 * MediaQuery.devicePixelRatioOf(context))
                                     .round(),
@@ -267,6 +268,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                               onTap: () => openUserProfile(
                                 context,
                                 int.tryParse(testimony.authorId),
+                                username: testimony.authorName,
                               ),
                               child: CircleAvatar(
                                 backgroundColor: authorColor,
@@ -516,6 +518,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                       onTap: () => openUserProfile(
                                         context,
                                         int.tryParse(c.authorId ?? ''),
+                                        username: c.authorName,
                                       ),
                                       child: CircleAvatar(
                                         backgroundColor: commentColor,

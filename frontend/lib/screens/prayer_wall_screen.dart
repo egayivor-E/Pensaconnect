@@ -599,7 +599,12 @@ class _PrayerCardState extends State<_PrayerCard> {
                           ),
                         )
                       : GestureDetector(
-                          onTap: () => openUserProfile(context, req.userId),
+                          onTap: () => openUserProfile(
+                            context,
+                            req.userId,
+                            username: req.username,
+                            profilePicture: req.userProfilePic,
+                          ),
                           child: CircleAvatar(
                             backgroundColor: avatarColor,
                             backgroundImage: req.userProfilePic != null

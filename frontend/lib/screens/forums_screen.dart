@@ -200,8 +200,12 @@ class _ForumsScreenState extends State<ForumsScreen> {
                           Row(
                             children: [
                               GestureDetector(
-                                onTap: () =>
-                                    openUserProfile(context, post.authorId),
+                                onTap: () => openUserProfile(
+                                  context,
+                                  post.authorId,
+                                  username: post.authorName,
+                                  profilePicture: post.authorAvatar,
+                                ),
                                 child: CircleAvatar(
                                   radius: 18,
                                   backgroundColor: color,

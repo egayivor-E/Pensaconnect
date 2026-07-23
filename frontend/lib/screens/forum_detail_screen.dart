@@ -786,7 +786,12 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
     final avatar = GestureDetector(
       onTap: (isBot || authorId == null)
           ? null
-          : () => openUserProfile(context, authorId),
+          : () => openUserProfile(
+              context,
+              authorId,
+              username: name,
+              profilePicture: avatarUrl,
+            ),
       child: CircleAvatar(
         radius: radius,
         backgroundColor: color,
@@ -914,10 +919,10 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
             width: size,
             height: size,
             fit: BoxFit.cover,
-            memCacheWidth:
-                (size * MediaQuery.devicePixelRatioOf(context)).round(),
-            memCacheHeight:
-                (size * MediaQuery.devicePixelRatioOf(context)).round(),
+            memCacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
+                .round(),
+            memCacheHeight: (size * MediaQuery.devicePixelRatioOf(context))
+                .round(),
             errorWidget: (_, __, ___) => Container(
               width: size,
               height: size,

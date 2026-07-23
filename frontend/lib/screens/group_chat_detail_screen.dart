@@ -543,7 +543,12 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                   Padding(
                     padding: const EdgeInsets.only(left: 14, bottom: 3),
                     child: GestureDetector(
-                      onTap: () => openUserProfile(context, message.senderId),
+                      onTap: () => openUserProfile(
+                        context,
+                        message.senderId,
+                        username: fullName,
+                        profilePicture: profilePictureUrl,
+                      ),
                       child: Text(
                         fullName,
                         style: theme.textTheme.labelSmall?.copyWith(
@@ -669,14 +674,12 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
             ? CachedNetworkImage(
                 imageUrl: url,
                 fit: BoxFit.cover,
-                memCacheWidth: (radius *
-                        2 *
-                        MediaQuery.devicePixelRatioOf(context))
-                    .round(),
-                memCacheHeight: (radius *
-                        2 *
-                        MediaQuery.devicePixelRatioOf(context))
-                    .round(),
+                memCacheWidth:
+                    (radius * 2 * MediaQuery.devicePixelRatioOf(context))
+                        .round(),
+                memCacheHeight:
+                    (radius * 2 * MediaQuery.devicePixelRatioOf(context))
+                        .round(),
                 errorWidget: (_, __, ___) =>
                     _buildFallbackAvatar(colorScheme, fullName),
               )
@@ -689,7 +692,12 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     if (userId == null) return avatar;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => openUserProfile(context, userId),
+      onTap: () => openUserProfile(
+        context,
+        userId,
+        username: fullName,
+        profilePicture: url,
+      ),
       child: avatar,
     );
   }

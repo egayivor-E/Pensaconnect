@@ -20,6 +20,33 @@ class UserRepository {
   /// [fetchUserProfile] to get (and cache) the current version.
   static User? cachedUserProfile(int userId) => _profileCache[userId];
 
+  /// Seeds the cache with a lightweight "preview" of a user — just their
+  /// name and avatar, whatever the tap site already had on hand (a post's
+  /// author, a chat message's sender, a member list row, etc.) — so
+  /// opening their profile for the very first time paints the header
+  /// instantly instead of showing a full-screen spinner while the real
+  /// network fetch is still in flight. Called from
+  /// utils/profile_navigation.dart's openUserProfile() right before
+  /// navigating.
+  ///
+  /// Never overwrites a profile that's already cached: a real fetch is
+  /// always more complete than a preview, so once one exists it's left
+  /// alone until [fetchUserProfile] refreshes it for real.
+  static void primeProfilePreview(
+    int userId, {
+    required String username,
+    String? profilePicture,
+  }) {
+    if (_profileCache.containsKey(userId)) return;
+    _profileCache[userId] = User(
+      id: userId,
+      username: username,
+      email: '',
+      profilePicture: profilePicture,
+      roles: const [],
+    );
+  }
+
   /// Fetch the currently authenticated user using the stored token.
   ///
   /// Note: [token] is accepted for call-site compatibility, but is no

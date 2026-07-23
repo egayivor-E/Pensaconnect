@@ -712,9 +712,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _activitySocketRetries++;
     if (_activitySocketRetries > Config.maxConnectionRetries) {
-      _log(
-        '❌ HomeScreen: activity socket max reconnect attempts reached',
-      );
+      _log('❌ HomeScreen: activity socket max reconnect attempts reached');
       return;
     }
 
@@ -1192,6 +1190,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 activity.authorId != null
                     ? UserAvatar(
                         profilePicture: activity.authorAvatarUrl,
+                        username: activity.authorName,
                         size: 44,
                         userId: activity.authorId,
                       )
@@ -1333,8 +1332,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   // _handleMediaTap (rather than a wrapping onDoubleTap
                   // GestureDetector) so a single tap opens instantly —
                   // see _handleMediaTap for why.
-                  onExpand: () =>
-                      _handleMediaTap(activity, () => _openReelsViewer(activity)),
+                  onExpand: () => _handleMediaTap(
+                    activity,
+                    () => _openReelsViewer(activity),
+                  ),
                 ),
                 IgnorePointer(
                   child: AnimatedScale(
@@ -2369,7 +2370,10 @@ class _VideoLoadingSpinner extends StatelessWidget {
       child: SizedBox(
         width: size,
         height: size,
-        child: CircularProgressIndicator(strokeWidth: strokeWidth, color: color),
+        child: CircularProgressIndicator(
+          strokeWidth: strokeWidth,
+          color: color,
+        ),
       ),
     );
   }
@@ -3110,7 +3114,12 @@ class _ReelPageState extends State<_ReelPage> {
                 GestureDetector(
                   onTap: activity.authorId == null
                       ? null
-                      : () => openUserProfile(context, activity.authorId),
+                      : () => openUserProfile(
+                          context,
+                          activity.authorId,
+                          username: activity.authorName,
+                          profilePicture: activity.authorAvatarUrl,
+                        ),
                   behavior: HitTestBehavior.opaque,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,

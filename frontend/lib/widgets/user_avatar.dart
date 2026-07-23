@@ -44,7 +44,14 @@ class UserAvatar extends StatelessWidget {
     return GestureDetector(
       onTap:
           onTap ??
-          (userId != null ? () => openUserProfile(context, userId) : null),
+          (userId != null
+              ? () => openUserProfile(
+                  context,
+                  userId,
+                  username: username,
+                  profilePicture: profilePicture,
+                )
+              : null),
       child: ClipOval(
         child: SizedBox(
           width: size,
