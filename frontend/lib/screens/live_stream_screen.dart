@@ -1208,50 +1208,56 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       return Chewie(controller: chewie);
     }
 
-    return _videoFailed
-        ? Container(
-            color: Colors.black,
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.videocam_off_outlined,
-                      color: Colors.white70,
-                      size: 40,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "Couldn't load the video",
-                      style: TextStyle(color: Colors.white70),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: const BorderSide(color: Colors.white70),
-                      ),
-                      onPressed: _loadVideo,
-                      child: const Text('Retry video'),
-                    ),
-                  ],
+    if (_videoFailed) {
+      return Container(
+        color: Colors.black,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.videocam_off_outlined,
+                  color: Colors.white70,
+                  size: 40,
                 ),
-              ),
+                const SizedBox(height: 12),
+                const Text(
+                  "Couldn't load the video",
+                  style: TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white70),
+                  ),
+                  onPressed: _loadVideo,
+                  child: const Text('Retry video'),
+                ),
+              ],
             ),
-          )
-        : _isPlayerInitialized
-        ? YoutubePlayer(controller: _controller)
-        : Container(
-            color: Colors.black,
-            child: const Center(
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
-              ),
-            ),
-          );
+          ),
+        ),
+      );
+    }
+
+    // ✅ FIX: previously this widget was only mounted once
+    // `_isPlayerInitialized` was true — but that flag only ever became
+    // true *after* `_controller.loadVideoById()` resolved, and
+    // `loadVideoById()` can only actually load a video into an iframe
+    // that this very widget is responsible for creating in the first
+    // place. That's a deadlock: the widget that creates the platform
+    // view/iframe never mounted, because it was waiting on a flag that
+    // could only flip once that same widget had already loaded a video.
+    // The visible symptom was an infinite spinner with no iframe ever
+    // appearing in the DOM. `YoutubePlayer` handles its own internal
+    // loading UI, so it's safe (and necessary) to mount it unconditionally
+    // as soon as the controller exists. `_isPlayerInitialized` is kept
+    // only as bookkeeping for other logic — it no longer gates the widget.
+    return YoutubePlayer(controller: _controller);
   }
 
   Widget _buildTabbedPanel(ThemeData theme) {
