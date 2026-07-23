@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from backend.extensions import db
@@ -151,6 +152,7 @@ def get_group_chats():
     # joinedload. One GROUP BY here covers every group on the list.
     chat_ids = [gc.id for gc in group_chats]
     member_counts = {}
+    unread_counts = {}
     if chat_ids:
         member_counts = dict(
             db.session.query(GroupMember.group_chat_id, db.func.count(GroupMember.id))
@@ -158,17 +160,99 @@ def get_group_chats():
             .group_by(GroupMember.group_chat_id)
             .all()
         )
+        unread_counts = _batched_unread_counts(current_user_id=user_id, chat_ids=chat_ids)
 
     # ❌ PREVIOUS: return jsonify([gc.to_dict() for gc in group_chats])
     # ✅ FIX: Wrap the list in a dictionary with 'data', 'message', and 'status' keys
     return jsonify({
         "data": [
-            gc.to_dict(member_count=member_counts.get(gc.id, 0))
+            gc.to_dict(
+                member_count=member_counts.get(gc.id, 0),
+                unread_count=unread_counts.get(gc.id, 0),
+            )
             for gc in group_chats
         ],
         "message": "Groups fetched successfully",
         "status": "success"
     }), 200 # Ensure the status code is 200
+
+
+def _batched_unread_counts(current_user_id, chat_ids=None):
+    """Count of messages, per group chat, sent after this user's
+    last_read_at watermark for that chat and not sent by the user
+    themselves — one GROUP BY covering every chat in `chat_ids` (or every
+    chat the user belongs to, if omitted), instead of a query per chat.
+    Used for both the per-chat badges on the list endpoint and the
+    all-chats total on /group-chats/unread-count.
+    """
+    query = (
+        db.session.query(GroupMessage.group_chat_id, db.func.count(GroupMessage.id))
+        .join(
+            GroupMember,
+            db.and_(
+                GroupMember.group_chat_id == GroupMessage.group_chat_id,
+                GroupMember.user_id == current_user_id,
+                GroupMember.is_active == True,
+            ),
+        )
+        .filter(
+            GroupMessage.is_active == True,
+            GroupMessage.sender_id != current_user_id,
+            GroupMessage.created_at > GroupMember.last_read_at,
+        )
+    )
+    if chat_ids is not None:
+        if not chat_ids:
+            return {}
+        query = query.filter(GroupMessage.group_chat_id.in_(chat_ids))
+
+    return dict(query.group_by(GroupMessage.group_chat_id).all())
+
+
+# ---------------------------
+# Total unread message count across all of the user's group chats —
+# powers the badge on the floating chat button (mirrors
+# /notifications/unread-count's shape: {"count": N}).
+# ---------------------------
+@group_chats_bp.route("/unread-count", methods=["GET"])
+@jwt_required()
+def unread_count():
+    user_id = get_jwt_identity()
+    counts = _batched_unread_counts(current_user_id=user_id)
+    return jsonify({
+        "data": {"count": sum(counts.values())},
+        "message": "Unread count fetched successfully",
+        "status": "success",
+    }), 200
+
+
+# ---------------------------
+# Mark a chat as read for the current user — advances their read
+# watermark to now, clearing its unread badge (mirrors POST
+# /notifications/<id>/read).
+# ---------------------------
+@group_chats_bp.route("/<int:group_id>/read", methods=["POST"])
+@jwt_required()
+def mark_group_read(group_id):
+    user_id = get_jwt_identity()
+
+    membership = GroupMember.query.filter_by(
+        group_chat_id=group_id,
+        user_id=user_id,
+        is_active=True,
+    ).first()
+
+    if not membership:
+        return jsonify({"error": "Access denied or group not found"}), 403
+
+    membership.last_read_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        "data": {"group_id": group_id, "last_read_at": membership.last_read_at.isoformat()},
+        "message": "Chat marked as read",
+        "status": "success",
+    }), 200
 
 
 # ---------------------------

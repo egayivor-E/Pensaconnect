@@ -4,7 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/worship_song.dart';
 import './api_service.dart'; // Assuming you have an ApiService
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 class DownloadService {
@@ -304,14 +304,15 @@ class DownloadService {
       print('🌐 Web download URL: $downloadUrl');
 
       // Create anchor element
-      final anchor = html.AnchorElement(href: downloadUrl)
+      final anchor = web.HTMLAnchorElement()
+        ..href = downloadUrl
         ..target = '_blank'
         ..download =
             '${song.title}_${song.artist}.${song.isAudio ? 'mp3' : 'mp4'}'
         ..style.display = 'none';
 
       // Add to document
-      html.document.body?.children.add(anchor);
+      web.document.body?.appendChild(anchor);
 
       // Simulate progress for UI
       onProgress(0.1);
@@ -324,7 +325,7 @@ class DownloadService {
       anchor.click();
 
       // Clean up
-      html.document.body?.children.remove(anchor);
+      web.document.body?.removeChild(anchor);
 
       // Complete
       onComplete('web_download_started');

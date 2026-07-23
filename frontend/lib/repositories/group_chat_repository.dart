@@ -57,6 +57,50 @@ class GroupChatRepository {
     }
   }
 
+  /// Total unread message count across every group/direct chat the user
+  /// belongs to — used for the badge on the home screen's floating chat
+  /// button. Mirrors NotificationRepository.fetchUnreadCount().
+  Future<int> fetchUnreadCount() async {
+    try {
+      final response = await ApiService.get(
+        'group-chats/unread-count',
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> body = json.decode(response.body);
+        final data = body['data'];
+        if (data is Map<String, dynamic>) {
+          return (data['count'] as num?)?.toInt() ?? 0;
+        }
+        return 0;
+      }
+      debugPrint(
+        "❌ Failed to fetch chat unread count: ${response.statusCode} - ${response.body}",
+      );
+      return 0;
+    } catch (e) {
+      debugPrint("❌ Error fetching chat unread count: $e");
+      return 0;
+    }
+  }
+
+  /// Mark a chat as read for the current user, clearing its unread badge.
+  /// Mirrors NotificationRepository.markAsRead(). Best-effort — a failure
+  /// here shouldn't block the user from reading the chat they just opened.
+  Future<bool> markGroupRead(int groupId) async {
+    try {
+      final response = await ApiService.post(
+        'group-chats/$groupId/read',
+        const {},
+        headers: await _getHeaders(),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint("❌ Error marking chat $groupId as read: $e");
+      return false;
+    }
+  }
+
   /// Get messages for a specific group
   Future<List<GroupMessage>> getMessages(int groupId) async {
     try {
@@ -185,8 +229,12 @@ class GroupChatRepository {
         }
         return [];
       } else {
-        debugPrint("❌ Failed to load discoverable groups: ${response.statusCode}");
-        throw Exception('Failed to load discoverable groups: ${response.statusCode}');
+        debugPrint(
+          "❌ Failed to load discoverable groups: ${response.statusCode}",
+        );
+        throw Exception(
+          'Failed to load discoverable groups: ${response.statusCode}',
+        );
       }
     } catch (e) {
       debugPrint("❌ Error fetching discoverable groups: $e");
@@ -281,7 +329,7 @@ class GroupChatRepository {
         // ✅ FIXED: Send COMPLETE message with ID and all fields via WebSocket
         _socketService.sendMessage(groupId, {
           'groupId': groupId,
-          'id': message.id,                    // ✅ Include the REAL ID from database
+          'id': message.id, // ✅ Include the REAL ID from database
           'content': message.content,
           'senderId': message.senderId,
           'messageType': message.messageType,
@@ -291,7 +339,7 @@ class GroupChatRepository {
             'username': message.sender?['username'] ?? 'Unknown',
             'full_name': message.sender?['full_name'] ?? 'Unknown User',
             'profile_picture': message.sender?['profile_picture'],
-          }
+          },
         });
 
         debugPrint('✅ Message sent with real ID: ${message.id}');

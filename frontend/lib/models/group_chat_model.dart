@@ -17,6 +17,12 @@ class GroupChat {
   final String chatType; // 'group' or 'direct'
   final int createdById;
   final int memberCount;
+  // Number of messages sent after this user's last-read watermark for
+  // this chat (see backend/api/v1/group_chats.py's unread_count /
+  // /group-chats/unread-count). Only present on list endpoints that pass
+  // it explicitly — defaults to 0 for chats fetched some other way
+  // (e.g. getGroupDetails), where it isn't meaningful.
+  final int unreadCount;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isActive;
@@ -40,6 +46,7 @@ class GroupChat {
     this.chatType = 'group',
     required this.createdById,
     required this.memberCount,
+    this.unreadCount = 0,
     required this.createdAt,
     required this.updatedAt,
     required this.isActive,
@@ -67,6 +74,7 @@ class GroupChat {
 
       createdById: json['created_by_id'] as int,
       memberCount: json['member_count'] as int? ?? 0,
+      unreadCount: json['unread_count'] as int? ?? 0,
 
       // FIXED: Use custom date parser
       createdAt: _parseDateTime(json['created_at']),
@@ -142,6 +150,7 @@ class GroupChat {
       'chat_type': chatType,
       'created_by_id': createdById,
       'member_count': memberCount,
+      'unread_count': unreadCount,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       'is_active': isActive,

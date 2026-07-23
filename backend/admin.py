@@ -156,8 +156,45 @@ class TestimonyAdmin(SafeModelView):
     form_excluded_columns = SafeModelView.form_excluded_columns + ["comments", "likes"]
 
 class GroupChatAdmin(SafeModelView):
+    # This panel is for groups people intentionally create (e.g. "THE
+    # BLUEPRINT"), not 1:1 Instant Chats — those are already covered by
+    # the Instant Chat feature and are stored as GroupChat rows with
+    # chat_type='direct' purely as an implementation detail (see
+    # get_or_create_direct_chat in api/v1/group_chats.py). Without this
+    # filter every DM ever started shows up here too, indistinguishable
+    # from a real group at a glance (same "name/is_public/max_members"
+    # columns, no chat_type shown) — easy to mistake for groups being
+    # auto-created out of nowhere. Scoping the query is simpler and more
+    # robust than trying to make every dm-x-y row *look* intentional.
     column_list = ["id", "name", "is_public", "max_members", "created_by_id"]
     form_excluded_columns = SafeModelView.form_excluded_columns + ["members", "messages"]
+
+    def get_query(self):
+        return super().get_query().filter(self.model.chat_type == "group")
+
+    def get_count_query(self):
+        return super().get_count_query().filter(self.model.chat_type == "group")
+
+
+class InstantChatAdmin(SafeModelView):
+    """Read-only visibility into 1:1 Instant Chats (GroupChat rows with
+    chat_type='direct'), kept separate from GroupChatAdmin above so the
+    two concepts never get conflated in the UI again. Each row only
+    exists because two specific users actually started a conversation —
+    see get_or_create_direct_chat, which is only reachable from an
+    authenticated tap on "Message" in the app, never automatically."""
+    column_list = ["id", "name", "created_by_id", "max_members", "created_at"]
+    column_labels = {"created_by_id": "Started By Id"}
+    can_create = False
+    can_edit = False
+    form_excluded_columns = SafeModelView.form_excluded_columns + ["members", "messages"]
+
+    def get_query(self):
+        return super().get_query().filter(self.model.chat_type == "direct")
+
+    def get_count_query(self):
+        return super().get_count_query().filter(self.model.chat_type == "direct")
+
 
 class GroupMemberAdmin(SafeModelView):
     column_list = ["id", "group_chat_id", "user_id", "group_role", "joined_at"]
@@ -294,7 +331,8 @@ admin.add_view(NotificationAdmin(Notification, db.session, category="🔔 Notifi
 admin.add_view(SafeModelView(NotificationType, db.session, category="🔔 Notifications"))
 
 # --- Groups & Chat ---
-admin.add_view(GroupChatAdmin(GroupChat, db.session, category="💬 Groups & Chat"))
+admin.add_view(GroupChatAdmin(GroupChat, db.session, name="Group Chats", category="💬 Groups & Chat"))
+admin.add_view(InstantChatAdmin(GroupChat, db.session, name="Instant Chats", endpoint="instant-chats", category="💬 Groups & Chat"))
 admin.add_view(GroupMemberAdmin(GroupMember, db.session, category="💬 Groups & Chat"))
 admin.add_view(GroupMessageAdmin(GroupMessage, db.session, category="💬 Groups & Chat"))
 

@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart' hide Config;
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import 'package:pensaconnect/services/push_notification_service.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,6 +33,7 @@ import '../repositories/forum_repository.dart';
 import '../repositories/prayer_repository.dart';
 import '../repositories/timeline_post_repository.dart';
 import '../repositories/notification_repository.dart';
+import '../repositories/group_chat_repository.dart';
 import '../models/activity.dart';
 import '../models/user.dart';
 import '../utils/activity_target.dart';
@@ -71,6 +73,12 @@ class _HomeScreenState extends State<HomeScreen> {
   final NotificationRepository _notificationRepository =
       NotificationRepository();
   int _unreadNotifications = 0;
+  // Provider-injected (see main.dart's MultiProvider) rather than
+  // constructed directly like _notificationRepository — GroupChatRepository
+  // needs Dio/AuthProvider/SocketIoService, so it's fetched from context
+  // once in _initialize()-equivalent (didChangeDependencies) below.
+  GroupChatRepository? _groupChatRepository;
+  int _unreadChats = 0;
 
   // ✅ Pagination for the activity feed. `_hasMoreActivities` and
   // `_nextCursor` come straight from the server's `meta` block on each
@@ -148,6 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
   static bool _cachedHasMoreActivities = false;
   static int? _cachedNextActivitiesCursor;
   static int _cachedUnreadNotifications = 0;
+  static int _cachedUnreadChats = 0;
 
   // ✅ Disk-backed twin of the static cache above. The static fields only
   // survive tab-to-tab navigation *within* the same app process — a fresh
@@ -192,6 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _cachedHasMoreActivities = data['hasMoreActivities'] as bool? ?? false;
       _cachedNextActivitiesCursor = data['nextActivitiesCursor'] as int?;
       _cachedUnreadNotifications = data['unreadNotifications'] as int? ?? 0;
+      _cachedUnreadChats = data['unreadChats'] as int? ?? 0;
 
       if (!mounted || _hasLoadedOnce) return;
       setState(() {
@@ -203,6 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _hasMoreActivities = _cachedHasMoreActivities;
         _nextActivitiesCursor = _cachedNextActivitiesCursor;
         _unreadNotifications = _cachedUnreadNotifications;
+        _unreadChats = _cachedUnreadChats;
         _hasLoadedOnce = true;
         _loadedForUserId = _cachedUserId;
         _loading = false;
@@ -220,6 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool hasMoreActivities,
     required int? nextActivitiesCursor,
     required int unreadNotifications,
+    required int unreadChats,
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -234,6 +246,7 @@ class _HomeScreenState extends State<HomeScreen> {
         'hasMoreActivities': hasMoreActivities,
         'nextActivitiesCursor': nextActivitiesCursor,
         'unreadNotifications': unreadNotifications,
+        'unreadChats': unreadChats,
       });
       await prefs.setString(_diskCacheKey, payload);
     } catch (e) {
@@ -255,6 +268,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _hasMoreActivities = _cachedHasMoreActivities;
     _nextActivitiesCursor = _cachedNextActivitiesCursor;
     _unreadNotifications = _cachedUnreadNotifications;
+    _unreadChats = _cachedUnreadChats;
     _hasLoadedOnce = true;
     _loadedForUserId = _cachedUserId;
     _loading = false;
@@ -356,6 +370,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _groupChatRepository = context.read<GroupChatRepository>();
     _authListener = _onAuthChanged;
     AuthService().addListener(_authListener);
     _scrollController.addListener(_onScroll);
@@ -475,6 +490,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final token = await ApiService.getToken();
 
     int unreadNotifications = 0;
+    int unreadChats = 0;
 
     if (token != null && loggedInUserId != null) {
       // Profile, activity feed, and unread count are three independent
@@ -508,6 +524,12 @@ class _HomeScreenState extends State<HomeScreen> {
               );
               return null;
             }),
+        (_groupChatRepository?.fetchUnreadCount() ?? Future.value(0))
+            .then<Object?>((c) => c)
+            .catchError((e) {
+              _log('⚠️ HomeScreen: failed to load unread chat count: $e');
+              return null;
+            }),
       ]);
 
       user = results[0] as User?;
@@ -538,6 +560,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       unreadNotifications = results[2] as int? ?? 0;
+      unreadChats = results[3] as int? ?? 0;
     } else {
       _log('⚠️ HomeScreen: no valid session, skipping activity fetch');
     }
@@ -565,6 +588,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasLoadedOnce = true;
       _loadedForUserId = loggedInUserId;
       _unreadNotifications = unreadNotifications;
+      _unreadChats = unreadChats;
 
       // Mirror the freshly-settled state into the static cache so the
       // *next* HomeScreen State (created when navigating back to this
@@ -580,6 +604,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _cachedHasMoreActivities = _hasMoreActivities;
       _cachedNextActivitiesCursor = _nextActivitiesCursor;
       _cachedUnreadNotifications = _unreadNotifications;
+      _cachedUnreadChats = _unreadChats;
     });
 
     if (!activitiesFailed) {
@@ -595,6 +620,7 @@ class _HomeScreenState extends State<HomeScreen> {
           hasMoreActivities: _hasMoreActivities,
           nextActivitiesCursor: _nextActivitiesCursor,
           unreadNotifications: _unreadNotifications,
+          unreadChats: _unreadChats,
         ),
       );
     }
@@ -1915,19 +1941,65 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          showModalBottomSheet(
-            context: context,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      floatingActionButton: _buildChatFab(theme),
+    );
+  }
+
+  // Mirrors _buildNotificationBell: a Stack + Positioned badge over the
+  // trigger, refreshed right after the destination (here, the chat
+  // options sheet -> a chat) closes, since opening a chat marks it read
+  // server-side (see GroupChatDetailScreen._initialize()) and the badge
+  // would otherwise sit stale until the next full pull-to-refresh.
+  Widget _buildChatFab(ThemeData theme) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        FloatingActionButton(
+          onPressed: () async {
+            await showModalBottomSheet(
+              context: context,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              builder: (context) => const ChatOptionsSheet(),
+            );
+            if (mounted && _groupChatRepository != null) {
+              final count = await _groupChatRepository!.fetchUnreadCount();
+              if (mounted) setState(() => _unreadChats = count);
+            }
+          },
+          backgroundColor: theme.colorScheme.primary,
+          child: const Icon(Icons.chat_bubble, color: Colors.white),
+        ),
+        if (_unreadChats > 0)
+          Positioned(
+            right: 2,
+            top: 2,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.error,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: theme.colorScheme.surface,
+                    width: 1.5,
+                  ),
+                ),
+                child: Text(
+                  _unreadChats > 99 ? '99+' : '$_unreadChats',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: theme.colorScheme.onError,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
             ),
-            builder: (context) => const ChatOptionsSheet(),
-          );
-        },
-        backgroundColor: theme.colorScheme.primary,
-        child: const Icon(Icons.chat_bubble, color: Colors.white),
-      ),
+          ),
+      ],
     );
   }
 

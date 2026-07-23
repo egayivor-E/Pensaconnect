@@ -62,7 +62,9 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
           content: Text('Failed to load groups: ${e.toString()}'),
           backgroundColor: Theme.of(context).colorScheme.error,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       );
     }
@@ -250,24 +252,62 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                       group.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      group.description.isNotEmpty ? group.description : 'No description',
+                      group.description.isNotEmpty
+                          ? group.description
+                          : 'No description',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
+                      // Unread chats read like unopened messages — bolder
+                      // and full-opacity text, same visual cue an unread
+                      // row gets in most chat apps — instead of the muted
+                      // "already seen" styling every row got before.
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurface.withOpacity(0.55),
+                        color: group.unreadCount > 0
+                            ? colorScheme.onSurface.withOpacity(0.85)
+                            : colorScheme.onSurface.withOpacity(0.55),
+                        fontWeight: group.unreadCount > 0
+                            ? FontWeight.w600
+                            : null,
                       ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
+              if (group.unreadCount > 0) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  constraints: const BoxConstraints(minWidth: 20),
+                  decoration: BoxDecoration(
+                    color: colorScheme.error,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    group.unreadCount > 99 ? '99+' : '${group.unreadCount}',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onError,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
               if (group.memberCount != null) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: colorScheme.primary.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(20),
@@ -275,7 +315,11 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.people_alt_rounded, size: 13, color: colorScheme.primary.withOpacity(0.75)),
+                      Icon(
+                        Icons.people_alt_rounded,
+                        size: 13,
+                        color: colorScheme.primary.withOpacity(0.75),
+                      ),
                       const SizedBox(width: 4),
                       Text(
                         '${group.memberCount}',
@@ -289,7 +333,11 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                 ),
                 const SizedBox(width: 6),
               ],
-              Icon(Icons.chevron_right_rounded, size: 20, color: colorScheme.onSurface.withOpacity(0.35)),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: colorScheme.onSurface.withOpacity(0.35),
+              ),
             ],
           ),
         ),
@@ -311,12 +359,18 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
                 color: theme.colorScheme.error.withOpacity(0.08),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.error_outline_rounded, size: 32, color: theme.colorScheme.error),
+              child: Icon(
+                Icons.error_outline_rounded,
+                size: 32,
+                color: theme.colorScheme.error,
+              ),
             ),
             const SizedBox(height: 16),
             Text(
               'Failed to load groups',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
@@ -361,7 +415,9 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
             const SizedBox(height: 16),
             Text(
               'No groups yet',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -481,7 +537,9 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _descriptionController,
-              decoration: const InputDecoration(labelText: 'Description (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+              ),
               maxLines: 2,
             ),
             const SizedBox(height: 8),

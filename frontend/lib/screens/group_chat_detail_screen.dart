@@ -141,6 +141,14 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
     // ✅ Load messages
     await _loadInitialMessages();
 
+    // Mark this chat as read now that the user is actually looking at
+    // it — advances their last_read_at watermark server-side so the
+    // unread badge on this chat (list screen) and the floating chat
+    // button (home screen) clear. Fire-and-forget: a failure here
+    // shouldn't block the chat from opening, it just means the badge
+    // stays until the next successful mark-as-read.
+    unawaited(_groupRepo.markGroupRead(widget.groupId));
+
     // ✅ Join WebSocket room
     _joinSocketRoom();
 

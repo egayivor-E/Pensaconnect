@@ -1660,13 +1660,17 @@ class GroupChat(BaseModel):
             raise ValueError("Group name must be between 3 and 200 characters")
         return name
 
-    def to_dict(self, include_members=False, include_messages=False, member_count=None):
-        # ✅ member_count lets list endpoints pass in a value computed by
-        # one batched GROUP BY query (see get_group_chats/discover_group_chats
-        # in api/v1/group_chats.py). Without it, every group chat on a
-        # list screen loaded its *entire* members collection just to
-        # len() the active ones — and self.created_by below is another
-        # lazy query per row unless the caller's query eager-loads it.
+    def to_dict(self, include_members=False, include_messages=False, member_count=None, unread_count=None):
+        # ✅ member_count/unread_count let list endpoints pass in values
+        # computed by one batched GROUP BY query each (see
+        # get_group_chats/discover_group_chats in api/v1/group_chats.py).
+        # Without member_count, every group chat on a list screen loaded
+        # its *entire* members collection just to len() the active ones —
+        # and self.created_by below is another lazy query per row unless
+        # the caller's query eager-loads it. unread_count has no fallback
+        # computation here since it's inherently per-viewing-user (this
+        # model has no notion of "current user"); callers that don't pass
+        # it simply omit the key.
         data = super().to_dict()
         data.update({
             "id": self.id,
@@ -1688,6 +1692,8 @@ class GroupChat(BaseModel):
                 "full_name": self.created_by.get_full_name()
             } if self.created_by else None
         })
+        if unread_count is not None:
+            data["unread_count"] = unread_count
         if include_members:
             data["members"] = [m.to_dict() for m in self.members if m.is_active]
         if include_messages:
@@ -1706,6 +1712,19 @@ class GroupMember(BaseModel):
     
     
     joined_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Read watermark for this member's view of this chat — everything
+    # with created_at > last_read_at counts as unread for them (see the
+    # unread-count endpoints in api/v1/group_chats.py). Defaults to "now"
+    # on creation (both on join and via the migration backfill for
+    # pre-existing memberships) so nobody's greeted with a flood of
+    # "unread" history from before they ever opened the chat — only
+    # genuinely new messages count.
+    last_read_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
     group_chat = db.relationship('GroupChat', back_populates='members')
     user = db.relationship('User')
