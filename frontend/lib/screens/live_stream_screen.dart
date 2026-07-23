@@ -1489,6 +1489,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
           // the box, so the GestureDetector wrapper is no longer needed.
           UserAvatar(
             profilePicture: msg.senderProfilePicture,
+            username: msg.senderName,
             userId: int.tryParse(msg.senderId),
             size: 36,
           ),
@@ -1545,6 +1546,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
                 // see UserAvatar fix above for the same reasoning.
                 leading: UserAvatar(
                   profilePicture: member.profileImage,
+                  username: member.name,
                   userId: int.tryParse(member.id),
                   size: 40,
                 ),
