@@ -203,8 +203,8 @@ class _ForumsScreenState extends State<ForumsScreen> {
                                 onTap: () => openUserProfile(
                                   context,
                                   post.authorId,
-                                  username: post.authorName,
-                                  profilePicture: post.authorAvatar,
+                                  knownUsername: post.authorName,
+                                  knownProfilePicture: post.authorAvatar,
                                 ),
                                 child: CircleAvatar(
                                   radius: 18,

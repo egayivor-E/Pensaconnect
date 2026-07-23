@@ -226,7 +226,7 @@ class _TestimonyCard extends StatelessWidget {
                     onTap: () => openUserProfile(
                       context,
                       int.tryParse(testimony.authorId),
-                      username: testimony.authorName,
+                      knownUsername: testimony.authorName,
                     ),
                     child: CircleAvatar(
                       radius: 20,

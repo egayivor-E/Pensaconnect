@@ -48,8 +48,13 @@ class UserAvatar extends StatelessWidget {
               ? () => openUserProfile(
                   context,
                   userId,
-                  username: username,
-                  profilePicture: profilePicture,
+                  // ✅ FIX ("avatar tap loads before opening the
+                  // profile"): this avatar already has exactly what's
+                  // needed to paint the profile header — hand it over
+                  // so the profile can show up instantly instead of a
+                  // loading skeleton, even on the very first tap.
+                  knownUsername: username,
+                  knownProfilePicture: profilePicture,
                 )
               : null),
       child: ClipOval(

@@ -1190,7 +1190,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 activity.authorId != null
                     ? UserAvatar(
                         profilePicture: activity.authorAvatarUrl,
-                        username: activity.authorName,
                         size: 44,
                         userId: activity.authorId,
                       )
@@ -3117,8 +3116,8 @@ class _ReelPageState extends State<_ReelPage> {
                       : () => openUserProfile(
                           context,
                           activity.authorId,
-                          username: activity.authorName,
-                          profilePicture: activity.authorAvatarUrl,
+                          knownUsername: activity.authorName,
+                          knownProfilePicture: activity.authorAvatarUrl,
                         ),
                   behavior: HitTestBehavior.opaque,
                   child: Row(

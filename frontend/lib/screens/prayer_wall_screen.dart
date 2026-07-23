@@ -602,8 +602,8 @@ class _PrayerCardState extends State<_PrayerCard> {
                           onTap: () => openUserProfile(
                             context,
                             req.userId,
-                            username: req.username,
-                            profilePicture: req.userProfilePic,
+                            knownUsername: displayName,
+                            knownProfilePicture: req.userProfilePic,
                           ),
                           child: CircleAvatar(
                             backgroundColor: avatarColor,

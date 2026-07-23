@@ -20,27 +20,34 @@ class UserRepository {
   /// [fetchUserProfile] to get (and cache) the current version.
   static User? cachedUserProfile(int userId) => _profileCache[userId];
 
-  /// Seeds the cache with a lightweight "preview" of a user — just their
-  /// name and avatar, whatever the tap site already had on hand (a post's
-  /// author, a chat message's sender, a member list row, etc.) — so
-  /// opening their profile for the very first time paints the header
-  /// instantly instead of showing a full-screen spinner while the real
-  /// network fetch is still in flight. Called from
-  /// utils/profile_navigation.dart's openUserProfile() right before
-  /// navigating.
-  ///
-  /// Never overwrites a profile that's already cached: a real fetch is
-  /// always more complete than a preview, so once one exists it's left
-  /// alone until [fetchUserProfile] refreshes it for real.
-  static void primeProfilePreview(
-    int userId, {
-    required String username,
+  // ✅ FIX ("avatar tap loads before opening the profile"): the skeleton
+  // spinner in UserProfileScreen only skips itself when
+  // `cachedUserProfile` already has something for this id — which was
+  // only ever true on a *second* visit, after a full fetchUserProfile()
+  // round trip had already happened once. The very first tap on anyone's
+  // avatar, anywhere (home feed, chat, live members, wherever), always
+  // had nothing cached yet, so it always paid for a full network round
+  // trip before showing anything.
+  //
+  // But by the time someone taps an avatar, the tapped widget almost
+  // always already has the name and photo in memory — it's exactly what
+  // was used to render that avatar. This lets a caller (see
+  // widgets/user_avatar.dart) hand that over right before navigating, so
+  // the profile header can paint instantly on the very first tap too.
+  // `_load()` still runs underneath immediately after to fetch the real,
+  // complete profile — this is only ever a placeholder for the header,
+  // never treated as the final source of truth.
+  static void seedProfileCache({
+    required int userId,
+    String? username,
     String? profilePicture,
   }) {
+    // Never stomp a real, fully-fetched profile with a thinner
+    // placeholder — only fill in the gap when there's nothing cached yet.
     if (_profileCache.containsKey(userId)) return;
     _profileCache[userId] = User(
       id: userId,
-      username: username,
+      username: (username == null || username.isEmpty) ? 'User' : username,
       email: '',
       profilePicture: profilePicture,
       roles: const [],

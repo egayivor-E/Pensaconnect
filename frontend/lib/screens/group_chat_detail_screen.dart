@@ -546,8 +546,8 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
                       onTap: () => openUserProfile(
                         context,
                         message.senderId,
-                        username: fullName,
-                        profilePicture: profilePictureUrl,
+                        knownUsername: fullName,
+                        knownProfilePicture: profilePictureUrl,
                       ),
                       child: Text(
                         fullName,
@@ -695,8 +695,8 @@ class _GroupChatDetailScreenState extends State<GroupChatDetailScreen> {
       onTap: () => openUserProfile(
         context,
         userId,
-        username: fullName,
-        profilePicture: url,
+        knownUsername: fullName,
+        knownProfilePicture: url,
       ),
       child: avatar,
     );

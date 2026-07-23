@@ -222,8 +222,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                       onTap: () => openUserProfile(
                                         context,
                                         c.authorId,
-                                        username: c.authorName,
-                                        profilePicture: c.authorAvatar,
+                                        knownUsername: c.authorName,
                                       ),
                                       child: const CircleAvatar(
                                         child: Icon(Icons.person),

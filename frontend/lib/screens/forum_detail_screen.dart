@@ -789,8 +789,8 @@ class _ForumDetailScreenState extends State<ForumDetailScreen> {
           : () => openUserProfile(
               context,
               authorId,
-              username: name,
-              profilePicture: avatarUrl,
+              knownUsername: name,
+              knownProfilePicture: avatarUrl,
             ),
       child: CircleAvatar(
         radius: radius,

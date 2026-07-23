@@ -268,7 +268,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                               onTap: () => openUserProfile(
                                 context,
                                 int.tryParse(testimony.authorId),
-                                username: testimony.authorName,
+                                knownUsername: testimony.authorName,
                               ),
                               child: CircleAvatar(
                                 backgroundColor: authorColor,
@@ -518,7 +518,7 @@ class _TestimonyDetailScreenState extends State<TestimonyDetailScreen> {
                                       onTap: () => openUserProfile(
                                         context,
                                         int.tryParse(c.authorId ?? ''),
-                                        username: c.authorName,
+                                        knownUsername: c.authorName,
                                       ),
                                       child: CircleAvatar(
                                         backgroundColor: commentColor,
