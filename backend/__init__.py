@@ -108,6 +108,58 @@ def _register_websocket_events(socketio_instance):
         room_name = f"group_{group_id}"
         return sum(1 for u in connected_users.values() if room_name in u.get('rooms', set()))
 
+    # ---------------- Real "who's watching" presence ----------------
+    # ✅ FIX: the frontend already emits `get_members` on join and listens
+    # for a `members_updated` broadcast (see socketio_service.dart), but
+    # neither of those was ever implemented here. That left the "N
+    # watching" badge permanently showing the *static* GroupMember roster
+    # from the database (everyone who has ever been added to the Live
+    # Stream group chat) instead of who is actually connected to the
+    # stream right now. These two helpers derive the member list from
+    # real Socket.IO room membership — `connected_users` — so it only
+    # ever reflects sockets that are genuinely joined to this group's
+    # room at this moment.
+    def _room_name(group_id):
+        return f"group_{group_id}"
+
+    def _get_live_room_members(group_id):
+        """Real, live viewer list for a group's room — derived from actual
+        connected sockets, not the permanent group-membership table. A
+        user with multiple open tabs/devices is only counted once."""
+        room = _room_name(group_id)
+        user_ids = {
+            info.get("user_id")
+            for info in connected_users.values()
+            if room in info.get("rooms", set()) and info.get("user_id")
+        }
+        if not user_ids:
+            return []
+
+        users = User.query.filter(User.id.in_(user_ids)).all()
+        members = []
+        for u in users:
+            members.append({
+                "id": u.id,
+                "username": u.username,
+                "full_name": getattr(u, "full_name", None) or u.username,
+                "profile_picture": getattr(u, "profile_picture", None),
+                # Everyone in this list is, by construction, connected
+                # right now — this is real-time presence, not the
+                # separate global User.is_online flag.
+                "is_online": True,
+                "last_seen": datetime.utcnow().isoformat(),
+            })
+        return members
+
+    def _broadcast_members_update(group_id):
+        """Push the current real viewer list to everyone in the room."""
+        members = _get_live_room_members(group_id)
+        safe_emit(
+            "members_updated",
+            {"groupId": group_id, "members": members},
+            room=_room_name(group_id),
+        )
+
     def _is_rate_limited(user_id, group_id):
         """Simple memory-based rate limiting for free tier"""
         import time
@@ -176,6 +228,17 @@ def _register_websocket_events(socketio_instance):
         user_info = connected_users.pop(request.sid, None)
         if user_info:
             logger.info(f"❌ User {user_info['user_id']} disconnected (SID: {request.sid})")
+            # ✅ FIX: tell every room this socket was watching that the
+            # real viewer count just changed. Flask-SocketIO removes the
+            # socket from its rooms automatically on disconnect, but
+            # nothing previously told the *other* clients still in those
+            # rooms that the list they're showing is now stale.
+            for room in list(user_info.get("rooms", set())):
+                if room.startswith("group_"):
+                    try:
+                        _broadcast_members_update(int(room.split("_", 1)[1]))
+                    except (ValueError, IndexError):
+                        pass
         else:
             logger.info(f"❌ Unknown SID disconnected: {request.sid}")
 
@@ -192,6 +255,11 @@ def _register_websocket_events(socketio_instance):
         safe_emit("joined", {"groupId": group_id}, room=request.sid)
         logger.info(f"✅ User {request.sid} joined room {room}")
 
+        # ✅ FIX: broadcast the real, live viewer list to everyone in the
+        # room now that it just changed — this is what actually makes
+        # "N watching" true instead of a static roster count.
+        _broadcast_members_update(group_id)
+
     @socketio_instance.on("leave_group")
     def handle_leave_group(data):
         group_id = int(data.get("groupId"))
@@ -203,6 +271,25 @@ def _register_websocket_events(socketio_instance):
 
         safe_emit("left", {"groupId": group_id}, room=request.sid)
         logger.info(f"⚠️ User {request.sid} left room {room}")
+
+        _broadcast_members_update(group_id)
+
+    # ---------------- Live viewer list on demand ----------------
+    # ✅ FIX: the frontend calls this (`_requestMemberList` in
+    # socketio_service.dart) immediately after joining, but it never had
+    # a handler — so the app's first request for a member list always
+    # went unanswered, and the UI silently fell back to whatever the
+    # HTTP `/live/messages/members` static-roster call had already
+    # populated. Now it gets the real, live-connected list back directly.
+    @socketio_instance.on("get_members")
+    def handle_get_members(data):
+        group_id = int(data.get("groupId"))
+        members = _get_live_room_members(group_id)
+        safe_emit(
+            "members_updated",
+            {"groupId": group_id, "members": members},
+            room=request.sid,
+        )
 
     # ================================================================
     # ✅ PRODUCTION FIX: WebSocket send_message - Broadcasts to ALL clients

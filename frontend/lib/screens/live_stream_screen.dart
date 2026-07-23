@@ -17,7 +17,7 @@ import '../repositories/live_broadcast_repository.dart';
 import '../services/socketio_service.dart';
 import '../config/config.dart';
 import '../utils/validators.dart';
-import '../utils/profile_navigation.dart';
+import '../widgets/user_avatar.dart';
 
 class LiveStreamScreen extends StatefulWidget {
   const LiveStreamScreen({super.key});
@@ -251,7 +251,18 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
             senderId: groupMsg.senderId.toString(),
             timestamp: groupMsg.createdAt,
             messageType: groupMsg.messageType,
-            senderName: groupMsg.sender?['name']?.toString() ?? 'User',
+            // ✅ FIX: was looking for a 'name' key that the backend never
+            // sends (it sends 'full_name'/'username' — see
+            // backend/__init__.py's send_message handler), so this
+            // always fell back to 'User'. Also now carries the sender's
+            // profile picture through, which was dropped entirely
+            // before, so chat bubbles always showed a generic icon.
+            senderName:
+                groupMsg.sender?['full_name']?.toString() ??
+                groupMsg.sender?['username']?.toString() ??
+                'User',
+            senderProfilePicture: groupMsg.sender?['profile_picture']
+                ?.toString(),
           ),
         ),
       );
@@ -1470,16 +1481,16 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            onTap: () => openUserProfile(context, int.tryParse(msg.senderId)),
-            child: CircleAvatar(
-              backgroundColor: theme.colorScheme.primary.withAlpha(25),
-              child: Icon(
-                Icons.person,
-                color: theme.colorScheme.primary,
-                size: 20,
-              ),
-            ),
+          // ✅ FIX: was a hardcoded generic person icon regardless of
+          // whether the sender had a real profile picture. UserAvatar
+          // (already used elsewhere in the app) shows the real cached
+          // photo when available and only falls back to the icon when
+          // there genuinely isn't one — and it's tap-to-profile out of
+          // the box, so the GestureDetector wrapper is no longer needed.
+          UserAvatar(
+            profilePicture: msg.senderProfilePicture,
+            userId: int.tryParse(msg.senderId),
+            size: 36,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1530,21 +1541,22 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
             itemBuilder: (context, index) {
               final member = _members[index];
               return ListTile(
-                leading: GestureDetector(
-                  onTap: () =>
-                      openUserProfile(context, int.tryParse(member.id)),
-                  child: CircleAvatar(
-                    backgroundColor: theme.colorScheme.primary.withAlpha(25),
-                    child: Icon(
-                      Icons.person,
-                      color: theme.colorScheme.primary,
-                      size: 20,
-                    ),
-                  ),
+                // ✅ FIX: real avatar instead of a generic person icon —
+                // see UserAvatar fix above for the same reasoning.
+                leading: UserAvatar(
+                  profilePicture: member.profileImage,
+                  userId: int.tryParse(member.id),
+                  size: 40,
                 ),
                 title: Text(member.name, overflow: TextOverflow.ellipsis),
                 subtitle: Text(
-                  member.isOnline ? 'Online' : 'Offline',
+                  // ✅ Now backed by real Socket.IO room presence (see
+                  // backend/__init__.py's _get_live_room_members) rather
+                  // than the static permanent group roster — everyone in
+                  // this list is actually connected right now, so
+                  // "Online" is no longer just a display label, it's
+                  // literally who's watching.
+                  member.isOnline ? 'Watching now' : 'Offline',
                   style: TextStyle(
                     color: member.isOnline ? Colors.green : Colors.grey,
                   ),
