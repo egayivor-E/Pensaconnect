@@ -40,7 +40,13 @@ class _GroupChatsScreenState extends State<GroupChatsScreen> {
 
     try {
       final groupRepo = context.read<GroupChatRepository>();
-      final groups = await groupRepo.getGroups();
+      // This screen is "Group Chats" specifically — 1:1 Instant Chats
+      // (chat_type='direct') are a different concept with their own entry
+      // points (the "Message" button on a profile, the New Message
+      // picker) and shouldn't show up mixed in here as unlabeled
+      // dm-x-y rows indistinguishable from real, intentionally-created
+      // groups like "THE BLUEPRINT".
+      final groups = await groupRepo.getGroups(type: 'group');
 
       if (!mounted) return;
       setState(() {

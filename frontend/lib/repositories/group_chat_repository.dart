@@ -22,10 +22,13 @@ class GroupChatRepository {
   }
 
   /// Fetch all groups the user belongs to
-  Future<List<GroupChat>> getGroups() async {
+  /// [type] narrows the result to one flavor of chat via the backend's
+  /// `?type=` filter — 'group' for intentionally-created groups, 'direct'
+  /// for 1:1 Instant Chats. Omit it to get both (the old behavior).
+  Future<List<GroupChat>> getGroups({String? type}) async {
     try {
       final response = await ApiService.get(
-        'group-chats/',
+        type != null ? 'group-chats/?type=$type' : 'group-chats/',
         headers: await _getHeaders(),
       );
 

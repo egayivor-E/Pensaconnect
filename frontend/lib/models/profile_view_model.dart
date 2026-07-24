@@ -54,7 +54,13 @@ class ProfileViewModel extends ChangeNotifier {
       final results = await Future.wait([
         prayerRepo.countUserPrayers(user!.id).catchError((_) => 0),
         testimonyRepo.countUserTestimonies(user!.id).catchError((_) => 0),
-        groupRepo.getGroups().then((g) => g.length).catchError((_) => 0),
+        // type: 'group' — otherwise every 1:1 Instant Chat this user has
+        // ever started counts toward "groups joined" here too, inflating
+        // both the displayed stat and any badge computed from groupsCount.
+        groupRepo
+            .getGroups(type: 'group')
+            .then((g) => g.length)
+            .catchError((_) => 0),
       ]);
       prayersCount = results[0];
       testimoniesCount = results[1];

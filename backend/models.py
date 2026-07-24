@@ -321,8 +321,21 @@ class User(BaseModel,  UserMixin):
         data["full_name"] = self.get_full_name()
         data["roles"] = [r.name for r in self.roles] # return multiple roles
         data["can_go_live"] = self.can_go_live
-        data["group_chats_count"] = len([gm for gm in self.group_memberships if gm.is_active])
-        data["groups_created_count"] = len([gc for gc in self.group_chats_created if gc.is_active])
+        # chat_type == "group" excludes 1:1 Instant Chats (chat_type ==
+        # "direct") from both counts below — a GroupMember row exists for
+        # every 2-person DM the user is part of, and group_chats_created
+        # includes every DM they personally started, so without this
+        # filter these stats (and anything derived from them, like
+        # badges) counted "messaged 5 different people" the same as
+        # "joined 5 groups".
+        data["group_chats_count"] = len([
+            gm for gm in self.group_memberships
+            if gm.is_active and gm.group_chat and gm.group_chat.chat_type == "group"
+        ])
+        data["groups_created_count"] = len([
+            gc for gc in self.group_chats_created
+            if gc.is_active and gc.chat_type == "group"
+        ])
         
         return data
     
