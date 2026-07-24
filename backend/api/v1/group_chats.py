@@ -162,6 +162,38 @@ def get_group_chats():
         )
         unread_counts = _batched_unread_counts(current_user_id=user_id, chat_ids=chat_ids)
 
+    # For direct chats, "name" is just the internal dm-{id}-{id} label —
+    # not meant for display. Batch-resolve the other participant (one
+    # query for the membership rows, one for the User rows) so the
+    # frontend can show that person's name/avatar instead, the same way
+    # every other messaging app shows a DM as "the other person", not the
+    # thread's internal id.
+    other_users = {}
+    direct_chat_ids = [gc.id for gc in group_chats if gc.chat_type == "direct"]
+    if direct_chat_ids:
+        other_member_rows = (
+            db.session.query(GroupMember.group_chat_id, GroupMember.user_id)
+            .filter(
+                GroupMember.group_chat_id.in_(direct_chat_ids),
+                GroupMember.user_id != user_id,
+                GroupMember.is_active == True,
+            )
+            .all()
+        )
+        other_user_ids = {row[1] for row in other_member_rows}
+        users_by_id = {
+            u.id: u for u in User.query.filter(User.id.in_(other_user_ids)).all()
+        } if other_user_ids else {}
+        for chat_id, other_user_id in other_member_rows:
+            other_user = users_by_id.get(other_user_id)
+            if other_user:
+                other_users[chat_id] = {
+                    "id": other_user.id,
+                    "username": other_user.username,
+                    "full_name": other_user.get_full_name(),
+                    "profile_picture": other_user.profile_picture,
+                }
+
     # ❌ PREVIOUS: return jsonify([gc.to_dict() for gc in group_chats])
     # ✅ FIX: Wrap the list in a dictionary with 'data', 'message', and 'status' keys
     return jsonify({
@@ -169,6 +201,7 @@ def get_group_chats():
             gc.to_dict(
                 member_count=member_counts.get(gc.id, 0),
                 unread_count=unread_counts.get(gc.id, 0),
+                other_user=other_users.get(gc.id),
             )
             for gc in group_chats
         ],

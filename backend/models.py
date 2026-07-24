@@ -1673,7 +1673,7 @@ class GroupChat(BaseModel):
             raise ValueError("Group name must be between 3 and 200 characters")
         return name
 
-    def to_dict(self, include_members=False, include_messages=False, member_count=None, unread_count=None):
+    def to_dict(self, include_members=False, include_messages=False, member_count=None, unread_count=None, other_user=None):
         # ✅ member_count/unread_count let list endpoints pass in values
         # computed by one batched GROUP BY query each (see
         # get_group_chats/discover_group_chats in api/v1/group_chats.py).
@@ -1683,7 +1683,10 @@ class GroupChat(BaseModel):
         # the caller's query eager-loads it. unread_count has no fallback
         # computation here since it's inherently per-viewing-user (this
         # model has no notion of "current user"); callers that don't pass
-        # it simply omit the key.
+        # it simply omit the key. Same for other_user, which only makes
+        # sense for chat_type='direct' rows and is likewise resolved by
+        # the caller (also per-viewing-user: it means "the other person",
+        # which depends on who's asking).
         data = super().to_dict()
         data.update({
             "id": self.id,
@@ -1707,6 +1710,8 @@ class GroupChat(BaseModel):
         })
         if unread_count is not None:
             data["unread_count"] = unread_count
+        if other_user is not None:
+            data["other_user"] = other_user
         if include_members:
             data["members"] = [m.to_dict() for m in self.members if m.is_active]
         if include_messages:

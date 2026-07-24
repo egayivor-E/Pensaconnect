@@ -23,6 +23,13 @@ class GroupChat {
   // it explicitly — defaults to 0 for chats fetched some other way
   // (e.g. getGroupDetails), where it isn't meaningful.
   final int unreadCount;
+  // The other participant in a direct chat, resolved server-side (see
+  // get_group_chats in api/v1/group_chats.py) since it depends on who's
+  // asking — always null for chat_type='group'. Only present on list
+  // endpoints; use `displayName`/`displayAvatar` below rather than
+  // reading `name` directly, since `name` is just the internal
+  // dm-{id}-{id} label for direct chats, never meant to be shown.
+  final Map<String, dynamic>? otherUser;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isActive;
@@ -47,6 +54,7 @@ class GroupChat {
     required this.createdById,
     required this.memberCount,
     this.unreadCount = 0,
+    this.otherUser,
     required this.createdAt,
     required this.updatedAt,
     required this.isActive,
@@ -56,6 +64,23 @@ class GroupChat {
   });
 
   bool get isDirect => chatType == 'direct';
+
+  /// What to actually show in the UI: the other person's name for a
+  /// direct chat (falling back to the raw dm-x-y name only if that
+  /// couldn't be resolved, e.g. the other account was deleted), or the
+  /// group's real name for a group chat.
+  String get displayName {
+    if (isDirect) {
+      final fullName = otherUser?['full_name'] as String?;
+      final username = otherUser?['username'] as String?;
+      if (fullName != null && fullName.trim().isNotEmpty) return fullName;
+      if (username != null && username.trim().isNotEmpty) return username;
+    }
+    return name;
+  }
+
+  String? get displayAvatar =>
+      isDirect ? otherUser?['profile_picture'] as String? : avatar;
 
   factory GroupChat.fromJson(Map<String, dynamic> json) {
     return GroupChat(
@@ -75,6 +100,9 @@ class GroupChat {
       createdById: json['created_by_id'] as int,
       memberCount: json['member_count'] as int? ?? 0,
       unreadCount: json['unread_count'] as int? ?? 0,
+      otherUser: json['other_user'] is Map
+          ? Map<String, dynamic>.from(json['other_user'] as Map)
+          : null,
 
       // FIXED: Use custom date parser
       createdAt: _parseDateTime(json['created_at']),
@@ -151,6 +179,7 @@ class GroupChat {
       'created_by_id': createdById,
       'member_count': memberCount,
       'unread_count': unreadCount,
+      'other_user': otherUser,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       'is_active': isActive,
