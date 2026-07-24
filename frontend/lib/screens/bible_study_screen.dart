@@ -113,6 +113,15 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
   bool _hasCheckedForActivePlan = false;
   bool _isNavigating = false; // ✅ Prevent multiple pushes at once
 
+  // ✅ TabBarView builds every child widget immediately (it's not lazy like
+  // PageView.builder), so all three tabs used to fire their network loads
+  // the instant this screen opened — Devotions, Study Plans, *and* Archive
+  // all at once, even though only one tab is ever visible. Tracking which
+  // tab indices have actually been viewed lets the other two stay as a
+  // cheap empty placeholder (no widget, no fetch) until the user swipes or
+  // taps their way to them, then they load lazily right when needed.
+  final Set<int> _loadedTabs = {0};
+
   @override
   void initState() {
     super.initState();
@@ -156,6 +165,7 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
     if (_tabController.index != _selectedIndex) {
       setState(() {
         _selectedIndex = _tabController.index;
+        _loadedTabs.add(_selectedIndex);
       });
     }
   }
@@ -424,21 +434,27 @@ class _BibleStudyScreenState extends State<BibleStudyScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
-          _DevotionsList(
-            category: _selectedCategory,
-            searchQuery: _searchQuery,
-            determineCategory: _determineCategory,
-          ),
-          _PlansList(
-            key: _plansListKey,
-            difficulty: _selectedDifficulty,
-            searchQuery: _searchQuery,
-            determineDifficulty: _determineDifficulty,
-          ),
-          _ArchiveList(
-            dateRange: _selectedDateRange,
-            searchQuery: _searchQuery,
-          ),
+          _loadedTabs.contains(0)
+              ? _DevotionsList(
+                  category: _selectedCategory,
+                  searchQuery: _searchQuery,
+                  determineCategory: _determineCategory,
+                )
+              : const SizedBox.shrink(),
+          _loadedTabs.contains(1)
+              ? _PlansList(
+                  key: _plansListKey,
+                  difficulty: _selectedDifficulty,
+                  searchQuery: _searchQuery,
+                  determineDifficulty: _determineDifficulty,
+                )
+              : const SizedBox.shrink(),
+          _loadedTabs.contains(2)
+              ? _ArchiveList(
+                  dateRange: _selectedDateRange,
+                  searchQuery: _searchQuery,
+                )
+              : const SizedBox.shrink(),
         ],
       ),
       floatingActionButton: _selectedIndex == 1
@@ -706,22 +722,25 @@ class _DevotionsListState extends State<_DevotionsList> {
   }
 
   Future<List<Devotion>> _fetchDevotionsWithProgress() async {
-    try {
-      final devotions = await BibleRepository.fetchDevotions();
+    final devotions = await BibleRepository.fetchDevotions();
 
-      // Load progress for each devotion
-      for (final devotion in devotions) {
-        final progress = await BibleRepository.getProgress(
-          devotion.id,
-          'devotion',
-        );
-        _progressCache[devotion.id] = progress;
-      }
-
-      return _filterDevotions(devotions);
-    } catch (e) {
-      rethrow;
+    // ⚡ The backend's /bible/progress/devotion/<id> endpoint is currently
+    // a stub — it doesn't query anything and always replies with the same
+    // hardcoded {completed: false, progress: 0} regardless of which
+    // devotion is asked about (see bible.py: get_devotion_progress). Firing
+    // one HTTP round trip per devotion just to get back an identical,
+    // known-in-advance answer was pure wasted network time on every load
+    // of this tab. Building the equivalent ReadingProgress locally gives
+    // the exact same result instantly, with zero requests.
+    for (final devotion in devotions) {
+      _progressCache[devotion.id] = ReadingProgress.initial(
+        devotion.id,
+        'devotion',
+        1,
+      );
     }
+
+    return _filterDevotions(devotions);
   }
 
   List<Devotion> _filterDevotions(List<Devotion> devotions) {
@@ -1638,18 +1657,18 @@ class _ArchiveListState extends State<_ArchiveList> {
   }
 
   Future<List<ArchiveItem>> _fetchArchiveWithProgress() async {
-    try {
-      final archive = await BibleRepository.fetchArchive();
+    final archive = await BibleRepository.fetchArchive();
 
-      for (final item in archive) {
-        final progress = await BibleRepository.getProgress(item.id, 'archive');
-        _progressCache[item.id] = progress;
-      }
-
-      return _filterArchive(archive);
-    } catch (e) {
-      rethrow;
+    // ⚡ There's no /bible/progress/archive/<id> route on the backend at
+    // all — every call here would 404, and BibleRepository.getProgress
+    // already just swallows that 404 and returns null. Skipping the call
+    // gets to that exact same null result without N wasted round trips
+    // (one per archived item, every single time this tab loads).
+    for (final item in archive) {
+      _progressCache[item.id] = null;
     }
+
+    return _filterArchive(archive);
   }
 
   List<ArchiveItem> _filterArchive(List<ArchiveItem> archive) {
