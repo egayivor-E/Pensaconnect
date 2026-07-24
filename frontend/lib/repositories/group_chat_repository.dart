@@ -10,6 +10,15 @@ import '../models/group_member_model.dart';
 import '../models/group_message_model.dart';
 import '../models/bible_models.dart';
 
+/// Group vs. direct-chat unread split, as returned by
+/// GroupChatRepository.fetchUnreadCountsByType().
+class ChatUnreadCounts {
+  final int groupCount;
+  final int directCount;
+
+  const ChatUnreadCounts({required this.groupCount, required this.directCount});
+}
+
 class GroupChatRepository {
   final Dio _dio;
   final AuthRepository authRepo;
@@ -84,6 +93,36 @@ class GroupChatRepository {
     } catch (e) {
       debugPrint("❌ Error fetching chat unread count: $e");
       return 0;
+    }
+  }
+
+  /// Same unread total as [fetchUnreadCount], but split by chat_type —
+  /// powers the separate "Group Chats" and "New Message" badges on the
+  /// chat options sheet, instead of one combined number.
+  Future<ChatUnreadCounts> fetchUnreadCountsByType() async {
+    try {
+      final response = await ApiService.get(
+        'group-chats/unread-count',
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> body = json.decode(response.body);
+        final data = body['data'];
+        if (data is Map<String, dynamic>) {
+          return ChatUnreadCounts(
+            groupCount: (data['group_count'] as num?)?.toInt() ?? 0,
+            directCount: (data['direct_count'] as num?)?.toInt() ?? 0,
+          );
+        }
+        return const ChatUnreadCounts(groupCount: 0, directCount: 0);
+      }
+      debugPrint(
+        "❌ Failed to fetch chat unread counts by type: ${response.statusCode} - ${response.body}",
+      );
+      return const ChatUnreadCounts(groupCount: 0, directCount: 0);
+    } catch (e) {
+      debugPrint("❌ Error fetching chat unread counts by type: $e");
+      return const ChatUnreadCounts(groupCount: 0, directCount: 0);
     }
   }
 

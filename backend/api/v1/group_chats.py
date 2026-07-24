@@ -242,6 +242,34 @@ def _batched_unread_counts(current_user_id, chat_ids=None):
     return dict(query.group_by(GroupMessage.group_chat_id).all())
 
 
+def _unread_counts_by_chat_type(current_user_id):
+    """Same unread definition as _batched_unread_counts, but grouped by
+    GroupChat.chat_type ('group' / 'direct') instead of by chat id — powers
+    the split badges on the chat options sheet (Group Chats vs New Message),
+    as opposed to the single combined total used elsewhere.
+    """
+    query = (
+        db.session.query(GroupChat.chat_type, db.func.count(GroupMessage.id))
+        .select_from(GroupMessage)
+        .join(
+            GroupMember,
+            db.and_(
+                GroupMember.group_chat_id == GroupMessage.group_chat_id,
+                GroupMember.user_id == current_user_id,
+                GroupMember.is_active == True,
+            ),
+        )
+        .join(GroupChat, GroupChat.id == GroupMessage.group_chat_id)
+        .filter(
+            GroupMessage.is_active == True,
+            GroupMessage.sender_id != current_user_id,
+            GroupMessage.created_at > GroupMember.last_read_at,
+        )
+        .group_by(GroupChat.chat_type)
+    )
+    return dict(query.all())
+
+
 # ---------------------------
 # Total unread message count across all of the user's group chats —
 # powers the badge on the floating chat button (mirrors
@@ -251,9 +279,15 @@ def _batched_unread_counts(current_user_id, chat_ids=None):
 @jwt_required()
 def unread_count():
     user_id = get_jwt_identity()
-    counts = _batched_unread_counts(current_user_id=user_id)
+    by_type = _unread_counts_by_chat_type(current_user_id=user_id)
+    group_count = by_type.get("group", 0)
+    direct_count = by_type.get("direct", 0)
     return jsonify({
-        "data": {"count": sum(counts.values())},
+        "data": {
+            "count": group_count + direct_count,
+            "group_count": group_count,
+            "direct_count": direct_count,
+        },
         "message": "Unread count fetched successfully",
         "status": "success",
     }), 200
