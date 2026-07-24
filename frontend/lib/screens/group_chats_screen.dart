@@ -714,11 +714,6 @@ class _GroupChatsScreenState extends State<GroupChatsScreen>
     final hash = name.codeUnits.fold<int>(0, (sum, c) => sum + c);
     return palette[hash % palette.length];
   }
-
-  @override
-  void dispose() {
-    super.dispose();
-  }
 }
 
 class _CreateGroupResult {

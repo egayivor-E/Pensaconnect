@@ -80,7 +80,7 @@ class GroupChat {
   }
 
   String? get displayAvatar =>
-      isDirect ? otherUser?['profile_picture'] as String? : avatar;
+      isDirect ? (otherUser?['profile_picture'] as String?) : avatar;
 
   factory GroupChat.fromJson(Map<String, dynamic> json) {
     return GroupChat(
