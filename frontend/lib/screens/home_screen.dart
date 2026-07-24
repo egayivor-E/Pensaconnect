@@ -60,6 +60,14 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   String _searchQuery = '';
+  // ✅ Debounces the search query that actually drives filtering/rebuild.
+  // The TextField itself already renders keystrokes instantly via its own
+  // controller regardless of setState, so there's no need to trigger a
+  // full-screen rebuild (feed cards, videos, images, etc.) on every single
+  // character — that's what was causing typing in search to feel janky.
+  // Now setState (and therefore the expensive rebuild/filter pass) only
+  // fires ~250ms after the user pauses typing.
+  Timer? _searchDebounce;
   User? _currentUser;
   List<Activity> _activities = [];
   bool _loading = true;
@@ -801,6 +809,7 @@ class _HomeScreenState extends State<HomeScreen> {
     PushNotificationService.instance.pendingRoute.removeListener(
       _onPendingPushRoute,
     );
+    _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _scrollController.removeListener(_onScroll);
@@ -833,7 +842,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return TextField(
       controller: _searchController,
       focusNode: _searchFocusNode,
-      onChanged: (value) => setState(() => _searchQuery = value),
+      onChanged: (value) {
+        _searchDebounce?.cancel();
+        _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+          if (mounted) setState(() => _searchQuery = value);
+        });
+      },
       style: theme.textTheme.bodyMedium,
       decoration: InputDecoration(
         hintText: 'Search features & activity',
@@ -844,15 +858,20 @@ class _HomeScreenState extends State<HomeScreen> {
           Icons.search_rounded,
           color: theme.colorScheme.onSurface.withOpacity(0.45),
         ),
-        suffixIcon: _searchQuery.isEmpty
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.close_rounded, size: 18),
-                onPressed: () {
-                  _searchController.clear();
-                  setState(() => _searchQuery = '');
-                },
-              ),
+        suffixIcon: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _searchController,
+          builder: (context, value, _) {
+            if (value.text.isEmpty) return const SizedBox.shrink();
+            return IconButton(
+              icon: const Icon(Icons.close_rounded, size: 18),
+              onPressed: () {
+                _searchDebounce?.cancel();
+                _searchController.clear();
+                setState(() => _searchQuery = '');
+              },
+            );
+          },
+        ),
         filled: true,
         fillColor: theme.colorScheme.onSurface.withOpacity(0.05),
         border: OutlineInputBorder(
