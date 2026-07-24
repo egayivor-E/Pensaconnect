@@ -509,6 +509,8 @@ def archive_study_plan(plan_id):
         notes=plan.description,
         category="study_plan",
         author_id=user.id,
+        source_type="study_plan",
+        source_id=plan.id,
     )
     
     # Mark the plan as inactive
@@ -539,6 +541,8 @@ def archive_devotion(devotion_id):
         notes=devotion.content,
         category="devotion",
         author_id=user.id,
+        source_type="devotion",
+        source_id=devotion.id,
     )
     
     # Mark the devotion as inactive
@@ -626,6 +630,12 @@ def update_archive(archive_id):
 @bible_bp.route("/archives/<int:archive_id>", methods=["DELETE"])
 @jwt_required()
 def delete_archive(archive_id):
+    """Permanently delete an archive entry (admin only). This does NOT
+    restore the underlying devotion/study plan — use
+    POST /archives/<id>/restore for that. Kept separate so a regular
+    user restoring their own archived item can never accidentally
+    trigger a permanent, unrecoverable delete.
+    """
     user, error = require_admin()
     if error:
         return error
@@ -634,3 +644,47 @@ def delete_archive(archive_id):
     db.session.delete(archive)
     db.session.commit()
     return success_response({}, "Archive deleted")
+
+
+@bible_bp.route("/archives/<int:archive_id>/restore", methods=["POST"])
+@jwt_required()
+def restore_archive(archive_id):
+    """Move an archived devotion/study plan back to its normal list and
+    remove the archive entry — the actual "unarchive" action. Previously
+    "unarchive" just called the admin-only DELETE above, which (a) 403'd
+    for any non-admin trying to restore their own item, and (b) even for
+    admins only deleted the archive stub without ever flipping the
+    original devotion/plan back to is_active=True, since nothing linked
+    the archive entry back to it. Both are fixed here via
+    Archive.source_type/source_id.
+    """
+    user_id = get_jwt_identity()
+    user = User.query.get_or_404(user_id)
+    is_admin = any(role.name == 'admin' for role in user.roles) if user.roles else False
+
+    archive = Archive.query.get_or_404(archive_id)
+
+    source = None
+    if archive.source_type == "study_plan" and archive.source_id:
+        source = StudyPlan.query.get(archive.source_id)
+    elif archive.source_type == "devotion" and archive.source_id:
+        source = Devotion.query.get(archive.source_id)
+
+    if source is None:
+        return error_response(
+            "This archive entry has no original content to restore.", 400
+        )
+
+    # Anyone who could have archived it in the first place can bring it
+    # back: the item's own author, or an admin.
+    if not is_admin and source.author_id != user.id:
+        return error_response("Not authorized to restore this item", 403)
+
+    source.is_active = True
+    db.session.delete(archive)
+    db.session.commit()
+
+    return success_response(
+        {"source_type": archive.source_type, "source_id": archive.source_id},
+        "Item restored",
+    )

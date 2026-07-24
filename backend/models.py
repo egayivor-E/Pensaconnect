@@ -1144,6 +1144,17 @@ class Archive(BaseModel):
     notes = Column(Text)
     category = Column(String(100), default="general", index=True)
 
+    # ✅ Which record this archive entry was created from (if any), so it
+    # can actually be restored later. Previously an archived study plan
+    # or devotion was just a title/notes blurb with no link back to the
+    # original row — "unarchive" had no way to know which plan/devotion
+    # to bring back, and its content was effectively lost the moment it
+    # was archived. Nullable because archives created directly via
+    # POST /bible/archives (general admin notes) aren't tied to any
+    # source record.
+    source_type = Column(String(20), nullable=True)  # 'study_plan' | 'devotion'
+    source_id = Column(db.BigInteger, nullable=True)
+
     author_id = Column(db.BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     author = relationship("User", back_populates="archives")
 
@@ -1158,6 +1169,8 @@ class Archive(BaseModel):
             "title": self.title,
             "notes": self.notes,
             "category": self.category,
+            "source_type": self.source_type,
+            "source_id": self.source_id,
         })
         if include_author and self.author:
             data["author"] = {

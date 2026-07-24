@@ -224,7 +224,9 @@ class BibleRepository {
 
     final response = await ApiService.postMultipart(
       'bible/ai/extract-study-plan',
-      fields: instruction.trim().isNotEmpty ? {'instruction': instruction.trim()} : null,
+      fields: instruction.trim().isNotEmpty
+          ? {'instruction': instruction.trim()}
+          : null,
       files: files,
     );
 
@@ -418,8 +420,16 @@ class BibleRepository {
     return _parseObject<ArchiveItem>(response, (m) => ArchiveItem.fromJson(m));
   }
 
+  /// Restores the archived devotion/study plan back to its normal list
+  /// and removes the archive entry. This used to call DELETE
+  /// /bible/archives/<id>, which is an admin-only hard delete that never
+  /// actually restored the original item — a regular user "unarchiving"
+  /// their own devotion/plan would just get a 403.
   static Future<void> unarchiveItem(int archiveId) async {
-    final response = await ApiService.delete("bible/archives/$archiveId");
+    final response = await ApiService.post(
+      "bible/archives/$archiveId/restore",
+      {},
+    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw _httpError(response);
     }
